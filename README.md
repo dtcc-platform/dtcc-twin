@@ -11,6 +11,11 @@ developed at the
 [Digital Twin Cities Centre](https://dtcc.chalmers.se/)
 supported by Sweden’s Innovation Agency Vinnova under Grant No. 2019-421 00041.
 
+## Documentation
+
+The guiding architecture and design principles are described in
+[DESIGN.md](DESIGN.md).
+
 ## Authors (in order of appearance)
 
 * [Vasilis Naserentin](https://www.chalmers.se/en/Staff/Pages/vasnas.aspx)
