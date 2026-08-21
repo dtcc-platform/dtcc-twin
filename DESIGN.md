@@ -52,21 +52,28 @@ DTCC Core is the shared semantic foundation. It owns the DTCC Model, general
 data input and output, data modeling, broadly useful data processing and
 generation, and the common Dataset, manifest, and package contracts.
 
+The [DTCC Core design](https://github.com/dtcc-platform/dtcc-core/blob/develop/DESIGN.md)
+is authoritative for those semantic and exchange contracts. This document is
+authoritative for how DTCC Twin uses them to provide the application and user
+experience.
+
 DTCC Sim contributes simulation capabilities through those same contracts. It
 may depend on specialized numerical software that does not belong in the lean
-Core environment. The Core--Sim boundary is guided by both semantic scope and
-dependency weight: general city-model operations belong in Core, while
-scenario-oriented simulations and solvers belong in Sim.
+Core environment. Dependency-light, broadly useful analysis, generation, and
+simulation capabilities may live in Core. Specialized scenario methods and
+solvers, especially those requiring heavy numerical dependencies, belong in
+Sim.
 
 DTCC Twin owns the user-facing application layer. Its responsibilities include:
 
 - selecting a geographic domain and requesting data generation or simulation;
 - orchestrating work and communicating progress;
 - composing results into an interactive digital-twin workspace;
-- importing user data through DTCC Core's data-admission boundary;
+- importing user data through DTCC Core's I/O and semantic-admission boundary;
 - visualizing and controlling semantic DTCC data;
 - saving, reopening, exporting, sharing, and publishing digital twins;
-- storing and distributing published Dataset Packages;
+- operating storage and distribution for private Dataset Package snapshots and
+  Package Publications;
 - curating published results into Table experiences;
 - selecting physical Table Models and calibrating Table Installations.
 
@@ -95,8 +102,9 @@ and download remain important explicit operations on those results and on the
 workspace as a whole.
 
 The ordinary workflow begins with user intent. Twin coordinates discovery,
-execution, packaging, and composition without requiring the user to select
-internal services or serialization formats.
+invocation of Core and Sim capabilities, the execution lifecycle, packaging,
+and composition without requiring the user to select internal services or
+serialization formats.
 
 ### Generality through discovery
 
@@ -113,9 +121,10 @@ that returns that type.
 ### Efficient and progressively useful
 
 Twin avoids unnecessary generation, conversion, transfer, storage, and
-rendering. When a Workspace or Table release references an existing validated
-Dataset Realization, Twin reuses it rather than reproducing it merely for a new
-presentation context.
+rendering. When a Workspace references an existing validated Dataset
+Realization, or a Table release references an existing validated Package
+Publication, Twin reuses it rather than regenerating the result merely for a
+new presentation context.
 
 Long-running work exposes meaningful progress and makes completed results
 available without waiting for unrelated work. Atlas builds the smallest useful
@@ -123,20 +132,24 @@ base twin first and enriches it progressively.
 
 ### Facts, editorial presentation, and application state are distinct
 
-Dataset identity, request, provenance, units, sources, licenses, health,
-warnings, and limitations travel with the Dataset Realization and Package.
+Facts intrinsic to interpreting model data — including coordinate reference
+systems, transforms, dimensionality, field association, and units — belong in
+canonical DTCC Model data. Dataset identity, request, sources, licenses,
+runtime provenance, health, warnings, and limitations travel in Dataset Context
+and the Package manifest.
 
-Audience-specific narrative, presentation choices, and Table curation may add
-context but must not replace or contradict those facts. Camera state, layer
-order, styling, interface state, and projection calibration belong to Twin and
-are not part of the semantic DTCC Model.
+Twin interprets reusable Package presentation guidance. Audience-specific
+narrative and Table curation may select and constrain supported presentation and
+record defaults, but must not replace or contradict Package facts. Runtime
+camera, layer, styling, interface, playback, selection, and calibration state
+belong to Twin and do not rewrite the model or Package.
 
 ### Explicit and reproducible publication
 
-Publication creates immutable, versioned results. Published twins and Table
-releases pin the exact Dataset Package versions on which they depend. Updating
-published content creates a new revision rather than silently changing an
-existing one.
+Package Publications, Published Twins, and Table Catalog Releases are
+immutable, versioned results. Published twins and Table releases pin the exact
+Dataset Package versions on which they depend. Updating published content
+creates a new revision rather than silently changing an existing one.
 
 ### Explicit privacy boundary
 
@@ -157,8 +170,9 @@ quality without being forced into identical layouts or controls.
 
 A **Dataset Definition** is a named, reusable, parameterized capability. It
 describes what can be generated, which parameters are accepted, what semantic
-result it produces, its coverage and limitations, and the capabilities needed
-to execute and present it.
+result it produces, its coverage and limitations, its required inputs, and its
+execution requirements. Dataset Definition is the platform design term for the
+capability exposed as `Dataset` in the DTCC Core Python API.
 
 For example, a Dataset Definition may express: generate a city model for these
 bounds and parameters, or simulate an urban wind field for this domain and
@@ -167,15 +181,18 @@ scenario.
 ### Dataset Request
 
 A **Dataset Request** is one validated invocation of a Dataset Definition. It
-records the exact domain, parameters, inputs, and requested semantic product.
-Semantic product selection is distinct from serialization format: choosing
-what data to generate must not be conflated with choosing how to encode it.
+records the exact domain, parameters, declared input references, and requested
+semantic product. Actual runtime sources and lineage are recorded as
+provenance. Semantic product selection is distinct from serialization format:
+choosing what data to generate must not be conflated with choosing how to
+encode it.
 
 ### Dataset Realization
 
-A **Dataset Realization** is the concrete result of a Dataset Request. It is a
-native DTCC Model object with immutable identity and context recording the
-actual runtime provenance, health, warnings, inputs, and software versions.
+A **Dataset Realization** is the concrete result of a Dataset Request. It is the
+native DTCC Model object itself, carrying attached Dataset Context for the exact
+request and completed runtime result, including provenance, health, warnings,
+inputs, and software versions.
 
 ### Dataset Package
 
@@ -192,35 +209,51 @@ metadata, provenance, presentation guidance, health and warnings, the exact
 request, and descriptions of all artifacts. Metadata need not be duplicated in
 a separate file.
 
+A stored Dataset Package snapshot is immutable and has a stable content and
+version identity. Changing its manifest or artifacts creates a new Package
+version.
+
 Every package containing semantic digital-twin data includes a canonical DTCC
-Model artifact. It may also include derived artifacts such as previews,
-thumbnails, browser-optimized representations, images, image sequences, or
-video. Artifact roles, relationships, formats, media types, coordinate frames,
-sizes, and integrity information are explicit.
+Protobuf model artifact. It may also include derived artifacts such as
+previews, thumbnails, browser-optimized representations, images, image
+sequences, or video. Artifact roles, relationships, formats, media types,
+coordinate frames, declared artifact capabilities, sizes, and integrity
+information are explicit. The manifest may index semantic dimensions from the
+canonical model for discovery.
+
+Any manifest index or summary of an intrinsic Model fact must match the
+canonical model artifact, which remains authoritative.
 
 Purely presentational or operational assets that contain no domain data, such
 as a calibration test pattern, need not pretend to be DTCC Model objects. They
 remain explicitly classified as presentation or installation assets.
 
-### Publication
+### Package Publication
 
-A **Publication** is an immutable, versioned Dataset Package registered in the
-Package Catalog. Its publication identity is distinct from the name of the
-Dataset Definition that produced it.
+A **Package Publication** is an immutable, versioned release of a Dataset
+Package to a declared audience through the Package Catalog. Catalog storage
+alone does not make a Package public. Its publication identity is distinct from
+the name of the Dataset Definition that produced it.
 
 ### Twin Workspace
 
 A **Twin Workspace** is a mutable Atlas project. It contains:
 
 - a geographic domain and coordinate context;
-- ordered references to Dataset Realizations or published Package versions;
-- imported data admitted through DTCC Core;
+- ordered references to live Dataset Realizations, private Dataset Package
+  versions, or Package Publications;
 - generation recipes and Dataset Requests needed for reproduction;
 - layer, scene, camera, styling, and interaction state;
 - workspace-level annotations and presentation choices.
 
 A Twin Workspace is a composition of Dataset results, not another meaning of
 Dataset.
+
+A live Workspace may reference transient Dataset Realizations. Before a
+Workspace is saved, exported, or published, every required transient result is
+snapshotted as a Dataset Package or embedded as an equivalent complete Package
+snapshot, so no durable form depends on an in-memory object. Saving or exporting
+such a snapshot does not publish it.
 
 ### Published Twin
 
@@ -229,82 +262,65 @@ It has a stable URL suitable for external sharing. The URL continues to resolve
 to the same revision; later edits produce a new revision or an explicitly
 updated reference.
 
+Every dependency is either included under the Published Twin's declared access
+policy or referenced through an audience-compatible Package Publication.
+Publishing a Twin never widens access to a private Package implicitly.
+
 ### Table Model
 
-A **Table Model** describes a replaceable physical 3D-printed city model. It
-defines a stable identity, geographic domain, coordinate reference system,
-physical footprint and dimensions, scale, orientation, and reference
-information needed for projection. It contains no installation-specific
-hardware or calibration state.
+A **Table Model** is a versioned definition of a replaceable physical 3D-printed
+city model. It defines a stable identity, geographic domain, coordinate
+reference system, physical footprint and dimensions, scale, orientation, and
+reference information needed for projection. It contains no
+installation-specific hardware or calibration state.
 
 Table Models are not assumed to be square, fixed to one physical size, or tied
 to a particular coordinate reference system.
 
 ### Table Installation
 
-A **Table Installation** describes one operational projection setup: its
-projector or display, projection surface, controller, local content cache,
-active Table Model, and saved calibrations. One installation may support
-several Table Models, with one active at a time.
+A **Table Installation** has a stable identity and describes one projection
+setup: its projector or display, projection surface, controller, and local
+content cache. Its mutable operational state records the active Table Model and
+Catalog Release, synchronized content, calibration records, and health. One
+installation may support several Table Models, with one active at a time.
 
 ### Table Catalog Release and Table Experience
 
 A **Table Catalog Release** is an immutable, curated collection compatible with
-one Table Model. It pins Dataset Package versions and adds Table-specific
-ordering, editorial context, declared interactions, and presentation choices.
+one revision of a Table Model. It pins that revision and its Package
+Publications, and therefore the exact Dataset Package versions. It adds
+Table-specific ordering and editorial context while selecting and providing
+defaults for interactions supported by its pinned Packages.
 
 A **Table Experience** is one visitor-selectable entry in a release. It may use
 one or several Dataset Packages and one or several artifacts. It combines
 published data with a coherent story without disguising the identity or
 provenance of its components.
 
-## DTCC Model and Protobuf invariant
+## Dependency on DTCC Model and Protobuf
 
-All digital-twin domain data that DTCC Platform accepts, generates, simulates,
-stores, or publishes must be representable faithfully in DTCC Model. If valid
-platform data cannot be represented, DTCC Model is incomplete and must be
-extended. DTCC Twin must not work around such a gap by inventing an
-application-specific domain model or by treating a lossy display format as the
-source of truth.
+DTCC Twin relies on the normative Model exchange contract owned by DTCC Core.
+All digital-twin domain data admitted to Twin must be faithfully representable
+in DTCC Model and pass Core's versioned, lossless Protobuf round-trip contract.
+If valid platform data cannot be represented, DTCC Model must be extended. Twin
+must not invent an application-specific domain model or treat a lossy display
+format as the source of truth.
 
-The versioned DTCC Protobuf representation is the canonical binary exchange
-representation of DTCC Model. Every supported DTCC Model type must support a
-complete round trip:
+Before admitting canonical exchange data, Twin validates the Protobuf schema
+version, concrete root model type, and package integrity. Derived render and
+presentation formats may supplement the canonical model artifact but never
+replace it.
 
-```text
-DTCC Model object -> Protobuf -> DTCC Model object
-```
-
-The round trip preserves all facts required to give the object the same
-semantic meaning, including as applicable:
-
-- concrete model and geometry types;
-- identifiers, object hierarchy, and relationships;
-- geometry, topology, dimensionality, and coordinate precision;
-- coordinate reference systems, transforms, bounds, and orientation;
-- fields, values, components, association, units, and descriptions;
-- classifications, markers, material or domain labels, and other typed
-  attributes;
-- temporal, scenario, ensemble, or other semantic axes;
-- all other model properties that affect interpretation or later computation.
-
-An explicitly documented canonical normalization, such as equivalent ordering,
-may be acceptable; silent loss, flattening, type substitution, or precision
-loss is not.
-
-Protobuf schemas are versioned exchange contracts. Readers validate supported
-versions and fail clearly on incompatible data. Round-trip coverage is a
-required model-level acceptance test, not an application-specific check.
+Dataset Context is attached to the in-memory Dataset Realization as defined by
+Core. In a Package, it is snapshotted in the manifest rather than encoded into
+the canonical model artifact. Facts intrinsic to interpreting the model remain
+in the model itself.
 
 This is an architectural requirement, not an assertion that every current
 model class already satisfies it. A type that fails this contract is not ready
 for canonical exchange until DTCC Core is fixed; it does not earn a
 Twin-specific exception.
-
-Dataset context and package information remain outside the model artifact when
-they are not semantic properties of the model itself. The Package manifest
-preserves provenance, request, health, presentation guidance, and artifact
-relationships alongside the canonical model artifact.
 
 ## Catalogs and discovery
 
@@ -312,11 +328,15 @@ DTCC Twin distinguishes three catalogs.
 
 ### Capability Catalog
 
-The **Capability Catalog** describes what DTCC Core and DTCC Sim can generate.
-Each entry supplies enough structured information for discovery and execution,
-including identity, title, explanation, parameter schema, semantic result type,
-coverage, required inputs, expected cost or duration, output capabilities, and
-availability.
+The **Capability Catalog** is the runtime discovery view of authoritative
+Dataset Definition descriptors contributed by DTCC Core and DTCC Sim through
+the Core registry contract. Twin consumes this view; it does not maintain a
+competing definition registry.
+
+Each descriptor supplies identity, title, explanation, parameter schema,
+semantic result type, coverage, required inputs, execution requirements, and
+output semantics. The active execution environment augments those facts with
+current availability and runtime estimates where available.
 
 The catalog has explicit refresh or revision semantics. A conforming new
 Dataset Definition becomes available in Atlas after catalog refresh without a
@@ -324,10 +344,11 @@ Twin deployment or Dataset-specific code change.
 
 ### Package Catalog
 
-The **Package Catalog** stores immutable Dataset Package versions and provides
-validated discovery and retrieval of their manifests and artifacts. It
-preserves integrity, ownership, idempotency, atomic publication, auditability,
-retraction, and reproducible version addressing.
+The **Package Catalog** stores private Package snapshots and immutable Package
+Publications and provides validated discovery and retrieval of their manifests
+and artifacts. It preserves integrity, explicit ownership and visibility,
+idempotency, atomic publication, auditability, retraction, and reproducible
+version addressing.
 
 Its internal storage layout need not match a `.dtccpkg` archive, but users and
 applications can retrieve the same logical package and export the portable
@@ -383,9 +404,15 @@ for known Dataset names.
 
 ### Import user data
 
-User imports cross an independent trust boundary. DTCC Core validates and
-normalizes supported input into DTCC Model while the original source may be
-retained as a provenance artifact.
+User imports cross an independent trust boundary. Twin enforces application
+upload, authorization, privacy, and resource policy. DTCC Core validates
+supported formats and semantics and normalizes admitted input into DTCC Model,
+while the original source may be retained as a provenance artifact.
+
+For Twin, successful admission is completed through a versioned Core import
+Dataset Definition and yields a Dataset Realization. Its Request records the
+declared import; its Context records the actual source, parser, provenance,
+terms, health, and retained source artifact where applicable.
 
 Atlas must not silently flatten an unsupported input into a weaker application
 type. If the data has valid DTCC semantics that the model cannot represent, the
@@ -413,8 +440,12 @@ from a browser session to a projector. The user selects a target Table Model,
 chooses compatible results, prepares the visitor story and interactions, and
 previews the presentation.
 
+Each selected Dataset Realization is first resolved to an existing compatible
+Package Publication or snapshotted as a Dataset Package and released as a new
+Package Publication.
+
 The publication path validates geographic frame, package versions, artifact
-integrity, presentation capabilities, and Table compatibility before creating
+integrity, artifact capabilities, and Table compatibility before creating
 a new Table Catalog Release.
 
 ## Table experience
@@ -431,8 +462,9 @@ other interactions over already published data.
 
 ### Select and understand
 
-The active Table Model determines the compatible catalog release. A visitor can
-select a Table Experience and understand:
+The active Table Model determines the compatible catalog releases, and the
+installation has one selected active release. A visitor can select a Table
+Experience and understand:
 
 - what is being shown and why it matters;
 - how to read and interact with it;
@@ -440,15 +472,18 @@ select a Table Experience and understand:
 - how it was generated;
 - which Package versions, assumptions, and limitations apply.
 
-Scientific and factual information comes from the Package manifests.
+Intrinsic scientific facts needed to interpret the data come from canonical
+Model artifacts. Dataset-level identity, request, provenance, licenses, health,
+limitations, and reusable presentation guidance come from Package manifests.
 Table-specific editorial framing explains why the result is interesting in the
 current setting. Editorial content must not hide or contradict provenance,
 warnings, licenses, or limitations.
 
 ### Declared controls
 
-Controls are derived from declared semantic and presentation capabilities, not
-hard-coded Dataset identifiers. Examples include:
+Controls are derived from canonical Model semantics and declared artifact
+capabilities, informed by non-binding Package presentation guidance; they are
+not hard-coded to Dataset identifiers. Examples include:
 
 - play, pause, and scrubbing for temporal content;
 - selection among times, frames, scenarios, or cases;
@@ -476,10 +511,10 @@ state must not appear on the ordinary public projection surface.
 
 ### Model switching and calibration
 
-Changing the active physical model selects its Table Model and compatible
-Catalog Release. The installation restores a saved compatible calibration when
-available and requires calibration when none exists. Incompatible content is
-not projected.
+Changing the active physical model selects its Table Model definition and a
+compatible Catalog Release. The installation restores a saved compatible
+calibration when available and requires calibration when none exists.
+Incompatible content is not projected.
 
 Calibration belongs to the combination of Table Installation, Table Model, and
 projection setup. It is not keyed only by a Dataset or by coincidentally equal
@@ -493,9 +528,10 @@ particular calibration algorithm or device.
 
 ### Releases and offline operation
 
-A Table Catalog Release is deployed atomically and pins every referenced
-Package version. A Table Installation retains a validated local copy of its
-active release so the ordinary visitor experience does not depend on continuous
+A Table Catalog Release is deployed atomically and pins its Table Model revision
+and every referenced Package Publication, and therefore each exact Package
+version. A Table Installation retains a validated local copy of its active
+release so the ordinary visitor experience does not depend on continuous
 network access. A failed update does not invalidate the last complete release,
 and an operator can select an earlier release when recovery requires it.
 
@@ -517,8 +553,10 @@ silent fallback.
 ## Traceability and trust
 
 Every displayed semantic result is traceable to its Dataset Definition,
-validated request, inputs, canonical model artifact, generating software,
-Package version, and relevant limitations.
+validated Request, inputs, canonical DTCC Model realization, generating
+software, and relevant limitations. A saved, exported, published, or
+Table-displayed result is additionally traceable to an immutable Package
+version and canonical Protobuf artifact.
 
 Provenance supports understanding, assessment, and reproduction; it does not by
 itself guarantee scientific validity. Degraded, partial, synthetic, stale, or
@@ -533,8 +571,8 @@ This design does not:
   deployment platform, or authoring-file syntax;
 - require compatibility with the internal APIs or behavior of earlier
   applications;
-- move data generation, conversion, DTCC Model ownership, or simulation solvers
-  into DTCC Twin;
+- move semantic data acquisition, admission, normalization, domain processing,
+  DTCC Model ownership, or simulation solvers into DTCC Twin;
 - require Table to generate data during presentation;
 - make every available Dataset part of a public Table release;
 - require every artifact to be Protobuf or forbid derived render formats;
@@ -561,12 +599,15 @@ properties:
 - **Simplicity:** An ordinary Atlas user can select a domain and invoke **Build
   Twin** without choosing services, pipeline stages, artifact formats, or
   serialization formats.
-- Every Dataset Realization uses DTCC Model and passes lossless semantic
-  Protobuf round-trip tests before it is treated as canonical exchange data.
+- Every Dataset Package used for canonical exchange contains a canonical DTCC
+  Protobuf model artifact whose semantic content satisfies Core's lossless
+  round-trip contract.
 - Atlas can progressively build a Twin, enrich it, save and reopen the complete
   workspace, export it, and publish a stable read-only revision.
-- A result displayed in Atlas or Table can be traced to its canonical model
-  artifact, exact request, pinned Package version, and provenance.
+- Every displayed semantic result can be traced to its canonical DTCC Model
+  realization and exact Request. Every saved, exported, published, or
+  Table-displayed result can additionally be traced to its immutable Package
+  version, canonical Protobuf artifact, and provenance.
 - Publishing to Table creates an atomic, curated release for a named Table
   Model rather than exposing a live Atlas session or global package list.
 - A new physical model is introduced through a new Table Model definition and
@@ -574,8 +615,8 @@ properties:
 - A Table Installation can switch models, restore or request the correct
   calibration, and operate its last complete release without continuous network
   access.
-- Table controls come from declared semantics and presentation capabilities,
-  not filenames or Dataset names.
+- Table controls come from canonical Model semantics and declared artifact
+  capabilities, not filenames or Dataset names.
 
 ## Deferred choices
 
@@ -584,7 +625,7 @@ implementation work within the boundaries above:
 
 - frontend frameworks and rendering technologies;
 - runtime service and deployment topology;
-- the authoring syntax for Table Models and releases;
+- the authoring syntax for Table Models, Table Installations, and releases;
 - the exact baseline Dataset recipe and measured targets for generation,
   transfer, startup, rendering, and interaction at representative scales;
 - the exact access-policy and identity mechanisms for private and public twins;
