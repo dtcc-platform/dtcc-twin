@@ -16,8 +16,35 @@ Atlas and Table share the same platform contracts and a coherent visual
 identity, but their workflows and interaction patterns are adapted to their
 different settings.
 
-> DTCC Twin should make the complete process of building and experiencing a
-> digital twin coherent, compelling, traceable, and easy to understand.
+## Vision: Digital twins on demand
+
+> **Automatic digital twins, on demand — general in scope, efficient at scale,
+> and simple to create and experience.**
+
+A user should be able to select a place and press **Build Twin**. DTCC Platform
+then discovers the applicable capabilities, acquires and generates the
+necessary data, assembles the results, and progressively brings the digital
+twin to life. The user expresses intent; the platform handles the machinery.
+
+Automation rests on three inseparable qualities:
+
+- **Generality** means that the same semantic and product contracts work across
+  geographic domains, model types, Dataset Definitions, simulations, and Table
+  Models. New conforming capabilities extend the platform without one-off
+  product variants or Dataset-specific integration.
+- **Efficiency** means that the platform can handle large domains, large
+  datasets, advanced models, and high levels of detail without unnecessary
+  generation, conversion, transfer, storage, or rendering. Useful results
+  become available progressively, and performance is measured at realistic
+  scales.
+- **Simplicity** means that the ordinary workflow remains direct: select a
+  domain, build the twin, and explore it. Users work with meaningful domain
+  choices rather than internal services, pipelines, formats, or deployment
+  details.
+
+Automation removes incidental work, not meaningful responsibility. It must not
+hide choices that affect scientific meaning, provenance, privacy, publication,
+or physical calibration.
 
 ## Place in DTCC Platform
 
@@ -67,21 +94,30 @@ simulated, and imported results become usable parts of a Twin Workspace. Export
 and download remain important explicit operations on those results and on the
 workspace as a whole.
 
-### Discovery instead of Dataset-specific integration
+The ordinary workflow begins with user intent. Twin coordinates discovery,
+execution, packaging, and composition without requiring the user to select
+internal services or serialization formats.
 
-Atlas discovers Dataset Definitions and their parameters from the platform at
-runtime. User interfaces, execution, and presentation must be driven by common
-contracts and semantic model types rather than hard-coded Dataset names,
-filenames, package locations, or implementation modules.
+### Generality through discovery
+
+Generality depends on Atlas discovering Dataset Definitions and their parameters
+from the platform at runtime. User interfaces, execution, and presentation must
+be driven by common contracts and semantic model types rather than hard-coded
+Dataset names, filenames, package locations, or implementation modules.
 
 A new Dataset Definition returning existing DTCC Model types should require no
 Dataset-specific change in Twin. A genuinely new model type may require one new
 model-level presentation capability, not separate integration for every Dataset
 that returns that type.
 
-### Progressive usefulness
+### Efficient and progressively useful
 
-Long-running work should expose meaningful progress and make completed results
+Twin avoids unnecessary generation, conversion, transfer, storage, and
+rendering. When a Workspace or Table release references an existing validated
+Dataset Realization, Twin reuses it rather than reproducing it merely for a new
+presentation context.
+
+Long-running work exposes meaningful progress and makes completed results
 available without waiting for unrelated work. Atlas builds the smallest useful
 base twin first and enriches it progressively.
 
@@ -316,6 +352,9 @@ Atlas begins with a distinctive geographic overview rather than an empty
 application form or conventional download catalog. The user selects a
 two-dimensional region and chooses **Build Twin**.
 
+Building a useful default twin does not require the user to select internal
+services, pipeline stages, artifact formats, or serialization formats.
+
 Atlas requests the smallest useful base twin and communicates progress while
 it is created. As soon as the base geometry is ready, the experience moves into
 an interactive 3D view while preserving geographic context. Additional base
@@ -512,8 +551,16 @@ This design does not:
 The design is realized when ordinary end-to-end workflows satisfy these
 properties:
 
-- A conforming new Core or Sim Dataset Definition appears in Atlas without
-  Dataset-specific Twin code after Capability Catalog refresh.
+- **Generality:** A conforming Dataset Definition, model presentation
+  capability, or Table Model extends the relevant experience through shared
+  contracts rather than a product fork or Dataset-name-specific path.
+- **Efficiency:** A useful base twin becomes available before unrelated optional
+  enrichment completes, existing pinned results can be reused without
+  unnecessary regeneration, and representative large or detailed twins meet
+  separately defined performance targets.
+- **Simplicity:** An ordinary Atlas user can select a domain and invoke **Build
+  Twin** without choosing services, pipeline stages, artifact formats, or
+  serialization formats.
 - Every Dataset Realization uses DTCC Model and passes lossless semantic
   Protobuf round-trip tests before it is treated as canonical exchange data.
 - Atlas can progressively build a Twin, enrich it, save and reopen the complete
@@ -538,7 +585,8 @@ implementation work within the boundaries above:
 - frontend frameworks and rendering technologies;
 - runtime service and deployment topology;
 - the authoring syntax for Table Models and releases;
-- the exact baseline Dataset recipe and measured latency targets for Build Twin;
+- the exact baseline Dataset recipe and measured targets for generation,
+  transfer, startup, rendering, and interaction at representative scales;
 - the exact access-policy and identity mechanisms for private and public twins;
 - the exact self-contained archive contract for a complete Twin Workspace;
 - the controller and administration device arrangement;
