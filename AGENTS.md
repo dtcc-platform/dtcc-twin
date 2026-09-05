@@ -1,4 +1,4 @@
-# AGENTS.md
+# DTCC Twin instructions
 
 These instructions apply throughout the repository.
 
@@ -37,5 +37,5 @@ The linked engine instructions apply only to `dtcc-engine/` and its subdirectori
   or were not run. Explicitly identify incomplete work and verification limits.
 - Use commit messages in the form `Type: Subject`, with a capitalized type and
   sentence-case subject, for example `Fix: Reuse Core data validation`.
-- Do not add "Generated with" attributions to Codex CLI or Claude Code in GitHub
-  pull requests.
+- Do not add AI-generated attribution, AI co-author trailers, or agent session
+  links to commit messages or pull requests.
