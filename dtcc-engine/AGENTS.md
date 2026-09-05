@@ -1,4 +1,4 @@
-# AGENTS.md
+# DTCC Engine instructions
 
 These instructions apply to `dtcc-engine/` and its subdirectories. All `temp/`
 paths and setup commands below are relative to the repository root.
@@ -41,8 +41,8 @@ only missing checkouts, using the `develop` branch:
 
 ```sh
 mkdir -p temp
-git clone --branch develop git@github.com:dtcc-platform/dtcc-core.git temp/dtcc-core
-git clone --branch develop git@github.com:dtcc-platform/dtcc-sim.git temp/dtcc-sim
+git clone --branch develop https://github.com/dtcc-platform/dtcc-core.git temp/dtcc-core
+git clone --branch develop https://github.com/dtcc-platform/dtcc-sim.git temp/dtcc-sim
 ```
 
 ## Prefer simple, modular code
@@ -64,36 +64,6 @@ git clone --branch develop git@github.com:dtcc-platform/dtcc-sim.git temp/dtcc-s
 - Apply simplifications within the requested scope. Report unrelated cleanup
   opportunities without expanding the change into an unsolicited refactor.
 
-## Write clearly and document properly
+## Document Python interfaces
 
-- Use descriptive names and straightforward code. Avoid cryptic abbreviations,
-  clever shorthand, dense expressions, and implicit tricks.
-- Write comments, docstrings, and documentation in formal, precise English,
-  without slang or unexplained jargon.
-- Document public modules, classes, and functions concisely, using docstrings
-  for Python code. Explain purpose, inputs, outputs, and relevant constraints;
-  include units, coordinate conventions, side effects, and raised exceptions
-  where applicable.
-- Explain non-obvious decisions in comments rather than restating the code.
-  Keep documentation accurate when behavior changes.
-
-## Keep changes focused and verifiable
-
-- State assumptions and meaningful tradeoffs before implementation. If a
-  requirement is ambiguous, name the uncertainty and ask rather than guessing.
-- For multi-step work, give a brief plan with a verifiable outcome for each step.
-- Match existing conventions unless they conflict with these instructions;
-  explain any necessary departure. Avoid unrelated formatting and refactoring.
-- Remove imports, variables, and helpers that your changes make unused. Leave
-  unrelated existing dead code alone. Every changed line should serve the
-  requested task.
-- Verify the affected behavior with appropriate checks. For bug fixes, reproduce
-  the failure and add a regression test where practical.
-- Evaluate review feedback independently; state agreement or disagreement and
-  the reason before implementing a suggestion.
-- Report what changed and distinguish checks that passed, failed, were skipped,
-  or were not run. Explicitly identify incomplete work and verification limits.
-- Use commit messages in the form `Type: Subject`, with a capitalized type and
-  sentence-case subject, for example `Fix: Reuse Core data validation`.
-- Do not add "Generated with" attributions to Codex CLI or Claude Code in GitHub
-  pull requests.
+- Document public Python modules, classes, and functions with concise docstrings.

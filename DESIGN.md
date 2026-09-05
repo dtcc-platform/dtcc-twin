@@ -82,6 +82,14 @@ models, or simulation logic owned by DTCC Core or DTCC Sim. Repository
 organization does not prescribe runtime topology: these responsibilities may
 be implemented by one or more processes or deployable components.
 
+### Repository layout
+
+`dtcc-engine/` contains the Python API layer exposing DTCC Core and DTCC Sim
+capabilities. It handles API requests and responses and coordinates upstream
+calls, reusing Core and Sim models, processing, and simulation logic. The
+placement of catalog and publication services, and the runtime deployment
+topology, remain open.
+
 ## Design principles
 
 ### One semantic authority
