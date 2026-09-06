@@ -23,6 +23,10 @@ limited cancellation, and Dataset Package delivery. It delegates task execution
 to Celery and uses one central Redis service for the broker and result backend.
 It must not grow into a custom task queue, workflow engine, or cluster manager.
 
+Engine evolves from Sim's existing mini-service and ultimately replaces it.
+The intended end state is one maintained service implementation in Engine,
+exposing both Core and Sim Dataset capabilities.
+
 ## Scope
 
 ### Included
@@ -124,6 +128,34 @@ selected worker executes the Dataset directly and does not forward it again.
 
 Task dispatch uses the shared broker. Consumer requests, host-local discovery,
 and package transfers use HTTP.
+
+## Service evolution and replacement
+
+Sim's existing mini-service is the starting point for Engine's service layer.
+Reuse and adapt its applicable Dataset task integration, progress reporting,
+HTTP behavior, and tests. Move service responsibilities into Engine while
+keeping Dataset definitions, model semantics, and computation in Core and Sim.
+Packaging improvements remain Core-owned upstream work.
+
+The migration must identify existing service consumers and deployment entry
+points, specify their transition to Engine, and verify the required replacement
+behavior. Temporary coexistence is permitted during that transition. The final
+architecture must not retain independently maintained Sim and Engine services
+for the same responsibilities.
+
+Once Engine satisfies the agreed acceptance checks and existing consumers have
+transitioned, retire the original mini-service implementation and its deployment
+entry points from Sim through a separate upstream change. That retirement is
+part of completing the migration; it does not remove Sim's Dataset definitions
+or numerical capabilities. Reference checkouts remain unchanged during Engine
+work.
+
+Core's `RemoteDatasetDescriptor` is a Python client, not the mini-service being
+replaced. Engine workers invoke local Dataset APIs directly and do not use that
+client for internal task dispatch. Adapting existing Python clients to Engine's
+API, or changing the remote Dataset client's lifecycle, requires a separate
+Core compatibility decision. Replacing the Sim mini-service does not itself
+authorize removing the Core client.
 
 ## Discovery and compatibility
 
@@ -383,9 +415,10 @@ tests or a verified release combination.
   creation boundary to reuse and improve upstream where necessary.
 - Sim's `service/tasks.py` already integrates Dataset invocation with Celery;
   `service/progress.py` bridges Core's progress callback to task state.
-  `service/routes.py` demonstrates discovery, submission, polling, and
-  cancellation. Reuse suitable public interfaces or separately propose making
-  reusable pieces public; do not assume service internals are stable APIs.
+  `service/routes.py` implements discovery, submission, polling, and
+  cancellation. These are the starting service implementation to evolve under
+  the replacement strategy above. Do not assume service internals are stable
+  public APIs or copy behavior that conflicts with this specification.
 
 ### Required upstream and integration work
 
@@ -439,6 +472,7 @@ one Engine address, whether execution was local or remote.
 | Local execution | A representative Core job runs through the real broker and worker, reports state, and produces a valid package. |
 | Simulation execution | Representative Sim jobs run with their actual numerical dependencies and preserve their model fields and provenance in the package. |
 | Remote execution | The selected remote worker executes the job directly; status and package download remain available through the entry address without a shared filesystem. |
+| Service replacement | Existing mini-service consumers and deployment entry points have an explicit migration path; final retirement in Sim is verified through a separate upstream change, leaving one maintained Engine service implementation. |
 | Routing | Automatic local preference, configured remote ordering, explicit targets, and all-hosts-busy queueing follow the routing table. |
 | Concurrency | Concurrent submissions never cause a host to execute more Dataset jobs than its configured worker limit, including when capacity observations race. |
 | Polling | Queued and running jobs are distinguishable; upstream progress is retained; missing progress is not fabricated; unknown IDs are not reported as queued. |
@@ -472,6 +506,11 @@ The plan must preserve the agreed scope and dependency ownership. Begin with
 upstream contract and dependency verification, then organize the Engine work
 into testable increments for discovery, local execution and packaging, remote
 targets and delivery, lifecycle behavior, and native deployment verification.
+
+Include an explicit migration from Sim's existing mini-service: identify the
+code and tests being reused or moved, transition existing consumers, and record
+the separate upstream retirement step. Do not treat building Engine alongside
+an indefinitely maintained duplicate service as completed replacement.
 
 Every increment must identify the public upstream interfaces it relies on,
 the checks that demonstrate its behavior, and any unresolved upstream blocker.
