@@ -11,9 +11,9 @@ other DTCC Platform components. Atlas and Table are the initial consumers,
 including the backend components supporting those experiences. Engine is a
 Python integration service, not an application that end users operate directly.
 
-This specification refines [DTCC Twin's design](../../../DESIGN.md) and follows
-the [repository instructions](../../../AGENTS.md) and
-[Engine instructions](../../../dtcc-engine/AGENTS.md). Core remains the authority
+This specification refines [DTCC Twin's design](../DESIGN.md) and follows
+the [repository instructions](../AGENTS.md) and
+[Engine instructions](../dtcc-engine/AGENTS.md). Core remains the authority
 for Dataset definitions, DTCC Model semantics, input/output, validation, and
 package contracts. Sim owns its simulation methods and specialized numerical
 dependencies.
@@ -485,10 +485,10 @@ work in that plan. They must not be silently added through this release's
 
 ## Supporting references
 
-- [Core Dataset contract and package design](../../../temp/dtcc-core/DESIGN.md).
-- [Core Dataset registration tests](../../../temp/dtcc-core/tests/datasets/test_dataset_registration.py).
-- [Core object package-export tests](../../../temp/dtcc-core/tests/datasets/test_object_export_package.py).
-- [Sim service route tests](../../../temp/dtcc-sim/tests/test_service_routes.py).
+- [Core Dataset contract and package design](../temp/dtcc-core/DESIGN.md).
+- [Core Dataset registration tests](../temp/dtcc-core/tests/datasets/test_dataset_registration.py).
+- [Core object package-export tests](../temp/dtcc-core/tests/datasets/test_object_export_package.py).
+- [Sim service route tests](../temp/dtcc-sim/tests/test_service_routes.py).
 - [Celery task queues and worker model](https://docs.celeryq.dev/en/stable/getting-started/introduction.html#what-s-a-task-queue).
 - [Celery queue routing](https://docs.celeryq.dev/en/stable/userguide/routing.html).
 - [Celery worker concurrency](https://docs.celeryq.dev/en/stable/userguide/workers.html#concurrency).
