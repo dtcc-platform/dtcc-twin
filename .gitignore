@@ -1,3 +1,24 @@
-temp/
-docs/
+# Dependencies and generated output, at every workspace level
+node_modules/
+.pnpm-store/
+dist/
+dist-ssr/
+build/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+.tanstack/
+
+# Local configuration; only the example is tracked
+.env
+.env.*
+!.env.example
+
+# Logs and local artifacts
+*.log
+.DS_Store
+.tmp/
+.temp/
 .playwright*
+
+temp/

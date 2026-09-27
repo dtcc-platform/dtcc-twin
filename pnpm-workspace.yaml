@@ -1,0 +1,40 @@
+packages:
+  - apps/*
+  - packages/*
+
+catalog:
+  "@eslint/js": ^10.0.1
+  "@types/node": ^24.13.3
+  "@vitest/coverage-v8": ^5.0.0
+  "@vitest/eslint-plugin": ^1.6.27
+  eslint: ^10.9.1
+  globals: ^17.12.0
+  typescript: ~6.0.2
+  typescript-eslint: ^8.69.0
+  vitest: ^5.0.0
+  zod: ^4.5.4
+
+engineStrict: true
+verifyDepsBeforeRun: error
+strictPeerDependencies: true
+
+# Seven days; fail closed when a package has no publication date.
+minimumReleaseAge: 10080
+minimumReleaseAgeIgnoreMissingTime: false
+# Temporary: @nestjs/drizzle 0.0.1 (2026-09-23) is inside the window. Delete this block and re-run
+# install from 2026-09-30.
+minimumReleaseAgeExclude:
+  - "@nestjs/drizzle"
+
+allowBuilds:
+  # Root prepare installs the hooks; block the dependency's own postinstall.
+  lefthook: false
+  # swagger-ui-dist's install-time telemetry.
+  "@scarf/scarf": false
+  # Optional native addons and postinstalls under testcontainers (ssh2, grpc); it runs without them.
+  cpu-features: false
+  protobufjs: false
+  ssh2: false
+  # Under drizzle-kit. The postinstall only verifies the native binary, which arrives anyway as an
+  # optional platform package (@esbuild/<os>-<arch>).
+  esbuild: false

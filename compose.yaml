@@ -1,0 +1,22 @@
+# Local development only; tests start their own containers.
+services:
+  postgres:
+    # Pinned to the major: uuidv7() needs 18, and minors arrive on pull.
+    image: postgres:18
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      # Loopback only, so the dev database is never reachable from the network.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
