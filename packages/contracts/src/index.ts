@@ -10,6 +10,14 @@ export {
   type SessionList,
 } from "./auth/auth.js";
 export { errorCodeSchema, type ErrorCode } from "./common/error-code.js";
+export {
+  datasetNameParamsSchema,
+  datasetPageSchema,
+  datasetSchema,
+  type Dataset,
+  type DatasetNameParams,
+  type DatasetPage,
+} from "./datasets/datasets.js";
 export { offsetPage, offsetPaginationQuerySchema, type OffsetPaginationQuery } from "./common/pagination.js";
 export { idParamsSchema, type IdParams } from "./common/params.js";
 export {
@@ -21,6 +29,24 @@ export {
   type ValidationIssue,
 } from "./common/error-response.js";
 export { healthStatusSchema, type HealthStatus } from "./health/health.js";
+export {
+  createJobBodySchema,
+  jobArtifactParamsSchema,
+  jobArtifactSchema,
+  jobPageSchema,
+  jobProgressSchema,
+  jobResultSchema,
+  jobSchema,
+  jobStateSchema,
+  type CreateJobBody,
+  type Job,
+  type JobArtifact,
+  type JobArtifactParams,
+  type JobPage,
+  type JobProgress,
+  type JobResult,
+  type JobState,
+} from "./jobs/jobs.js";
 export {
   createItemBodySchema,
   itemPageSchema,

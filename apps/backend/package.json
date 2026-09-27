@@ -17,7 +17,8 @@
     "test:debug": "vitest --inspect-brk --no-file-parallelism --project unit",
     "test:e2e": "vitest run --project e2e",
     "db:push": "drizzle-kit push",
-    "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts"
+    "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts",
+    "fixtures:engine": "docker build -t dtcc-engine-fixtures scripts/engine-fixtures && docker run --rm -v ./fixtures/engine:/out dtcc-engine-fixtures"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.3",
@@ -29,6 +30,7 @@
     "@repo/contracts": "workspace:*",
     "cookie-parser": "^1.4.7",
     "drizzle-orm": "1.0.0-rc.4",
+    "fflate": "^0.8.3",
     "helmet": "^8.3.0",
     "jose": "^6.2.12",
     "pg": "^8.23.0",

@@ -15,9 +15,20 @@ src/
   infra/database/         pool, shared columns, relations.ts
   docs/                   OpenAPI document and Swagger UI
   modules/<name>/         controller → service → repository, plus table and module
-scripts/                  db:seed
+scripts/                  db:seed; engine-fixtures/ records the fake engine's fixtures
+fixtures/engine/          recorded Core and Sim output the fake engine serves
 test/                     e2e specs and their helpers
 ```
+
+## DTCC Engine
+
+Modules reach DTCC Engine through `EngineClient` (`modules/engine/`). Until the engine exists, `EngineModule` binds it to `FakeEngineClient`, which serves `fixtures/engine/`: every Core and Sim descriptor, and packages for a few Datasets over one demo area around Chalmers. A Dataset is `available` only when a package was recorded for it. What we expect from the real engine is in [docs/engine-contract.md](../../docs/engine-contract.md).
+
+The fake runs a job for about 2 s queued and 8 s running, playing back Core's recorded progress, then completes with the recorded package whatever area was asked for.
+
+The fixtures aren't committed, since the recorded data's redistribution terms are unreviewed. Record them once with `pnpm --filter backend fixtures:engine` before the first `pnpm dev` or `pnpm check`; it needs Docker and access to the DTCC data server, and takes a few minutes. Without them the backend fails at startup.
+
+The engine only answers when asked, so `JobsService` brings a job up to date whenever it is read. When a job completes, the backend stores its `.dtccpkg` through `PackageStorage` (in `.data/packages/` for now) and keeps the manifest on the row. Artifacts are read out of the stored package on request.
 
 ## A request, end to end
 
@@ -52,11 +63,12 @@ test/                     e2e specs and their helpers
 
 From the repo root:
 
-| Command                                                 | Purpose                                        |
-| ------------------------------------------------------- | ---------------------------------------------- |
-| `pnpm dev:backend`                                      | Backend in watch mode (builds contracts first) |
-| `pnpm db:push` / `pnpm db:seed` / `pnpm db:reset`       | Sync tables / seed / recreate and do both      |
-| `pnpm --filter backend test:watch`                      | Unit tests in watch mode                       |
-| `pnpm test:e2e`                                         | All e2e tests                                  |
-| `pnpm --filter backend test:e2e users`                  | E2E files whose name matches `users`           |
-| `pnpm --filter backend exec vitest --project e2e users` | The same, in watch mode                        |
+| Command                                                 | Purpose                                                                             |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `pnpm dev:backend`                                      | Backend in watch mode (builds contracts first)                                      |
+| `pnpm db:push` / `pnpm db:seed` / `pnpm db:reset`       | Sync tables / seed / recreate and do both                                           |
+| `pnpm --filter backend test:watch`                      | Unit tests in watch mode                                                            |
+| `pnpm test:e2e`                                         | All e2e tests                                                                       |
+| `pnpm --filter backend test:e2e users`                  | E2E files whose name matches `users`                                                |
+| `pnpm --filter backend exec vitest --project e2e users` | The same, in watch mode                                                             |
+| `pnpm --filter backend fixtures:engine`                 | Record the fake engine's fixtures from real Core and Sim, in Docker (needs network) |

@@ -20,5 +20,10 @@ coverage/
 .tmp/
 .temp/
 .playwright*
+# Files the running backend writes, such as job packages
+.data/
 
 temp/
+
+# Recorded third-party data whose redistribution terms are unreviewed; see apps/backend/README.md
+apps/backend/fixtures/

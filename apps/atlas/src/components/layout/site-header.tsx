@@ -16,8 +16,8 @@ export function SiteHeader() {
   }
 
   return (
-    <header className="border-b">
-      <nav className="mx-auto flex max-w-6xl items-center gap-4 px-8 py-3 text-sm">
+    <header className="h-(--site-header-height) border-b">
+      <nav className="mx-auto flex h-full max-w-6xl items-center gap-4 px-8 text-sm">
         <Link to="/" className="font-semibold">
           Atlas
         </Link>

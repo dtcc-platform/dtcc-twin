@@ -1,11 +1,12 @@
 import { defineRelations } from "drizzle-orm";
 import { sessions } from "../../modules/auth/sessions.table.js";
 import { items } from "../../modules/items/items.table.js";
+import { jobs } from "../../modules/jobs/jobs.table.js";
 import { settings } from "../../modules/settings/settings.table.js";
 import { users } from "../../modules/users/users.table.js";
 
 // Add every new table here, even one without relations, or `db.query.<table>` won't exist.
-export const relations = defineRelations({ users, settings, items, sessions }, (r) => ({
+export const relations = defineRelations({ users, settings, items, sessions, jobs }, (r) => ({
   users: {
     settings: r.one.settings({ from: r.users.id, to: r.settings.userId }),
     // `many` infers its columns from the matching `one` below.

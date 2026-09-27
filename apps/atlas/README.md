@@ -17,6 +17,15 @@ src/
   hooks/, lib/           shared hooks and utilities
 ```
 
+## Workspace
+
+`/` is the workspace (`features/workspace/`), below the site header (`--site-header-height` in `index.css` sizes both). The sidebar holds what persists, the area and the layers, as two cards; picking data to add is a task, so it opens over the map instead.
+
+- **Areas** (`features/area/`): the areas drawn so far, kept in `localStorage`. Drawing a box on the map (Terra Draw, by clicking two opposite corners) saves it under a dated name and selects it; with none selected, the card lists them to pick or delete. The selected area shows its size, layer count and EPSG:3006 bounds (from its south-west and north-east corners, which jobs get), and can be renamed, moved, resized or given exact edges under "Edit bounds". Once it has layers its bounds lock, since they were computed for them.
+- **Layers** (`features/layers/`): the selected area's jobs, matched on their exact bounds, top first; hidden with no area selected. Polled every second while any is unfinished; a bar shows only progress Core measured, and pulses without a percentage otherwise. A completed job's GeoJSON artifact is reprojected from EPSG:3006 to WGS84 in the browser and drawn on the map in the layer's colour; the camera stays where the user put it. Each row can hide or show its layer; its ⋯ menu sets opacity, zooms to it, moves it up or down, opens its details (the package manifest's summary, sources, license, warnings and limitations, and the package download) or removes it. Visibility, opacity, order and removals live in `localStorage`. A result without GeoJSON, such as DeSO's model-only package, says it can't be drawn yet.
+- **Add data** (`features/datasets/`): a non-modal sheet over the map, so the area stays editable. The catalogue from `GET /api/datasets`, grouped by category, then a form generated from the chosen Dataset's `argsSchema` (`dataset-form.ts`). Bounds, format, CRS and `strict_live` are set by the app, not the form. Running closes the sheet, and the new layer appears in the sidebar.
+- **The map** (`features/map/`) opens on the demo area in `demo-area.ts`, the only place the fake engine has results for. OpenFreeMap's Bright is the default basemap, with point-of-interest icons hidden. The switcher offers the others in `basemaps.ts` and keeps the drawn area across a switch. Setting `VITE_CARTO_API_KEY` in `.env.local` (see `.env.example`) adds the old Atlas's Carto Voyager; Vite reads it at startup.
+
 ## Talking to the API
 
 - `api` in `src/api/client/api-client.ts` is the axios instance. Its base URL is `/api`, which the dev server proxies to the backend on port 3030; `VITE_API_URL` points it at another origin. Cookies go with every request.
