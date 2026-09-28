@@ -391,6 +391,41 @@ working numerical execution environment. Native worker execution and the
 specialized Sim dependencies must be exercised on the supported platforms;
 platform limitations must be stated explicitly.
 
+## Local development environment
+
+A container image supports local development and testing of Twin. It is not a
+deployment target and does not change the native deployment requirements above.
+It provides Core, Sim, FEniCSx, and the TetGen wrapper on Linux, so developers
+need Docker rather than a native numerical installation.
+
+- One image serves both the Engine HTTP service and the Celery worker, matching
+  the single installed package described in the runtime architecture.
+- The image installs pinned commits of Sim and the TetGen wrapper, supplied as
+  build arguments. Core is installed at the commit that Sim pins, so Core and
+  Sim remain a compatible pair. The build does not read the reference
+  checkouts under `temp/`.
+- The image includes TetGen because Core uses it to generate the volume meshes
+  that Sim's FEniCSx simulations require. The wrapper and TetGen are licensed
+  under AGPL-3.0; review that license before publishing the image to a registry.
+- The image builds for the host architecture, including `linux/arm64` on Apple
+  silicon, because emulated numerical execution is slow.
+- The root `compose.yaml` places Engine services behind the `engine` profile,
+  so developers who work only on the frontend or backend never build the image.
+  Redis is added together with the worker. Engine publishes its HTTP port on
+  the loopback interface only.
+- Until Engine code exists, the image runs a smoke check that imports Core, Sim,
+  FEniCSx, and the TetGen wrapper, tetrahedralizes a unit cube with TetGen, and
+  assembles its volume with FEniCSx. The check is removed once Engine code
+  provides its own verification.
+
+The frontend does not call Engine directly. The shared Engine token must not be
+exposed to browsers, so the Twin backend holds the token and forwards the Engine
+requests that the frontend needs. The frontend continues to use only the
+backend's `/api` address.
+
+A passing smoke check verifies only the Linux container environment. It does
+not provide the native Linux and macOS evidence required for acceptance.
+
 ## Upstream inspection and implementation prerequisites
 
 The following observations come from the local reference checkouts inspected
