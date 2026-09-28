@@ -15,10 +15,10 @@ TypeScript / ESM monorepo managed with pnpm workspaces, plus the Python engine.
 
 | Package                                              | What it is                                                        |
 | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| [`apps/atlas`](apps/atlas/README.md)                 | Atlas, the interactive workspace: React SPA with TanStack Router  |
+| [`apps/frontend`](apps/frontend/README.md)           | The web app: React SPA with TanStack Router                       |
 | [`apps/backend`](apps/backend/README.md)             | NestJS API under `/api`                                           |
 | [`apps/engine`](apps/engine/AGENTS.md)               | DTCC Engine, a Python API over DTCC Core and Sim; not yet started |
-| [`packages/contracts`](packages/contracts/README.md) | Zod schemas and types shared by the backend and Atlas             |
+| [`packages/contracts`](packages/contracts/README.md) | Zod schemas and types shared by the backend and the frontend      |
 
 Table, the experience projected onto physical city models, will be `apps/table`.
 
@@ -36,30 +36,30 @@ pnpm db:push && pnpm db:seed                   # tables and sample users
 pnpm dev
 ```
 
-- Atlas: <http://localhost:3000>, proxying `/api` to the backend. Log in as `admin@example.com` with password `password`.
+- Frontend: <http://localhost:3000>, proxying `/api` to the backend. Log in as `admin@example.com` with password `password`.
 - Backend: <http://localhost:3030/api>, Swagger UI at <http://localhost:3030/api/docs>.
 
 ## Commands
 
 From the repo root:
 
-| Command                                      | Purpose                                                                     |
-| -------------------------------------------- | --------------------------------------------------------------------------- |
-| `pnpm dev`                                   | The backend and Atlas in watch mode                                         |
-| `pnpm check`                                 | Everything CI runs: format, lint, typecheck, unit, e2e, build. Needs Docker |
-| `pnpm lint` / `pnpm typecheck` / `pnpm test` | The fast subset while iterating                                             |
-| `pnpm test:e2e`                              | Backend e2e tests                                                           |
-| `pnpm format`                                | Format the repo with Prettier                                               |
-| `pnpm db:push`                               | Sync the backend tables into `DATABASE_URL`                                 |
-| `pnpm db:seed`                               | Add the sample users; asks before wiping a non-empty database               |
-| `pnpm db:reset`                              | Recreate the compose database, push and seed                                |
-| `pnpm build`                                 | Build the contracts, the backend and Atlas into their `dist/` directories   |
+| Command                                      | Purpose                                                                          |
+| -------------------------------------------- | -------------------------------------------------------------------------------- |
+| `pnpm dev`                                   | The backend and the frontend in watch mode                                       |
+| `pnpm check`                                 | Everything CI runs: format, lint, typecheck, unit, e2e, build. Needs Docker      |
+| `pnpm lint` / `pnpm typecheck` / `pnpm test` | The fast subset while iterating                                                  |
+| `pnpm test:e2e`                              | Backend e2e tests                                                                |
+| `pnpm format`                                | Format the repo with Prettier                                                    |
+| `pnpm db:push`                               | Sync the backend tables into `DATABASE_URL`                                      |
+| `pnpm db:seed`                               | Add the sample users; asks before wiping a non-empty database                    |
+| `pnpm db:reset`                              | Recreate the compose database, push and seed                                     |
+| `pnpm build`                                 | Build the contracts, the backend and the frontend into their `dist/` directories |
 
 The package READMEs list their own, such as running one e2e file.
 
 ## Contracts during development
 
-The backend and Atlas typecheck against the contracts' source, but the running backend loads their compiled `dist/`. `pnpm dev` keeps it rebuilt; if the backend ignores a contract change that types and tests already see, see [stale `dist`](packages/contracts/README.md#how-the-apps-load-it).
+The backend and the frontend typecheck against the contracts' source, but the running backend loads their compiled `dist/`. `pnpm dev` keeps it rebuilt; if the backend ignores a contract change that types and tests already see, see [stale `dist`](packages/contracts/README.md#how-the-apps-load-it).
 
 ## Repo tooling
 

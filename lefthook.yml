@@ -16,8 +16,8 @@ pre-commit:
       glob: "*.ts"
       run: pnpm eslint {staged_files}
       fail_text: Fix the lint errors above, then stage and retry.
-    lint-atlas:
-      root: apps/atlas/
+    lint-frontend:
+      root: apps/frontend/
       glob: "*.{ts,tsx}"
       run: pnpm eslint {staged_files}
       fail_text: Fix the lint errors above, then stage and retry.

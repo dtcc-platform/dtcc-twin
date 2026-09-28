@@ -19,7 +19,7 @@ export function SiteHeader() {
     <header className="border-b">
       <nav className="mx-auto flex max-w-6xl items-center gap-4 px-8 py-3 text-sm">
         <Link to="/" className="font-semibold">
-          Atlas
+          DTCC Twin
         </Link>
         {me.data ? (
           <>

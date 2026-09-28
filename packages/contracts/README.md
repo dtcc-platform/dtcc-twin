@@ -1,6 +1,6 @@
 # @repo/contracts
 
-Zod schemas, and the types inferred from them, for every request and response of the API. The backend validates and serializes with them; Atlas types its API calls and forms with them. A contract change is a compile error wherever it breaks something, on both sides.
+Zod schemas, and the types inferred from them, for every request and response of the API. The backend validates and serializes with them; the frontend types its API calls and forms with them. A contract change is a compile error wherever it breaks something, on both sides.
 
 ## How the apps load it
 

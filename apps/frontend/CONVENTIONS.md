@@ -1,4 +1,4 @@
-# Atlas conventions
+# Frontend conventions
 
 ## Rules
 

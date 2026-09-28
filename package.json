@@ -11,7 +11,7 @@
     "prepare": "node -e \"if (require('node:fs').existsSync('.git')) require('node:child_process').execSync('lefthook install', { stdio: 'inherit' })\"",
     "dev": "pnpm --filter @repo/contracts build && pnpm --parallel -r run dev",
     "dev:backend": "pnpm --filter @repo/contracts build && pnpm --parallel --filter backend... run dev",
-    "dev:atlas": "pnpm --filter atlas run dev",
+    "dev:frontend": "pnpm --filter frontend run dev",
     "build": "pnpm -r run build",
     "lint": "pnpm -r run lint",
     "format": "prettier . --write",

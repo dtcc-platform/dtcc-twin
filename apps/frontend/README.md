@@ -1,4 +1,4 @@
-# Atlas
+# Frontend
 
 React 19 and Vite 8, with TanStack Router (file-based routes) and TanStack Query, and Tailwind 4 with an owned shadcn kit on Base UI.
 
@@ -44,11 +44,11 @@ src/
 
 From the repo root:
 
-| Command                          | Purpose                               |
-| -------------------------------- | ------------------------------------- |
-| `pnpm dev:atlas`                 | Dev server at <http://localhost:3000> |
-| `pnpm --filter atlas test:watch` | Unit tests in watch mode              |
-| `pnpm --filter atlas build`      | Typecheck and build into `dist/`      |
-| `pnpm --filter atlas preview`    | Serve the build locally               |
+| Command                             | Purpose                               |
+| ----------------------------------- | ------------------------------------- |
+| `pnpm dev:frontend`                 | Dev server at <http://localhost:3000> |
+| `pnpm --filter frontend test:watch` | Unit tests in watch mode              |
+| `pnpm --filter frontend build`      | Typecheck and build into `dist/`      |
+| `pnpm --filter frontend preview`    | Serve the build locally               |
 
 In development, two buttons in the bottom corners open the query cache (right) and the router (left) inspectors; production builds leave them out.

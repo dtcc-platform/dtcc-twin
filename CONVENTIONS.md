@@ -1,6 +1,6 @@
 # Conventions
 
-Repo-wide rules. Each package's own are in its `CONVENTIONS.md`: [backend](apps/backend/CONVENTIONS.md), [atlas](apps/atlas/CONVENTIONS.md), [contracts](packages/contracts/CONVENTIONS.md). The engine's are in [apps/engine/AGENTS.md](apps/engine/AGENTS.md).
+Repo-wide rules. Each package's own are in its `CONVENTIONS.md`: [backend](apps/backend/CONVENTIONS.md), [frontend](apps/frontend/CONVENTIONS.md), [contracts](packages/contracts/CONVENTIONS.md). The engine's are in [apps/engine/AGENTS.md](apps/engine/AGENTS.md).
 
 ## Rules
 
