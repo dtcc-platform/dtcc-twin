@@ -1,0 +1,38 @@
+# Run the project's Lefthook and fail if it is missing; the default hook script exits 0 instead.
+lefthook: node node_modules/lefthook/bin/index.js
+# Print only failing checks and a summary, so Git GUIs such as VS Code show the failing check first.
+output:
+  - failure
+  - summary
+
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      run: pnpm prettier --check --ignore-unknown {staged_files}
+      fail_text: Run pnpm format, review, and stage the changes.
+    lint-backend:
+      root: apps/backend/
+      glob: "*.ts"
+      run: pnpm eslint {staged_files}
+      fail_text: Fix the lint errors above, then stage and retry.
+    lint-atlas:
+      root: apps/atlas/
+      glob: "*.{ts,tsx}"
+      run: pnpm eslint {staged_files}
+      fail_text: Fix the lint errors above, then stage and retry.
+    lint-contracts:
+      root: packages/contracts/
+      glob: "*.ts"
+      run: pnpm eslint {staged_files}
+      fail_text: Fix the lint errors above, then stage and retry.
+
+pre-push:
+  parallel: true
+  commands:
+    typecheck:
+      run: pnpm run typecheck
+      fail_text: Fix the type errors above before pushing.
+    tests:
+      run: pnpm run test
+      fail_text: Fix the failing tests above before pushing.

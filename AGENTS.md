@@ -1,41 +1,9 @@
-# DTCC Twin instructions
+# Agent guidelines
 
-These instructions apply throughout the repository.
+Read [README.md](README.md) and [CONVENTIONS.md](CONVENTIONS.md) before making changes. Each package's rules are in its own `CONVENTIONS.md`; read them before you change that package.
 
-Before planning or making changes under `dtcc-engine/`, read and follow
-[dtcc-engine/AGENTS.md](dtcc-engine/AGENTS.md).
-
-The linked engine instructions apply only to `dtcc-engine/` and its subdirectories.
-
-## Write clearly and document properly
-
-- Use descriptive names and straightforward code. Avoid cryptic abbreviations,
-  clever shorthand, dense expressions, and implicit tricks.
-- Write comments, docstrings, and documentation in formal, precise English,
-  without slang or unexplained jargon.
-- Document public modules, classes, and functions concisely. Explain purpose,
-  inputs, outputs, and relevant constraints; include units, coordinate
-  conventions, side effects, and raised exceptions where applicable.
-- Explain non-obvious decisions in comments rather than restating the code.
-  Keep documentation accurate when behavior changes.
-
-## Keep changes focused and verifiable
-
-- State assumptions and meaningful tradeoffs before implementation. If a
-  requirement is ambiguous, name the uncertainty and ask rather than guessing.
-- For multi-step work, give a brief plan with a verifiable outcome for each step.
-- Match existing conventions unless they conflict with these instructions;
-  explain any necessary departure. Avoid unrelated formatting and refactoring.
-- Remove imports, variables, and helpers that your changes make unused. Leave
-  unrelated existing dead code alone. Every changed line should serve the
-  requested task.
-- Verify the affected behavior with appropriate checks. For bug fixes, reproduce
-  the failure and add a regression test where practical.
-- Evaluate review feedback independently; state agreement or disagreement and
-  the reason before implementing a suggestion.
-- Report what changed and distinguish checks that passed, failed, were skipped,
-  or were not run. Explicitly identify incomplete work and verification limits.
-- Use commit messages in the form `Type: Subject`, with a capitalized type and
-  sentence-case subject, for example `Fix: Reuse Core data validation`.
-- Do not add AI-generated attribution, AI co-author trailers, or agent session
-  links to commit messages or pull requests.
+- **Git is read-only.** Never stage, unstage, commit, or otherwise mutate Git state, including branches, worktrees, stashes, hooks, or Git configuration. The team reviews, adjusts, stages, and commits changes.
+- **Plan before coding.** Verify assumptions, consider simpler alternatives, and settle the design and test approach upfront. Discuss unresolved tradeoffs and likely review objections before implementation; extra planning is preferable to avoidable rework.
+- **Tests first, then implement from the spec** (see Tests in CONVENTIONS.md). Confirm each new test fails because the behavior is missing, not because of a compile, import or setup error. Then implement against the spec, not the tests: don't read the test files to shape the code, and treat the suite as a verification gate. Tests can be wrong or incomplete; don't bend the implementation into extra complexity or a worse design just to satisfy one. If a test change would improve both the code and the coverage of the flows that matter, stop work immediately and discuss it with your reasoning; don't edit the test or continue implementing until the change is approved. Never skip or weaken a test to get to green, and never special-case test inputs.
+- **Review notes.** A note left only to speed up review is prefixed `// REVIEW:` so it is greppable; the team deletes these before committing. You can add them where you think it's warranted.
+- **Validate before review.** Run `pnpm check` before handing a task over, and report the results and any unresolved failures. During development, use targeted tests, typechecks and lint.

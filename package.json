@@ -1,0 +1,36 @@
+{
+  "name": "dtcc-twin",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": "^24.20.0"
+  },
+  "scripts": {
+    "prepare": "node -e \"if (require('node:fs').existsSync('.git')) require('node:child_process').execSync('lefthook install', { stdio: 'inherit' })\"",
+    "dev": "pnpm --filter @repo/contracts build && pnpm --parallel -r run dev",
+    "dev:backend": "pnpm --filter @repo/contracts build && pnpm --parallel --filter backend... run dev",
+    "dev:atlas": "pnpm --filter atlas run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "test:e2e": "pnpm --filter backend run test:e2e",
+    "db:push": "pnpm --filter backend run db:push",
+    "db:seed": "pnpm --filter backend run db:seed",
+    "db:reset": "docker compose down -v && docker compose up -d --wait && pnpm run db:push && pnpm run db:seed",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run test:e2e && pnpm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@vitest/eslint-plugin": "catalog:",
+    "eslint": "catalog:",
+    "lefthook": "2.1.12",
+    "prettier": "3.9.6",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:"
+  }
+}

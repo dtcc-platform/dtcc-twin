@@ -1,1 +1,3 @@
 @AGENTS.md
+@README.md
+@CONVENTIONS.md
