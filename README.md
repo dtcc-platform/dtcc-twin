@@ -13,12 +13,12 @@ This project is part of the [Digital Twin Platform (DTCC Platform)](https://gith
 
 TypeScript / ESM monorepo managed with pnpm workspaces, plus the Python engine.
 
-| Package                                              | What it is                                                        |
-| ---------------------------------------------------- | ----------------------------------------------------------------- |
-| [`apps/frontend`](apps/frontend/README.md)           | The web app: React SPA with TanStack Router                       |
-| [`apps/backend`](apps/backend/README.md)             | NestJS API under `/api`                                           |
-| [`apps/engine`](apps/engine/AGENTS.md)               | DTCC Engine, a Python API over DTCC Core and Sim; not yet started |
-| [`packages/contracts`](packages/contracts/README.md) | Zod schemas and types shared by the backend and the frontend      |
+| Package                                              | What it is                                                                                 |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`apps/frontend`](apps/frontend/README.md)           | The web app: React SPA with TanStack Router                                                |
+| [`apps/backend`](apps/backend/README.md)             | NestJS API under `/api`                                                                    |
+| [`apps/engine`](apps/engine/AGENTS.md)               | DTCC Engine, a Python API over DTCC Core and Sim; only its development image exists so far |
+| [`packages/contracts`](packages/contracts/README.md) | Zod schemas and types shared by the backend and the frontend                               |
 
 Table, the experience projected onto physical city models, will be `apps/table`.
 
@@ -39,6 +39,8 @@ pnpm dev
 - Frontend: <http://localhost:3000>, proxying `/api` to the backend. Log in as `admin@example.com` with password `password`.
 - Backend: <http://localhost:3030/api>, Swagger UI at <http://localhost:3030/api/docs>.
 
+The engine's development image is optional and large. Frontend and backend work does not need it; `pnpm engine:check` builds it and runs a smoke check: DTCC Core, FEniCSx and TetGen mesh and solve a small problem, and DTCC Sim imports.
+
 ## Commands
 
 From the repo root:
@@ -53,6 +55,7 @@ From the repo root:
 | `pnpm db:push`                               | Sync the backend tables into `DATABASE_URL`                                      |
 | `pnpm db:seed`                               | Add the sample users; asks before wiping a non-empty database                    |
 | `pnpm db:reset`                              | Recreate the compose database, push and seed                                     |
+| `pnpm engine:check`                          | Build the engine's development image and run its smoke check. Needs Docker       |
 | `pnpm build`                                 | Build the contracts, the backend and the frontend into their `dist/` directories |
 
 The package READMEs list their own, such as running one e2e file.

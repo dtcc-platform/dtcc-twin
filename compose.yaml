@@ -18,5 +18,10 @@ services:
       timeout: 3s
       retries: 10
 
+  engine:
+    # Optional: a large Core, Sim and FEniCSx image.
+    profiles: [engine]
+    build: apps/engine
+
 volumes:
   postgres-data:

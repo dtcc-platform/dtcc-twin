@@ -414,9 +414,10 @@ need Docker rather than a native numerical installation.
   Redis is added together with the worker. Engine publishes its HTTP port on
   the loopback interface only.
 - Until Engine code exists, the image runs a smoke check that imports Core, Sim,
-  FEniCSx, and the TetGen wrapper, tetrahedralizes a unit cube with TetGen, and
-  assembles its volume with FEniCSx. The check is removed once Engine code
-  provides its own verification.
+  FEniCSx, and the TetGen wrapper, tetrahedralizes a unit cube with TetGen,
+  assembles its volume and solves a small problem through PETSc with FEniCSx,
+  and writes the mesh to an HDF5 file that h5py reads back. The check is removed
+  once Engine code provides its own verification.
 
 The frontend does not call Engine directly. The shared Engine token must not be
 exposed to browsers, so the Twin backend holds the token and forwards the Engine
