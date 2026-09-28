@@ -22,6 +22,30 @@ services:
     # Optional: a large Core, Sim and FEniCSx image.
     profiles: [engine]
     build: apps/engine
+    command:
+      [
+        "uvicorn",
+        "dtcc_engine.api:create_app_from_environment",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
+    environment:
+      # Local development only: the port below is reachable from this machine alone.
+      ENGINE_API_TOKEN: ${ENGINE_API_TOKEN:-local-dev-engine-token}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./apps/engine:/app
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
 volumes:
   postgres-data:

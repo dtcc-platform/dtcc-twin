@@ -165,6 +165,15 @@ that same registry. Engine exposes those definitions with application metadata
 about configured targets and observed availability. This is a discovery view,
 not a competing Dataset registry.
 
+Engine returns each registered Dataset's Core `describe()` output unchanged,
+keyed by Dataset name. It does not filter Datasets by package, infer formats
+from schemas, or supply default values for missing descriptor fields. The
+listing also reports the installed Engine, Core, and Sim versions and a catalog
+revision: a SHA-256 digest of the versions and descriptions, which changes
+whenever either changes. Engine reads the registry on each request, so the
+revision is the catalog's refresh mechanism; newly installed Python code still
+requires restarting the Engine processes.
+
 Each target reports its own local capabilities and installed Engine, Core, and
 Sim versions. Host-local discovery must not recursively query other hosts.
 The consumer-facing service combines this information for discovery and target
@@ -377,6 +386,11 @@ Configuration supplies the central broker/result-backend connection, one
 shared Engine HTTP token, the local target identity, the static remote-target
 list, per-host concurrent-job limits, and local temporary result directories.
 All Engine HTTP services use the shared token; there are no per-consumer roles.
+The only exception is an unauthenticated health route that reports liveness and
+returns no Dataset, job, or version information, so that process supervisors
+and Compose can probe the service. The token must use the RFC 6750 bearer-token
+characters; Engine refuses to start with an empty or malformed token, because
+such a token could never match a well-formed `Authorization` header.
 Broker connectivity has its own deployment configuration and protection; an
 HTTP API token is not a Redis authentication protocol.
 
@@ -413,30 +427,32 @@ need Docker rather than a native numerical installation.
   so developers who work only on the frontend or backend never build the image.
   Redis is added together with the worker. Engine publishes its HTTP port on
   the loopback interface only.
-- Until Engine code exists, the image runs a smoke check that imports Core, Sim,
-  FEniCSx, and the TetGen wrapper, tetrahedralizes a unit cube with TetGen,
-  assembles its volume and solves a small problem through PETSc with FEniCSx,
-  and writes the mesh to an HDF5 file that h5py reads back. The check is removed
-  once Engine code provides its own verification.
+- Engine's test suite runs in this image through `pnpm engine:check`. It is not
+  part of the repository-wide `pnpm check`, which does not build the image. Its
+  environment tests check that Core, Sim, FEniCSx, and the TetGen wrapper are
+  installed; that TetGen tetrahedralizes a unit cube; that FEniCSx assembles its
+  volume and solves a small problem through PETSc; and that the mesh round-trips
+  through an HDF5 file read back by h5py.
 
 The frontend does not call Engine directly. The shared Engine token must not be
 exposed to browsers, so the Twin backend holds the token and forwards the Engine
 requests that the frontend needs. The frontend continues to use only the
 backend's `/api` address.
 
-A passing smoke check verifies only the Linux container environment. It does
-not provide the native Linux and macOS evidence required for acceptance.
+Passing tests in the container verify only the Linux container environment.
+They do not provide the native Linux and macOS evidence required for acceptance.
 
 ## Upstream inspection and implementation prerequisites
 
-The following observations come from the local reference checkouts inspected
-during planning. They are source observations, not claims of passing runtime
-tests or a verified release combination.
+The following observations come from the revisions installed in the development
+image, inspected through GitHub at those commits. They are source observations,
+not claims of passing runtime tests or a verified release combination.
 
-| Reference                           | Inspected revision                         |
-| ----------------------------------- | ------------------------------------------ |
-| `temp/dtcc-core/`, branch `develop` | `61b2015ed6632757dcd67ccf3f97d8768e6776e6` |
-| `temp/dtcc-sim/`, branch `develop`  | `78093e7e10a4d4a5695fcf3242560fb60ea4d5d5` |
+| Reference                  | Inspected revision                         |
+| -------------------------- | ------------------------------------------ |
+| `dtcc-core`, pinned by Sim | `5ca2ca410f24763591dc62c7b61f870cef13f717` |
+| `dtcc-sim`                 | `2422bbafac6ef07466ca1bcd6905bbd99a8c2ecf` |
+| `dtcc-tetgen-wrapper`      | `22ab9ff2ee1dd03f82ce24dd0f378f00da7e487c` |
 
 ### Reusable interfaces
 
@@ -458,25 +474,28 @@ tests or a verified release combination.
 
 ### Required upstream and integration work
 
-1. **Canonical package content belongs in Core.** The inspected exporter writes
-   a manifest and the selected artifact format, including companion files. It
-   does not automatically add a canonical Protobuf artifact. For example, its
-   City package tests permit `manifest.json` plus `artifacts/city.json` only.
-   Resolve canonical Protobuf inclusion in Core before claiming compliant
-   Engine package delivery. Do not implement a competing package writer in
-   Engine.
-2. **Model exchange readiness belongs in Core, with Sim integration where
-   applicable.** Verify that each exposed semantic result type satisfies the
-   Protobuf round-trip contract, and that Core provides the package validation
-   and reading operations needed by Engine. The inspected transitional
-   `DatasetCollection` and `DatasetValue` classes explicitly lack Protobuf
-   serialization. Their existence does not prove that a current public Dataset
-   returns them, so verify actual Dataset results rather than inferring a
-   blanket failure. Missing semantics or codecs require upstream resolution.
-3. **Dependency alignment must be verified.** The inspected Sim `pyproject.toml`
-   pins Core to `9774162563d94a038a9ae799495020101b8250d7`, which differs from the
-   inspected Core checkout. Establish and test a compatible dependency baseline
-   before writing integrations that assume these revisions work together.
+1. **Canonical package content is provided by Core; Engine uses it.** At the
+   pinned commit, `dtcc_core/datasets/package.py` writes canonical v3 packages
+   when a realization is exported with `canonical=True`: a manifest plus a
+   `canonical_model` Protobuf artifact, with an optional supplemental format.
+   The default export remains the legacy v2 layout without a canonical
+   artifact, so Engine must request canonical export explicitly. Core's
+   `load_model_package` reads canonical packages and integrity-checks every
+   declared artifact. Package the realization that the job already computed;
+   `DatasetDescriptor.export()` rebuilds the Dataset and must not be used for
+   delivery. Do not implement a competing package writer in Engine.
+2. **Model exchange readiness must be verified per Dataset result type.**
+   Canonical export exists, but its existence does not prove that every Core
+   and Sim Dataset's actual result type round-trips through it. Verify each
+   exposed result type by canonical export and `load_model_package`, preserving
+   model fields and provenance. The pinned commit still defines the transitional
+   `DatasetCollection` and `DatasetValue` classes; whether a public Dataset
+   returns them, and whether they round-trip, is part of that verification.
+   Missing semantics or codecs require upstream resolution in Core or Sim.
+3. **Dependency alignment is established for the development image.** The
+   image installs Sim at a pinned commit and Core at the commit that Sim pins,
+   so the two form the tested pair. Re-verify this pair, and the interfaces each
+   increment relies on, whenever a pin changes.
 4. **Remote delivery needs an Engine integration boundary.** Core's existing
    `RemoteDatasetDescriptor` waits for completion and reads serialized results
    from a shared filesystem. Sim's result handler writes individual formats or
@@ -517,7 +536,7 @@ one Engine address, whether execution was local or remote.
 | Package correctness  | Core validation confirms manifest integrity, required canonical Protobuf content, and supported schema/root type; model-level tests demonstrate lossless round trips.                                                      |
 | Retention            | Completed packages remain retrievable during the 30-day retention window under normal operation, expire from the completion time, and are physically cleaned up; downloads do not reset expiry.                            |
 | Restart behavior     | Separate API, worker, and broker restarts do not promise recovery or force deletion of surviving work; unavailable and unknown state are reported honestly.                                                                |
-| Authentication       | HTTP endpoints reject missing or invalid tokens and accept the configured token; remote discovery and delivery use the same authentication policy.                                                                         |
+| Authentication       | HTTP endpoints other than the health route reject missing or invalid tokens and accept the configured token; remote discovery and delivery use the same authentication policy.                                             |
 | Native deployment    | Linux and macOS worker setups are exercised, including real Core/Sim dependencies; unavailable environments and unverified capabilities are explicitly reported.                                                           |
 
 Use focused contract tests for API translation and routing, and integration

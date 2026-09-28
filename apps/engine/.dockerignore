@@ -1,2 +1,5 @@
 *
-!smoke_check.py
+!pyproject.toml
+!dtcc_engine/
+!tests/
+**/__pycache__

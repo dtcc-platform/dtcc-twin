@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dtcc-engine"
+version = "0.1.0"
+description = "DTCC Engine: an HTTP service over the Datasets of DTCC Core and DTCC Sim"
+requires-python = ">=3.12"
+# Core and Sim versions are pinned by the environment (see Dockerfile), not here.
+dependencies = [
+    "dtcc-core",
+    "dtcc-sim",
+    "fastapi==0.141.1",
+    "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1", "httpx==0.28.1"]
+
+[tool.setuptools.packages.find]
+include = ["dtcc_engine*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

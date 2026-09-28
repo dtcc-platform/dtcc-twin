@@ -26,6 +26,12 @@ The Engine specification is [DESIGN.md](DESIGN.md) in this directory.
   the APIs you need.
 - Verify API names, arguments, return values, and contracts from source. Do not
   invent an API or assume that a design document describes implemented behavior.
+- Verify claims about the installed dependencies at the commits pinned in the
+  "Upstream inspection and implementation prerequisites" section of
+  [DESIGN.md](DESIGN.md), not only in the `develop` checkouts, which can differ.
+  Read a file at a pinned commit without changing the checkout, for example
+  `git -C temp/dtcc-core show <commit>:<path>` when the commit is present, or
+  through GitHub at that commit.
 - If a checkout is missing, use the setup commands below. If setup is blocked
   or the required behavior is unclear, report the gap and resolve it before
   writing code that depends on it.

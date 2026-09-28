@@ -9,6 +9,7 @@ coverage/
 *.tsbuildinfo
 .tanstack/
 __pycache__/
+.pytest_cache/
 
 # Local configuration; only the example is tracked
 .env

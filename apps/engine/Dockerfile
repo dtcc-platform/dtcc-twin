@@ -37,8 +37,12 @@ RUN pip install --no-cache-dir \
 
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
-COPY smoke_check.py .
+COPY pyproject.toml ./
+COPY dtcc_engine ./dtcc_engine
+RUN pip install --no-cache-dir -e ".[test]"
+COPY tests ./tests
 
 # `conda run` does not forward SIGTERM to its child, so activate and exec under the base image's tini.
 ENTRYPOINT ["tini", "--", "/bin/bash", "-c", "source /opt/conda/etc/profile.d/conda.sh && conda activate engine && exec \"$@\"", "engine"]
-CMD ["python", "smoke_check.py"]
+EXPOSE 8000
+CMD ["uvicorn", "dtcc_engine.api:create_app_from_environment", "--factory", "--host", "0.0.0.0", "--port", "8000"]
