@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useStore } from "zustand";
 import { FloatingCard } from "@/components/floating-card";
-import { HintBar } from "@/features/hint-bar/hint-bar";
-import { MapView } from "@/features/map/map-view";
-import { Toolbar } from "@/features/toolbar/toolbar";
-import { TopBar } from "@/features/top-bar/top-bar";
+import { HintBar } from "@/features/workspace/hint-bar/hint-bar";
+import { MapView } from "@/features/workspace/map/map-view";
+import { Toolbar } from "@/features/workspace/toolbar/toolbar";
+import { TopBar } from "@/features/workspace/top-bar/top-bar";
 import { cn } from "@/lib/utils";
 import { WorkspaceStoreContext, createWorkspaceStore } from "./workspace-store";
 
