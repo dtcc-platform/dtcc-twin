@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useStore } from "zustand";
 import { FloatingCard } from "@/components/floating-card";
+import { HintBar } from "@/features/hint-bar/hint-bar";
 import { MapView } from "@/features/map/map-view";
 import { Toolbar } from "@/features/toolbar/toolbar";
 import { TopBar } from "@/features/top-bar/top-bar";
@@ -56,6 +57,7 @@ export function Workspace() {
           {right === "upload" && <FloatingCard title="Upload" onClose={closeRight} />}
         </div>
       )}
+      <HintBar />
     </WorkspaceStoreContext>
   );
 }
