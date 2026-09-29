@@ -44,7 +44,8 @@ exposing both Core and Sim Dataset capabilities.
 - A single shared configurable token for Engine HTTP authentication.
 - Results delivered as `.dtccpkg` packages and retained for 30 days after
   completion, subject to the absence of recovery guarantees described below.
-- Native Linux and macOS deployments on self-hosted machines or AWS EC2.
+- Container deployments of the Engine production image on Linux hosts,
+  self-hosted or on AWS EC2.
 
 Each submitted job invokes one Dataset Definition. Dependencies and processing
 steps internal to that Dataset remain in Core or Sim. Engine does not introduce
@@ -84,6 +85,8 @@ does not enforce different permissions for Atlas and Table.
   dynamic host registration, host provisioning, and SSH execution.
 - Compatibility with arbitrary remote service APIs or legacy application layouts.
 - Engine-owned serialization, simulation, publication, or domain data models.
+- Native (non-container) installations and macOS hosts as deployment targets,
+  and multi-host MPI execution of a single job.
 
 ## Runtime architecture
 
@@ -96,9 +99,9 @@ One deployment contains:
    package retrieval.
 5. A temporary package directory on each executing host.
 
-Every compute host installs the same Engine software and the Core/Sim
-capabilities available in its environment. The HTTP service and Celery worker
-are separate processes from that package. Remote hosts do not require their own
+Every compute host runs the same Engine production image, which contains the
+Engine software and the Core/Sim capabilities. The HTTP service and Celery
+worker are separate containers from that image. Remote hosts do not require their own
 Redis instance. A local-only deployment uses the same architecture with an
 empty remote-host list.
 
@@ -178,13 +181,17 @@ Each target reports its own local capabilities and installed Engine, Core, and
 Sim versions. Host-local discovery must not recursively query other hosts.
 The consumer-facing service combines this information for discovery and target
 selection. A remote-only capability can be discovered without executing it on
-the entry host.
+the entry host. Because every host in a deployment runs the same image, a
+capability is remote-only because of that host's runtime conditions, such as
+credentials, data, hardware, or provider access, not because different code is
+installed there.
 
 The catalog must have an explicit refresh operation or revision mechanism. A
 new conforming Dataset using existing contracts becomes visible after it is
 installed and registered on a target and the catalog is refreshed, without
-Dataset-specific changes to Engine. Installing new Python code may require a
-worker restart; discovery is not a promise of arbitrary live code loading.
+Dataset-specific changes to Engine. In a deployment, new Python code arrives in
+a new image rolled out to every host, which requires restarting the containers;
+discovery is not a promise of arbitrary live code loading.
 
 A target is compatible only when its Dataset contract and execution environment
 match the request and the deployment's tested compatibility baseline. Record
@@ -377,10 +384,12 @@ deferred requirements for a later release.
 
 ## Deployment and authentication
 
-The deployment targets are native Linux and macOS, on self-hosted machines or
-AWS EC2. Containers and Kubernetes are not required. Use existing process
-supervision and Celery operations rather than building a service manager into
-Engine.
+The deployment target is Linux hosts, self-hosted or on AWS EC2, running
+containers from the Engine production image described below. Native
+installations and macOS hosts are not deployment targets; macOS is used only
+for development through Docker. Kubernetes is not required. Use the container
+runtime's restart policies and Celery operations rather than building a service
+manager into Engine.
 
 Configuration supplies the central broker/result-backend connection, one
 shared Engine HTTP token, the local target identity, the static remote-target
@@ -399,18 +408,54 @@ connectivity to remote Engine APIs for discovery and result transfer. Consumers
 need only the entry service's HTTP address. Public-network deployments must
 protect credentials and data in transit through their deployment configuration.
 
-Use a verified, compatible set of Engine, Core, Sim, Celery, and Python versions.
-An environment that can import Dataset descriptors is not automatically a
-working numerical execution environment. Native worker execution and the
-specialized Sim dependencies must be exercised on the supported platforms;
-platform limitations must be stated explicitly.
+Each compute host runs the Engine HTTP service and the Celery worker as separate
+containers from the same production image. A production deployment provides:
 
-## Local development environment
+- TLS termination by a reverse proxy in front of the entry service; Engine's
+  HTTP port is not exposed directly to a public network.
+- The API token as a secret; the production image has no default token.
+- A persistent volume for the local temporary package directory, so completed
+  packages survive container restarts during the retention period.
+- A persistent volume for the FEniCSx form-compilation cache, so restarts do
+  not recompile the forms of every simulation.
+- Shared memory sized for MPI and PETSc, because Docker's default of 64 MB is
+  insufficient, and thread-count settings such as `OMP_NUM_THREADS` that match
+  the CPUs allocated to each job.
+- An external Redis service.
 
-A container image supports local development and testing of Twin. It is not a
-deployment target and does not change the native deployment requirements above.
-It provides Core, Sim, FEniCSx, and the TetGen wrapper on Linux, so developers
-need Docker rather than a native numerical installation.
+The image digest identifies the complete environment: Engine, Core, Sim,
+Celery, Python, and the numerical stack. In v1, every host in a deployment uses
+the same CPU architecture, and hosts are compatible when they run the same
+platform-specific image digest (not a multi-platform index, whose per-platform
+images have different digests). The deployment supplies each host's digest to
+its configuration so that discovery can report it. Image compatibility is
+separate from runtime availability, which each host reports for itself. Distribution versions alone do
+not identify the Core and Sim commits installed from Git. An environment that
+can import Dataset descriptors is not automatically a working numerical
+execution environment; worker execution and Sim's specialized dependencies
+must be exercised in the production image on a Linux host.
+
+## Engine image
+
+One Dockerfile in `apps/engine/` defines two build targets. They share the
+conda environment, TetGen wrapper, Core, and Sim layers, so development and
+production run the same numerical stack.
+
+- `dev` is used by the root `compose.yaml` for local development and tests. It
+  installs the Engine package in editable mode with its test dependencies,
+  mounts the source, and reloads on code changes. Developers on any operating
+  system need Docker rather than a native numerical installation.
+- `prod` is the deployment image. It installs the Engine package without its
+  test extra, test files, source mounts, or reloading; runs as a non-root user;
+  and keeps only the build tools needed at runtime, which is a C compiler,
+  because FEniCSx compiles forms when a simulation runs. Its conda environment
+  is resolved from a lock file. Test packages that Core itself depends on, such
+  as pytest, remain until Core removes them upstream.
+- The image's health check probes the HTTP service's health route. Worker
+  containers override it with a Celery-specific check, because a worker serves
+  no HTTP; both containers' health is verified.
+
+Both targets follow these rules:
 
 - One image serves both the Engine HTTP service and the Celery worker, matching
   the single installed package described in the runtime architecture.
@@ -420,27 +465,34 @@ need Docker rather than a native numerical installation.
   checkouts under `temp/`.
 - The image includes TetGen because Core uses it to generate the volume meshes
   that Sim's FEniCSx simulations require. The wrapper and TetGen are licensed
-  under AGPL-3.0; review that license before publishing the image to a registry.
+  under AGPL-3.0. Review that license before pushing the image to any registry,
+  including a private one; the review is a prerequisite for production
+  deployment.
 - The image builds for the host architecture, including `linux/arm64` on Apple
-  silicon, because emulated numerical execution is slow.
-- The root `compose.yaml` places Engine services behind the `engine` profile,
-  so developers who work only on the frontend or backend never build the image.
-  Redis is added together with the worker. Engine publishes its HTTP port on
-  the loopback interface only.
-- Engine's test suite runs in this image through `pnpm engine:check`. It is not
-  part of the repository-wide `pnpm check`, which does not build the image. Its
-  environment tests check that Core, Sim, FEniCSx, and the TetGen wrapper are
-  installed; that TetGen tetrahedralizes a unit cube; that FEniCSx assembles its
-  volume and solves a small problem through PETSc; and that the mesh round-trips
-  through an HDF5 file read back by h5py.
+  silicon and AWS Graviton, because emulated numerical execution is slow.
+  A production deployment chooses one architecture, and its image is built and
+  validated on that architecture; supporting a second architecture requires its
+  own production validation.
+
+For local development, the root `compose.yaml` places Engine services behind
+the `engine` profile, so developers who work only on the frontend or backend
+never build the image. Redis is added together with the worker. Engine
+publishes its HTTP port on the loopback interface only.
+
+Engine's test suite runs in the `dev` target through `pnpm engine:check`. It is
+not part of the repository-wide `pnpm check`, which does not build the image.
+Its environment tests check that Core, Sim, FEniCSx, and the TetGen wrapper are
+installed; that TetGen tetrahedralizes a unit cube; that FEniCSx assembles its
+volume and solves a small problem through PETSc; and that the mesh round-trips
+through an HDF5 file read back by h5py.
 
 The frontend does not call Engine directly. The shared Engine token must not be
 exposed to browsers, so the Twin backend holds the token and forwards the Engine
 requests that the frontend needs. The frontend continues to use only the
 backend's `/api` address.
 
-Passing tests in the container verify only the Linux container environment.
-They do not provide the native Linux and macOS evidence required for acceptance.
+Passing tests in the `dev` target verify the shared environment layers.
+Production acceptance requires the `prod` image running on a Linux host.
 
 ## Upstream inspection and implementation prerequisites
 
@@ -520,29 +572,29 @@ The primary acceptance scenario is: a consumer discovers a Dataset, submits
 valid parameters, polls the job, and downloads a validated `.dtccpkg` through
 one Engine address, whether execution was local or remote.
 
-| Area                 | Required evidence                                                                                                                                                                                                          |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Generic discovery    | Installed Core and Sim Dataset Definitions are exposed from the shared contracts; adding a conforming definition becomes visible after refresh without Dataset-specific Engine code.                                       |
-| Validation           | Invalid parameters, bounds, unknown targets, and incompatible targets fail clearly before execution; selected-target validation matches Core.                                                                              |
-| Local execution      | A representative Core job runs through the real broker and worker, reports state, and produces a valid package.                                                                                                            |
-| Simulation execution | Representative Sim jobs run with their actual numerical dependencies and preserve their model fields and provenance in the package.                                                                                        |
-| Remote execution     | The selected remote worker executes the job directly; status and package download remain available through the entry address without a shared filesystem.                                                                  |
-| Service replacement  | Existing mini-service consumers and deployment entry points have an explicit migration path; final retirement in Sim is verified through a separate upstream change, leaving one maintained Engine service implementation. |
-| Routing              | Automatic local preference, configured remote ordering, explicit targets, and all-hosts-busy queueing follow the routing table.                                                                                            |
-| Concurrency          | Concurrent submissions never cause a host to execute more Dataset jobs than its configured worker limit, including when capacity observations race.                                                                        |
-| Polling              | Queued and running jobs are distinguishable; upstream progress is retained; missing progress is not fabricated; unknown IDs are not reported as queued.                                                                    |
-| Failure reporting    | Dataset, required packaging, broker, and host failures produce the specified outcomes without automatic Dataset resubmission or false claims that work stopped.                                                            |
-| Cancellation         | Pre-execution cancellation and the start/cancel race are exercised; acceptance is distinct from confirmed cancellation; running-job cancellation is reported as unsupported.                                               |
-| Package correctness  | Core validation confirms manifest integrity, required canonical Protobuf content, and supported schema/root type; model-level tests demonstrate lossless round trips.                                                      |
-| Retention            | Completed packages remain retrievable during the 30-day retention window under normal operation, expire from the completion time, and are physically cleaned up; downloads do not reset expiry.                            |
-| Restart behavior     | Separate API, worker, and broker restarts do not promise recovery or force deletion of surviving work; unavailable and unknown state are reported honestly.                                                                |
-| Authentication       | HTTP endpoints other than the health route reject missing or invalid tokens and accept the configured token; remote discovery and delivery use the same authentication policy.                                             |
-| Native deployment    | Linux and macOS worker setups are exercised, including real Core/Sim dependencies; unavailable environments and unverified capabilities are explicitly reported.                                                           |
+| Area                 | Required evidence                                                                                                                                                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Generic discovery    | Installed Core and Sim Dataset Definitions are exposed from the shared contracts; adding a conforming definition becomes visible after refresh without Dataset-specific Engine code.                                                                   |
+| Validation           | Invalid parameters, bounds, unknown targets, and incompatible targets fail clearly before execution; selected-target validation matches Core.                                                                                                          |
+| Local execution      | A representative Core job runs through the real broker and worker, reports state, and produces a valid package.                                                                                                                                        |
+| Simulation execution | Representative Sim jobs run with their actual numerical dependencies and preserve their model fields and provenance in the package.                                                                                                                    |
+| Remote execution     | The selected remote worker executes the job directly; status and package download remain available through the entry address without a shared filesystem.                                                                                              |
+| Service replacement  | Existing mini-service consumers and deployment entry points have an explicit migration path; final retirement in Sim is verified through a separate upstream change, leaving one maintained Engine service implementation.                             |
+| Routing              | Automatic local preference, configured remote ordering, explicit targets, and all-hosts-busy queueing follow the routing table.                                                                                                                        |
+| Concurrency          | Concurrent submissions never cause a host to execute more Dataset jobs than its configured worker limit, including when capacity observations race.                                                                                                    |
+| Polling              | Queued and running jobs are distinguishable; upstream progress is retained; missing progress is not fabricated; unknown IDs are not reported as queued.                                                                                                |
+| Failure reporting    | Dataset, required packaging, broker, and host failures produce the specified outcomes without automatic Dataset resubmission or false claims that work stopped.                                                                                        |
+| Cancellation         | Pre-execution cancellation and the start/cancel race are exercised; acceptance is distinct from confirmed cancellation; running-job cancellation is reported as unsupported.                                                                           |
+| Package correctness  | Core validation confirms manifest integrity, required canonical Protobuf content, and supported schema/root type; model-level tests demonstrate lossless round trips.                                                                                  |
+| Retention            | Completed packages remain retrievable during the 30-day retention window under normal operation, expire from the completion time, and are physically cleaned up; downloads do not reset expiry.                                                        |
+| Restart behavior     | Separate API, worker, and broker restarts do not promise recovery or force deletion of surviving work; unavailable and unknown state are reported honestly.                                                                                            |
+| Authentication       | HTTP endpoints other than the health route reject missing or invalid tokens and accept the configured token; remote discovery and delivery use the same authentication policy.                                                                         |
+| Container deployment | The production image runs the HTTP service and worker on a Linux host, completes representative Core and Sim jobs with their real numerical dependencies, and produces packages that Core validates; unavailable capabilities are explicitly reported. |
 
 Use focused contract tests for API translation and routing, and integration
 tests with real Redis and Celery for process and broker behavior. Test doubles
-alone cannot establish cancellation, concurrency, or native numerical execution
-correctness. A deterministic Core Dataset is useful for routine checks, but it
+alone cannot establish cancellation, concurrency, or numerical execution
+correctness in the production image. A deterministic Core Dataset is useful for routine checks, but it
 does not replace real Sim or canonical package verification.
 
 No numeric performance targets have been agreed. Record baseline submission
@@ -560,7 +612,8 @@ runtime validation was performed as part of writing it.
 The plan must preserve the agreed scope and dependency ownership. Begin with
 upstream contract and dependency verification, then organize the Engine work
 into testable increments for discovery, local execution and packaging, remote
-targets and delivery, lifecycle behavior, and native deployment verification.
+targets and delivery, lifecycle behavior, and production image and Linux
+deployment verification.
 
 Include an explicit migration from Sim's existing mini-service: identify the
 code and tests being reused or moved, transition existing consumers, and record

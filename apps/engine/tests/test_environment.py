@@ -1,8 +1,8 @@
 """Environment tests for the DTCC Engine development image.
 
 They check that Core, Sim, FEniCSx, PETSc, HDF5, and the TetGen wrapper are installed
-and work together. Passing them verifies only the Linux container environment,
-not native deployment.
+and work together. Passing them verifies only the development image,
+not a production deployment.
 """
 
 from importlib.metadata import distribution

@@ -12,7 +12,7 @@
 
 ## How this plan is organized
 
-The spec requires the plan to "begin with upstream contract and dependency verification, then organize the Engine work into testable increments for discovery, local execution and packaging, remote targets and delivery, lifecycle behavior, and native deployment verification." It also forbids inventing missing APIs in example code. Later increments depend on unresolved upstream work, so:
+The spec requires the plan to "begin with upstream contract and dependency verification, then organize the Engine work into testable increments for discovery, local execution and packaging, remote targets and delivery, lifecycle behavior, and production image and Linux deployment verification." It also forbids inventing missing APIs in example code. Later increments depend on unresolved upstream work, so:
 
 - **Increments 0 and 1** are written as executable tasks with complete code.
 - **Increments 2 to 6** are specified by scope, upstream interfaces, checks, and blockers. Each is expanded into executable tasks, in this file, when its prerequisites are verified. Expanding an increment is a plan change and is reviewed like one.
@@ -25,7 +25,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 - "Engine must not maintain hand-written copies of Dataset argument models."
 - "All Engine HTTP services use the shared token"; "the only exception is an unauthenticated health route that reports liveness and returns no Dataset, job, or version information."
 - "Reference checkouts remain unmodified during Engine work. Missing shared capabilities require separately proposed Core or Sim changes."
-- "Engine's test suite runs in this image through `pnpm engine:check`. It is not part of the repository-wide `pnpm check`."
+- "Engine's test suite runs in the `dev` target through `pnpm engine:check`. It is not part of the repository-wide `pnpm check`."
 - "Validation reports must distinguish passed, failed, skipped, and not-run checks."
 - Repository rules: Git is read-only for agents (`AGENTS.md`); tests are written first and must fail because behavior is missing, not because of an import or setup error; public Python modules and functions get concise docstrings (`apps/engine/AGENTS.md`); no comment unless it says what the code cannot (`CONVENTIONS.md`).
 
@@ -133,8 +133,8 @@ Create `apps/engine/tests/test_environment.py`:
 """Environment tests for the DTCC Engine development image.
 
 They check that Core, Sim, FEniCSx, PETSc, HDF5, and the TetGen wrapper are installed
-and work together. Passing them verifies only the Linux container environment,
-not native deployment.
+and work together. Passing them verifies only the development image,
+not a production deployment.
 """
 
 from importlib.metadata import distribution
@@ -733,9 +733,9 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 **Upstream interfaces:** Celery queue routing and worker concurrency; the same Engine discovery and delivery routes on each host. Packages are validated with `load_model_package` on the executing host before they become downloadable (increment 2); the entry service streams a remote package through without validating or storing it, because `load_model_package` reads only local files and the spec requires no second stored copy at the entry host.
 
-**Checks:** the Routing, Concurrency, and Remote execution rows of the acceptance table, with real Redis and at least two workers; the Generic discovery row across hosts, including a capability installed only on a remote host; the Authentication row for remote discovery and delivery; host-local discovery does not query other hosts; downloading a remote package through the entry service leaves no copy of the archive on the entry host.
+**Checks:** the Routing, Concurrency, and Remote execution rows of the acceptance table, with real Redis and at least two workers; the Generic discovery row across hosts, including a capability available only on a remote host because of its runtime conditions (for example credentials or data present only there), with every host running the same image digest; the Authentication row for remote discovery and delivery; host-local discovery does not query other hosts; downloading a remote package through the entry service leaves no copy of the archive on the entry host.
 
-**Blockers:** none known beyond increment 2. Discovery's `versions` come from distribution metadata, and git-installed Core and Sim report the same version across commits, so compatibility checks across remote targets need the installed commit (for example PEP 610 `direct_url.json` `commit_id`).
+**Blockers:** none known beyond increment 2. Hosts are compared by platform-specific image digest, all hosts sharing one architecture, which the deployment supplies to each host's configuration; discovery's `versions` come from distribution metadata, and Git-installed Core and Sim report the same version across commits, so versions alone cannot establish compatibility.
 
 ## Increment 4: Lifecycle behavior (to be expanded)
 
@@ -747,15 +747,15 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 **Blockers:** the Celery version and its cancellation semantics are unverified until increment 2 selects them; queued-task revocation races must be verified against that version before the cancellation contract is claimed.
 
-## Increment 5: Native deployment verification (to be expanded)
+## Increment 5: Production image and Linux deployment (to be expanded)
 
-**Scope:** install and run the API and worker natively on Linux and macOS, including the real Sim numerical dependencies; run representative Core and Sim jobs natively and validate their packages; record the baseline measurements the spec lists, with hardware and software versions.
+**Scope:** add a `prod` target to `apps/engine/Dockerfile` that shares the conda, TetGen, Core, and Sim layers with `dev`: the Engine package installed without its test extra or test files, no source mounts or reloading, a non-root user, a `HEALTHCHECK` against `/api/v1/health` with a Celery-specific override for worker containers, and only a C compiler kept from the build tools; resolve the conda environment from a lock file; document the production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); choose the deployment's single CPU architecture; deploy the API and worker on a Linux host of that architecture, run representative Core and Sim jobs, and record the baseline measurements the spec lists, with hardware, image digest, and software versions.
 
-**Upstream interfaces:** native installation of FEniCSx, PETSc, and MPICH from conda-forge (`osx-arm64`, `osx-64`, `linux-64`, and `linux-aarch64` builds exist for dolfinx 0.11.0), the TetGen wrapper built from source, and Core and Sim at the pinned commits; the same `dtcc-engine` package and entry points as the image.
+**Upstream interfaces:** the conda-forge packages already pinned in the image (dolfinx 0.11.0 has `linux-64` and `linux-aarch64` builds), a conda lock tool such as `conda-lock`, the TetGen wrapper and Core and Sim at the pinned commits, and the same `dtcc-engine` package and entry points as `dev`.
 
-**Checks:** the Native deployment row of the acceptance table, including canonical package validation for the representative Sim job on each platform. Passing container tests do not count.
+**Checks:** the Container deployment row of the acceptance table on a Linux host, including canonical package validation for a representative Sim job; the `prod` image contains neither the Engine test extra nor test files (pytest from Core's own dependencies is expected until removed upstream) and runs as a non-root user; both the API and worker containers report healthy; FEniCSx still compiles forms in `prod`; a restart keeps the FEniCSx cache and completed packages.
 
-**Blockers:** none known; platform-specific build failures of Core, `dtcc-mesher`, or the TetGen wrapper would require upstream fixes and must be reported per platform.
+**Blockers:** the AGPL-3.0 license review for TetGen must be completed before the image is pushed to any registry, including a private one.
 
 ## Increment 6: Mini-service retirement (to be expanded)
 
