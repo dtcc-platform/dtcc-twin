@@ -12,7 +12,6 @@ src/
   api/client/            axios client, ApiError, session refresh, query client
   features/<name>/       components, hooks and stores of one feature
   components/ui/         shadcn components
-  components/layout/     anything related to layout
   components/fallbacks/  the pages the router falls back to (not found, route error)
   hooks/, lib/           shared hooks and utilities
 ```
@@ -27,14 +26,13 @@ src/
 ## Auth and routing
 
 - `authQueries.me()` is the source of truth: the logged-in user, or `null`.
-- Routes under `routes/_authenticated/` need a login. `_authenticated.tsx` checks `me` in `beforeLoad`, redirects to `/login?redirect=…`, and passes the user down as `context.user`; login and register send the user back there.
-- Logging in drops every cached query, so nothing the previous user saw can show. Logging out only sets `me` to `null`, and the guards take it from there.
+- Logging in drops every cached query, so nothing the previous user saw can show. Logging out only sets `me` to `null`.
 - An unknown URL renders `components/fallbacks/not-found.tsx`, and a route whose `beforeLoad`, loader or render throws renders `route-error.tsx` beside it, which shows the message and retries with `router.invalidate()`. Both are router-wide defaults set in `main.tsx`.
 - The theme comes from the user's settings. `localStorage` keeps a copy that `index.html` applies before the first paint.
 
-## Development pages
+## Development components
 
-`routes/_authenticated/dev/` holds pages for working on the app, not for its users. `/dev/playground` (admins only) runs valid and invalid calls against the users, settings and items endpoints and shows each response. `/dev/counters` (admins only) shows two counters, each with its own Zustand store.
+`features/dev/` holds components for working on the app, not for its users; `ApiPlayground` runs valid and invalid calls against the users, settings and items endpoints and shows each response; most need an admin login. `CountersDemo` shows two counters, each with its own Zustand store.
 
 ## UI kit
 
