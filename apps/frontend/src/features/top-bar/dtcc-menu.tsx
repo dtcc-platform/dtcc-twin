@@ -23,9 +23,9 @@ export function DtccMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="DTCC links"
-        className="flex size-11 items-center justify-center rounded-full border bg-card shadow-md outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="flex size-12 items-center justify-center rounded-full border bg-card shadow-md outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
       >
-        <img src={dtccLogo} alt="" className="size-7" />
+        <img src={dtccLogo} alt="" className="size-8" />
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-48">
         {links.map((link) => (
