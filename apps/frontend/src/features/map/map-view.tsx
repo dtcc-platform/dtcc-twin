@@ -14,7 +14,7 @@ const swedenView = { longitude: 15, latitude: 62, zoom: 5 };
 export function MapView() {
   return (
     <Map initialViewState={swedenView} mapStyle={brightStyle}>
-      <NavigationControl position="top-right" />
+      <NavigationControl position="bottom-right" />
       <HidePointsOfInterest />
     </Map>
   );
