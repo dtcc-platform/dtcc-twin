@@ -6,7 +6,7 @@
 
 - Every Effect must be justified under [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect). Derive values during render and react to events in their handlers
 - Server data lives in TanStack Query only. Never copy it into `useState` or a store. Only do it for valid exceptions (use it as default state in an edit form).
-- Component state first. A Zustand store only when several components share client state, created per instance and handed down through context rather than as a global singleton, with its actions grouped under `actions`. See `src/features/counter/`.
+- Component state first. A Zustand store only when several components share client state, created per instance and handed down through context rather than as a global singleton, with its actions grouped under `actions`. Components select from it through its one hook, `use<Name>Store((state) => …)`; no per-field hooks. See `src/features/counter/`.
 
 ### API
 

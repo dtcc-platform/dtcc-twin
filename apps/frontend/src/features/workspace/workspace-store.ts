@@ -35,14 +35,8 @@ export function createWorkspaceStore() {
 
 export const WorkspaceStoreContext = createContext<WorkspaceStore | null>(null);
 
-function useWorkspaceStore<T>(selector: (state: WorkspaceState) => T): T {
+export function useWorkspaceStore<T>(selector: (state: WorkspaceState) => T): T {
   const store = useContext(WorkspaceStoreContext);
-  if (!store) throw new Error("Missing WorkspaceStoreProvider");
+  if (!store) throw new Error("useWorkspaceStore must be used within a WorkspaceStoreContext provider");
   return useStore(store, selector);
 }
-
-export const useRightContent = () => useWorkspaceStore((state) => state.right);
-
-export const useLeftContent = () => useWorkspaceStore((state) => state.left);
-
-export const useWorkspaceActions = () => useWorkspaceStore((state) => state.actions);

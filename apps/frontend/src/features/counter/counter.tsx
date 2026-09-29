@@ -1,5 +1,5 @@
 import { CounterStoreProvider } from "./counter-store-provider.tsx";
-import { useCount, useCounterActions } from "./counter-store.ts";
+import { useCounterStore } from "./counter-store.ts";
 import { Button } from "@/components/ui/button";
 
 export function Counter({ title, initialCount }: { title: string; initialCount: number }) {
@@ -15,14 +15,14 @@ export function Counter({ title, initialCount }: { title: string; initialCount: 
 }
 
 function CounterValue() {
-  const count = useCount();
+  const count = useCounterStore((state) => state.count);
 
   return <p className="font-mono text-4xl tabular-nums">{count}</p>;
 }
 
 // Selects only the actions, which never change, so it does not re-render when the count does.
 function CounterControls() {
-  const { increment, decrement, reset } = useCounterActions();
+  const { increment, decrement, reset } = useCounterStore((state) => state.actions);
 
   return (
     <div className="flex gap-2">

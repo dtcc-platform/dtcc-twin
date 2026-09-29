@@ -13,13 +13,7 @@ import {
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import {
-  useLeftContent,
-  useRightContent,
-  useWorkspaceActions,
-  type LeftContent,
-  type RightContent,
-} from "@/features/workspace/workspace-store";
+import { useWorkspaceStore, type LeftContent, type RightContent } from "@/features/workspace/workspace-store";
 
 const item =
   "h-10.5 w-full justify-start gap-3 px-0.75 aria-expanded:bg-primary/10 aria-expanded:text-primary [&_svg]:stroke-[1.5] [&_svg:not([class*='size-'])]:size-7.5";
@@ -28,9 +22,9 @@ const item =
 export function Toolbar() {
   const [expanded, setExpanded] = useState(false);
   const collapseTimer = useRef<number>(undefined);
-  const right = useRightContent();
-  const left = useLeftContent();
-  const { setRight, closeRight, setLeft, closeLeft } = useWorkspaceActions();
+  const right = useWorkspaceStore((state) => state.right);
+  const left = useWorkspaceStore((state) => state.left);
+  const { setRight, closeRight, setLeft, closeLeft } = useWorkspaceStore((state) => state.actions);
 
   function openOrCloseRight(content: RightContent) {
     if (right === content) closeRight();
