@@ -1,5 +1,4 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 import type { AxiosRequestConfig } from "axios";
 import { type ReactNode, useState } from "react";
 import { api } from "@/api/client/api-client";
@@ -10,24 +9,14 @@ import { userMutations, userQueries } from "@/api/users";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/_authenticated/dev/playground")({
-  beforeLoad: ({ context }) => {
-    if (context.user.role !== "admin") throw redirect({ to: "/" });
-  },
-  component: PlaygroundPage,
-});
-
-// Exercises the API with valid and invalid calls; admin-only because most of them are.
-function PlaygroundPage() {
+/** Exercises the API with valid and invalid calls; most of them need an admin login. */
+export function ApiPlayground() {
   const [selectedId, setSelectedId] = useState<string>();
   const list = useQuery(userQueries.list({ limit: 5 }));
   const create = useMutation(userMutations.create());
 
   return (
-    <main className="mx-auto max-w-6xl p-8">
-      <Link to="/" className="text-sm underline underline-offset-4">
-        ← Home
-      </Link>
+    <div className="mx-auto max-w-6xl p-8">
       <h1 className="my-4 text-4xl font-semibold tracking-tight">Users, settings and items API</h1>
       <p className="text-muted-foreground">
         Valid calls go through <code className={code}>src/api/users.ts</code>, <code className={code}>settings.ts</code>{" "}
@@ -90,7 +79,7 @@ function PlaygroundPage() {
           <InvalidCall key={call.title} {...call} />
         ))}
       </div>
-    </main>
+    </div>
   );
 }
 

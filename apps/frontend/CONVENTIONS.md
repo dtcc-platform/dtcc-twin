@@ -17,9 +17,7 @@
 
 ### Routing
 
-- Pages that need a login go under `src/routes/_authenticated/`.
-- Redirect in `beforeLoad`, never by rendering `<Navigate>`. A page for one role checks `context.user.role` there.
-- Pages for development, not for users, go under `src/routes/_authenticated/dev/`, admin-only.
+- Redirect in `beforeLoad`, never by rendering `<Navigate>`.
 - State that should survive a reload or the back button (page, filters) goes in the URL through `validateSearch`.
 - The router's `defaultNotFoundComponent` and `defaultErrorComponent` in `main.tsx` cover every route; a route with something better to say sets its own `notFoundComponent` or `errorComponent`.
 
@@ -37,9 +35,8 @@
 
 ### Add a page
 
-1. Create `src/routes/<path>.tsx`, or `src/routes/_authenticated/<path>.tsx` if it needs a login. The Vite plugin regenerates `routeTree.gen.ts` on the next dev start or build; commit it.
-2. Declare search params with `validateSearch` (see `_authenticated/items.tsx`).
-3. Link it from `src/components/layout/site-header.tsx` if it belongs in the navigation.
+1. Create `src/routes/<path>.tsx`. The Vite plugin regenerates `routeTree.gen.ts` on the next dev start or build; commit it.
+2. Declare search params with `validateSearch`.
 
 ### Call a new endpoint
 
