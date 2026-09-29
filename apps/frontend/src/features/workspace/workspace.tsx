@@ -1,34 +1,21 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useStore } from "zustand";
+import { FloatingCard } from "@/components/floating-card";
 import { MapView } from "@/features/map/map-view";
 import { Toolbar } from "@/features/toolbar/toolbar";
 import { TopBar } from "@/features/top-bar/top-bar";
-import { LeftColumn, RightColumn } from "./panel-columns";
-import { WorkspaceStoreProvider } from "./workspace-store-provider";
-import { useWorkspaceActions } from "./workspace-store";
+import { cn } from "@/lib/utils";
+import { WorkspaceStoreContext, createWorkspaceStore } from "./workspace-store";
 
-/** The full-screen map with the top bar, toolbar and panel columns over it. */
+const column = "pointer-events-none flex w-72 flex-col gap-2 *:pointer-events-auto";
+
 export function Workspace() {
-  return (
-    <WorkspaceStoreProvider>
-      <main className="relative h-svh">
-        <MapView />
-        <TopBar />
-        {/* One row, so the left column moves aside as the toolbar widens. Only the toolbar and panels take clicks. */}
-        <div className="pointer-events-none absolute top-17 bottom-3 left-3 z-10 flex items-start gap-2">
-          <Toolbar />
-          <LeftColumn />
-        </div>
-        <RightColumn />
-        <CloseOnEscape />
-      </main>
-    </WorkspaceStoreProvider>
-  );
-}
+  const [store] = useState(createWorkspaceStore);
+  const right = useStore(store, (state) => state.right);
+  const left = useStore(store, (state) => state.left);
+  const { closeRight, closeLeft } = useStore(store, (state) => state.actions);
 
-// On window rather than <main>, so Esc works wherever focus is, including on the page body.
-function CloseOnEscape() {
-  const { closeRight, closeLeft } = useWorkspaceActions();
-
+  // close the panels on Esc
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
@@ -42,5 +29,33 @@ function CloseOnEscape() {
     };
   }, [closeRight, closeLeft]);
 
-  return null;
+  return (
+    <WorkspaceStoreContext value={store}>
+      <MapView />
+      <TopBar />
+      <div className="pointer-events-none absolute top-17 bottom-3 left-3 z-10 flex items-start gap-2">
+        <Toolbar />
+        {left && (
+          <div key={left} className={cn(column, "self-stretch animate-in duration-200 fade-in slide-in-from-left-2")}>
+            <FloatingCard title="Layers" onClose={closeLeft} />
+          </div>
+        )}
+      </div>
+      {right && (
+        <div
+          key={right}
+          className={cn(
+            column,
+            "absolute top-17 right-3 bottom-3 z-10 animate-in duration-200 fade-in slide-in-from-right-2",
+          )}
+        >
+          {right === "bookmarks" && <FloatingCard title="Bookmarks" onClose={closeRight} />}
+          {right === "datasets" && <FloatingCard title="Datasets" onClose={closeRight} />}
+          {right === "simulations" && <FloatingCard title="Simulations" onClose={closeRight} />}
+          {right === "downloads" && <FloatingCard title="Downloads" onClose={closeRight} />}
+          {right === "upload" && <FloatingCard title="Upload" onClose={closeRight} />}
+        </div>
+      )}
+    </WorkspaceStoreContext>
+  );
 }
