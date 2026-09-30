@@ -16,7 +16,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 
 - **Increments 0 and 1** are written as executable tasks with complete code.
 - **Increments 2 to 6** are specified by scope, upstream interfaces, checks, and blockers. Each is expanded into executable tasks, in this file, when its prerequisites are verified. Expanding an increment is a plan change and is reviewed like one.
-- **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins and is expanded into Tasks 10 to 13; 2b, execution of FEniCSx simulations, waits for upstream Sim changes. Cancellation moves to increment 4, because Celery's revocation needs its race handling (see increment 4).
+- **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins and is expanded into Tasks 10 to 14; 2b, execution of FEniCSx simulations, waits for upstream Sim changes. Cancellation moves to increment 4, because Celery's revocation needs its race handling (see increment 4).
 - **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part and the Linux deployment, stays an outline until increments 2 to 4 provide what it verifies.
 
 ## Global Constraints
@@ -46,6 +46,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 11. A running job has not reported progress: its status has no progress at all; once Core reports, the report appears unchanged. Pinned in Task 11 (`test_running_job_reports_upstream_progress_and_invents_none`).
 12. A package is requested a minute before and a second after 30 days from its job's finish: the first is served, the second is `404` with its status, although the file and Celery's result still exist. Pinned in Task 12 (`test_finished_job_and_its_package_expire_after_the_retention`).
 13. A consumer sends a provider credential where Engine or the Dataset rejects it, as a value or by mistake as a field name: the `422` gives each error's type and location without repeating it. Pinned in Task 10 (`test_validation_errors_repeat_no_submitted_names_or_values`).
+14. Jobs are submitted while a long job runs on a one-process worker: each waiting job runs once, and the broker does not deliver it again after its visibility timeout. Pinned in Task 14 (`test_job_waiting_behind_a_running_job_runs_once`).
 
 ---
 
@@ -725,7 +726,7 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ## Increment 2a: Local execution and packaging
 
-Status: expanded into Tasks 10 to 13 and executed 2026-09-30. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`, and is committed in `bb881a0`. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. Task 11 was executed 2026-09-30 and is committed in `cf115d5`. Its results: before the implementation, with the worker fixture running, `engine:check` gave 6 failed, each on an assertion, and 50 passed: the 4 execution tests because every job completed at once without a package, the status test with `completed` and no finish time, and the sharing test because another Celery app had the task; after it, 56 passed in 5.5 s, and `pnpm check` passed. Task 12 was executed 2026-09-30 and is committed in `3609179`. Its results: before the implementation, `engine:check` gave 6 failed and 56 passed: the new token case, the download test, and `within-retention` got `404` from the missing route, the unknown-or-unfinished test got `(404, 404)`, `after-retention` got `200` for the status, and the completed job's record had no expiry while its Celery result had the one-day default; after it, 62 passed in 6.6 s, and `pnpm check` passed. Task 13 was executed 2026-09-30 and is committed in `f4cf8a1`. Its results: with `pnpm dev:engine` running the API and the worker, a `smoke` job was `running` at its first poll and finished 0.9 s after submission; its 114 KB package downloaded with the stored file's SHA-256, and Core read it as a `VolumeMesh` from `smoke`. A `traffic_simulation` job, with roads from Overpass and DeSO zones and statistics from Statistics Sweden, finished in 11.8 s without reporting progress, and Core read its 21 KB package as a `RoadNetwork`. `engine:check` then gave 62 passed while the development database still held exactly those two jobs and the API and the worker kept running. Stopped while idle, the worker logged a warm shutdown and exited with 0, without the `MPI_Abort` that still ends the API's process. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed.
+Status: expanded into Tasks 10 to 14. Tasks 10 to 13 were executed 2026-09-30; Task 14, added after the review of the whole increment, is not yet executed. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`, and is committed in `bb881a0`. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. Task 11 was executed 2026-09-30 and is committed in `cf115d5`. Its results: before the implementation, with the worker fixture running, `engine:check` gave 6 failed, each on an assertion, and 50 passed: the 4 execution tests because every job completed at once without a package, the status test with `completed` and no finish time, and the sharing test because another Celery app had the task; after it, 56 passed in 5.5 s, and `pnpm check` passed. Task 12 was executed 2026-09-30 and is committed in `3609179`. Its results: before the implementation, `engine:check` gave 6 failed and 56 passed: the new token case, the download test, and `within-retention` got `404` from the missing route, the unknown-or-unfinished test got `(404, 404)`, `after-retention` got `200` for the status, and the completed job's record had no expiry while its Celery result had the one-day default; after it, 62 passed in 6.6 s, and `pnpm check` passed. Task 13 was executed 2026-09-30 and is committed in `f4cf8a1`. Its results: with `pnpm dev:engine` running the API and the worker, a `smoke` job was `running` at its first poll and finished 0.9 s after submission; its 114 KB package downloaded with the stored file's SHA-256, and Core read it as a `VolumeMesh` from `smoke`. A `traffic_simulation` job, with roads from Overpass and DeSO zones and statistics from Statistics Sweden, finished in 11.8 s without reporting progress, and Core read its 21 KB package as a `RoadNetwork`. `engine:check` then gave 62 passed while the development database still held exactly those two jobs and the API and the worker kept running. Stopped while idle, the worker logged a warm shutdown and exited with 0, without the `MPI_Abort` that still ends the API's process. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed.
 
 **Scope:** Redis and a Celery worker from the same image; job submission (`POST`) with request-envelope and target validation, status polling with upstream progress, and `.dtccpkg` download for Datasets executed on the local target; a completed package is refused once 30 periods of 24 hours have passed since its job completed. Every registered Dataset can be submitted; one whose result Core cannot package canonically produces a failed job with Core's error, because the spec forbids a curated Dataset list and makes required packaging failures fail delivery. Pre-execution cancellation moves to increment 4.
 
@@ -753,7 +754,7 @@ Status: expanded into Tasks 10 to 13 and executed 2026-09-30. Task 10 was execut
 
 **Migration from Sim's mini-service:** adapt `service/tasks.py` (Celery task invoking a Dataset inside the progress bridge) as one generic task taking the Dataset name and parameters, and `service/progress.py`, passing Core's reported values through without a fallback percentage, with the submission-validation and status-snapshot cases of `tests/test_service_routes.py`. Do not carry over the module-prefix filter, default `format` injection, reporting `PENDING` as pending, `str(result)` failure messages, `terminate=True` cancellation, `service/results.py` shared-volume delivery, or the server-sent-events stream; the spec requires polling and `.dtccpkg` over HTTP.
 
-**Checks:** invalid parameters and bounds fail before execution with Core's validation errors (Validation row); a deterministic Core Dataset runs through the real broker and worker and produces a canonical package that `load_model_package` reads back (Local execution and Package correctness rows); a Dataset whose result Core cannot package produces a failed job and no downloadable package; queued and running states are distinguishable; missing progress is not fabricated; unknown job IDs are not reported as queued; a job that spends nonzero time queued and running keeps its status and package for 30 days after completion, and both are refused after that, measured from completion time.
+**Checks:** invalid parameters and bounds fail before execution with Core's validation errors (Validation row); a deterministic Core Dataset runs through the real broker and worker and produces a canonical package that `load_model_package` reads back (Local execution and Package correctness rows); a Dataset whose result Core cannot package produces a failed job and no downloadable package; queued and running states are distinguishable; missing progress is not fabricated; unknown job IDs are not reported as queued; a job that spends nonzero time queued and running keeps its status and package for 30 days after completion, and both are refused after that, measured from completion time; a job waiting behind a running one on a one-process worker runs once (Task 14).
 
 **Blockers:** none known; `smoke` and `traffic_simulation` round-trip at the current pins.
 
@@ -764,6 +765,7 @@ Status: expanded into Tasks 10 to 13 and executed 2026-09-30. Task 10 was execut
 - Engine's record of a job is a Redis hash, `dtcc-engine:job:<job id>`, holding the Dataset, the target, the submission time, the time the broker confirmed the job's message, and, written by the worker, the finish time and a failed job's exception type. Retention is measured from that finish time, because a revoke broadcast can rewrite a failed job's Celery result, including its `date_done`. The exception type is read from the record, because Celery cannot rebuild every exception from the result backend: Core's `DatasetUpstreamError` takes only keyword arguments, and Celery calls `cls(message)`.
 - Submission records the job first and sends it second. If Redis cannot record the job, nothing was sent: `503`. If sending fails, or its confirmation is lost, the message may already be queued, because kombu publishes with `LPUSH`: Engine keeps the record, answers `503` with the job's ID and status reference, reports the job as `unconfirmed` until a worker starts it, and does not send it again (DESIGN.md, "Failure reporting").
 - `status` reads Celery's state before Engine's record. The worker writes the record's finish time and error type before Celery stores the terminal state, so a terminal state read first implies a record that already has them.
+- Between the worker's record write and Celery's terminal state, `status` can report `running` with a finish time. Celery's state is authoritative, and a package is offered only for a completed job, so this stays (settled at Task 11's review).
 - The job task is registered with `shared=False`. Celery's default adds a task to every app finalized later, and the first registration of a name wins, so a worker could run another `Jobs` instance's closure; the tests create many instances in one process.
 - Validation errors, from the request envelope and from the Dataset, return only each error's location and type. An error's input, its context, and a validator's message can all repeat a submitted value, such as a provider credential; location parts other than the schema's field names and list positions become `<unexpected>`, because an unexpected field's name, or a dictionary key, can itself be a credential.
 - Jobs are sent through a second Celery app that has a broker but no result backend. On an app with the Redis result backend, `send_task` subscribes the sending process to the job's result channel (`celery/backends/redis.py`, `on_task_call`), and the API never reads those messages, so subscriptions and unread state messages would accumulate for as long as it runs.
@@ -776,6 +778,15 @@ Status: expanded into Tasks 10 to 13 and executed 2026-09-30. Task 10 was execut
 - Celery 5.6.3: `Celery(main, broker=..., backend=..., set_as_current=...)`; an app without a result backend has the base backend's no-op `on_task_call` (`celery/backends/base.py`), while the Redis backend's subscribes (`celery/backends/redis.py`); `send_task(name, args=..., task_id=..., queue=...)`, whose publish retry defaults to `task_publish_retry` (`celery/app/amqp.py`); `backend.get_task_meta(task_id)` returns the state and result in one read; `@app.task(name=..., bind=True, shared=False)`, where the default `shared=True` registers the task on every app finalized later and the first registration of a name wins (`celery/app/base.py`, `celery/_state.py`); `backend.mark_as_done(task_id, result)` (tests); `Task.update_state(state=..., meta=...)`; `task_track_started` defaults to false and `result_expires` to one day (`celery/app/defaults.py`); `celery.contrib.testing.worker.start_worker(app)` runs a worker thread in the test process and first waits for the `celery.ping` task, which `celery.contrib.testing.tasks` registers; `celery --app` needs a `Celery` instance or a module holding one, not a factory (`celery/app/utils.py`, `find_app`).
 - kombu 5.6.2: publishing re-raises connection errors as `kombu.exceptions.OperationalError` (`kombu/connection.py`); the Redis transport publishes with `LPUSH` (`kombu/transport/redis.py`), so an error can follow a message Redis already accepted.
 - redis-py 6.4.0: `Redis.from_url(url, decode_responses=True)`, `hset(name, key, value)` and `hset(name, mapping=...)`, `hgetall`, `delete`, `expire(name, time)` with seconds or a `timedelta`, `ttl`, `keys`, `flushdb`, `pipeline()`; `redis.RedisError` is the base of its errors.
+- Redelivery, verified for Task 14 in Celery 5.6.3 and kombu 5.6.2:
+  - Without `acks_late`, a request acknowledges its message when a pool process accepts it (`celery/worker/request.py`, `Request.on_accepted`).
+  - A worker's reserved requests include the running ones until they finish (`celery/worker/state.py`, `task_reserved` and `task_ready`).
+  - `worker_disable_prefetch=True` stops receiving while the reserved requests reach the pool's process count. It applies to a Redis broker only (`celery/worker/consumer/tasks.py`, `Tasks.start`; `celery/app/defaults.py`).
+  - Kombu's Redis transport keeps delivered, unacknowledged messages in one hash per database. It returns those older than `visibility_timeout` (3,600 s by default, set through `broker_transport_options`) to their queue with `RPUSH`, so they are received next (`kombu/transport/redis.py`, `QoS.restore_visible` and `Channel._do_restore_message`).
+  - A worker restores once when it starts polling, on whichever of its channels comes first (`MultiChannelPoller.on_poll_init`). Its event loop then calls restore every 10 s (`Transport.register_with_event_loop`; `MultiChannelPoller.maybe_restore_messages`).
+  - Each channel's QoS acts on its first call and then on every tenth, so after startup its first scheduled restore comes about 10 s or about 100 s later, depending on the channel. Any consumer of the database restores every such message, using its own timeout. A `restore_visible(interval=1)` call acts every time.
+  - `inspect conf` prints the configuration as JSON (`celery/bin/base.py`).
+  - `start_worker(app, pool="prefork", concurrency=...)` runs a prefork worker in the test process (`celery/contrib/testing/worker.py`).
 - Redis 8: the default `maxmemory-policy` is `noeviction` (`redis.conf` at `8.10.2`).
 - Starlette 1.7.0 (under FastAPI 0.141.1): `FileResponse(path, media_type=..., filename=...)` sends `Content-Disposition: attachment; filename="<name>"` for an ASCII name; the 422 constant is `HTTP_422_UNPROCESSABLE_CONTENT`. FastAPI's default handler for `RequestValidationError` returns `exc.errors()`, input values included (`fastapi/exception_handlers.py`).
 - Core at `5ca2ca4`: `get_dataset(name)` raises `KeyError` for an unregistered name; `dtcc_core.common.progress.set_progress_callback` and `get_progress_callback` hold a callback per thread, and a `ProgressTracker` created while one is set calls it with Core's progress dictionary (`percent`, `message`, `phase`, `phases`, `eta_seconds`, `eta_formatted`, `elapsed`) unless `DTCC_PROGRESS_MODE` selects another mode; `report_progress(percent=..., message=...)` does nothing outside a tracker and, in a tracker without phases, changes only the message, because such a tracker reports `current / total` (0 when `total` is 0); `ProgressTracker(total=100)` with `update(current=50, message=...)` reports 50.0; entering a tracker does not report, so its first update is not throttled; `smoke` makes no network requests; `calibration_grid` builds a `CalibrationGrid`, which canonical export rejects with `NotImplementedError`.
@@ -1938,6 +1949,227 @@ Set Increment 2a's status to executed with the date, leave changes uncommitted, 
 
 Ruling (2026-09-30, Task 13, review): the README's package table still said that the engine serves Dataset discovery so far, although increment 2a adds local jobs and their packages. The row now names all three.
 
+### Task 14: Take a job only when the worker can run it
+
+Added 2026-09-30 after the review of the whole increment (`baea8d1..f4cf8a1`). The worker runs one job at a time (`--concurrency 1`), but by default it reserves up to four messages. Without `acks_late`, Celery acknowledges a message only when a pool process accepts its task, so a job reserved behind a running one waits in the worker unacknowledged. Kombu's Redis transport returns unacknowledged messages older than `visibility_timeout`, 3,600 s by default, to their queue without checking whether their consumer is still alive, and the worker then receives the job a second time. Both copies run once the running job finishes. This is an automatic execution retry, which DESIGN.md excludes ("Engine adds no automatic execution retries"). It rewrites the job's finish time, which extends its retention. If the second run fails, the job keeps `completed` but gains an error type, and if its package check fails, the first run's package is deleted.
+
+The mechanism is read from the sources under "Interfaces verified for the tasks" and has not yet been reproduced; Step 2 reproduces it. `worker_disable_prefetch=True` makes the worker receive a message only while it holds fewer requests than it has pool processes, running ones included. A waiting job therefore stays in Redis rather than in the worker, and early acknowledgement is kept. A prefetch multiplier of 1 would still reserve one waiting message per process. A longer visibility timeout would need an upper bound on how long jobs wait, which Engine does not have. This removes one redelivery path, not every duplicate. DESIGN.md's "No exactly-once execution" statement stays, and a worker lost during a job is increment 4's restart behavior.
+
+The task also adds the review's agreed coverage of existing behavior: a package that fails validation is deleted, and a failed job's package is refused. It also corrects the README's token wording.
+
+**Files:**
+
+- Create: `apps/engine/tests/test_redelivery.py`
+- Modify: `apps/engine/dtcc_engine/jobs.py` (`Jobs.__init__`)
+- Modify: `apps/engine/tests/test_jobs.py` (validation-failure test, failed-job download)
+- Modify: `README.md` (token wording)
+- Modify: `apps/engine/PLAN.md` (Increment 2a status)
+
+**Interfaces:**
+
+- Consumes:
+  - From Tasks 10 to 12: `Jobs(redis_url, target, package_dir)`, `Jobs.submit`, `Jobs.status`, `Jobs.package_path`, and `Jobs.celery_app`.
+  - From `conftest.py`: the `redis_url` fixture.
+  - From `test_jobs.py`: the `served_client`, `served_jobs`, and `failing_dataset` fixtures, and `submit`, `wait_until`, `SMOKE`, `AUTHORIZED`, and `FINISHED`.
+  - From Celery: `start_worker(app, pool="prefork", concurrency=1)`.
+  - From kombu: `Connection(url, transport_options={"visibility_timeout": ...})` and its default channel's `qos.restore_visible(interval=1)`.
+- Produces: every `Jobs` instance's Celery app sets `worker_disable_prefetch=True`, so a worker, `engine-worker` included, receives a job only when a pool process is free. No API change.
+
+- [ ] **Step 1: Write the redelivery test**
+
+Create `apps/engine/tests/test_redelivery.py`:
+
+```python
+"""Tests that a job waiting behind a running one is delivered to the worker once.
+
+The worker here uses the prefork pool, as the worker service does: a pool process runs the job while the worker's
+main process keeps receiving messages. The test has its own module so that no other test's worker thread is running
+in this process when the pool forks.
+"""
+
+import time
+from collections.abc import Callable, Iterator
+from pathlib import Path
+
+import numpy as np
+import pytest
+import redis
+from celery.contrib.testing.worker import start_worker
+from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister
+from dtcc_core.model import Mesh
+from kombu import Connection
+
+from dtcc_engine.jobs import Jobs
+
+BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
+RELEASE_KEY = "engine-test:release"
+VISIBILITY_TIMEOUT = 1
+
+
+def runs_key(label: str) -> str:
+    return f"engine-test:runs:{label}"
+
+
+def wait_for(condition: Callable[[], bool], timeout: float = 60.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline
+        time.sleep(0.1)
+
+
+@pytest.fixture
+def counting_dataset(redis_url: str) -> Iterator[str]:
+    """Register a Dataset that counts its runs in Redis by label and, if `gated`, waits for the release key."""
+
+    class CountingProbeArgs(DatasetBaseArgs):
+        label: str
+        gated: bool = False
+
+    class CountingProbeDataset(DatasetDescriptor):
+        name = "engine_counting_probe"
+        description = "Dataset defined by an Engine test that counts how often it runs"
+        ArgsModel = CountingProbeArgs
+
+        def build(self, args):
+            # Runs in a pool process, so the count and the gate go through Redis.
+            client = redis.Redis.from_url(redis_url)
+            client.incr(runs_key(args.label))
+            if args.gated:
+                wait_for(lambda: client.exists(RELEASE_KEY))
+            return Mesh(
+                vertices=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), faces=np.array([[0, 1, 2]])
+            )
+
+    try:
+        yield "engine_counting_probe"
+    finally:
+        unregister("engine_counting_probe")
+
+
+@pytest.fixture
+def prefork_jobs(redis_url: str, tmp_path: Path, counting_dataset: str) -> Iterator[Jobs]:
+    """Jobs served by a one-process prefork worker; a gated job is released at the latest when the test ends."""
+    jobs = Jobs(redis_url, "prefork", tmp_path)
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        try:
+            yield jobs
+        finally:
+            jobs.records.set(RELEASE_KEY, 1)
+
+
+def wait_until_completed(jobs: Jobs, job_id: str) -> None:
+    def completed() -> bool:
+        job = jobs.status(job_id)
+        assert job["state"] != "failed", job
+        return job["state"] == "completed"
+
+    wait_for(completed)
+
+
+def test_job_waiting_behind_a_running_job_runs_once(prefork_jobs: Jobs, counting_dataset: str, redis_url: str) -> None:
+    runs = prefork_jobs.records
+    prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "held", "gated": True})
+    waiting = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "waiting"})
+    wait_for(lambda: runs.get(runs_key("held")) == "1")
+    # Ages any message the worker holds unacknowledged past the visibility timeout.
+    time.sleep(VISIBILITY_TIMEOUT + 1)
+    # The worker restores on a schedule a test cannot time; any consumer restores every unacknowledged message.
+    with Connection(redis_url, transport_options={"visibility_timeout": VISIBILITY_TIMEOUT}) as connection:
+        connection.default_channel.qos.restore_visible(interval=1)
+    runs.set(RELEASE_KEY, 1)
+    wait_until_completed(prefork_jobs, waiting)
+    # Sent after the restore, so it runs after any second delivery of the waiting job.
+    last = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "last"})
+    wait_until_completed(prefork_jobs, last)
+    assert runs.mget([runs_key(label) for label in ("held", "waiting", "last")]) == ["1", "1", "1"]
+```
+
+The count is of actual Dataset runs: a job's final `completed` state cannot show that it ran once. The worker keeps kombu's one-hour visibility timeout, so its own restores cannot act during the test. The test restores once itself, through kombu's `restore_visible`, from a connection with a one-second timeout. It does so while the held job is still running, after the waiting job's message has had time to age. The two-second sleep allows time for the worker to receive that message and for it to age, but it does not synchronize with the receipt. A test cannot wait for the receipt, because with the fix the message is never received while the held job runs. The worker's own schedule cannot be timed (see "Redelivery" under "Interfaces verified for the tasks"). The test adds about 3 s to `engine:check`.
+
+- [ ] **Step 2: Run the test to verify it fails for the right reason**
+
+Run: `pnpm engine:check tests/test_redelivery.py`
+Expected: FAIL on the last assertion with `['1', '2', '1']`, because the waiting job ran twice. If it fails in any other way, or passes, stop and report. A pass means that the redelivery was not reproduced, so the task stops for review before the setting is implemented. Before the review, observe whether the worker had received the waiting job's message, and when: check its entry in kombu's `unacked` hash and its score in `unacked_index`. Don't just lengthen the sleep. Until Step 2 has failed as expected, the test is not a demonstrated regression test.
+
+- [ ] **Step 3: Cover package deletion and a failed job's download**
+
+In `apps/engine/tests/test_jobs.py`, add after `test_result_core_cannot_package_fails_the_job`:
+
+```python
+def test_package_that_fails_validation_is_deleted(
+    served_client: TestClient, served_jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def reject(path: Path) -> None:
+        # Fails the job with another type if the export wrote no package, so the deletion below is real.
+        assert path.is_file()
+        raise ValueError("probe rejection")
+
+    monkeypatch.setattr("dtcc_engine.jobs.datasets.load_model_package", reject)
+    job_id = submit(served_client, SMOKE)
+    job = wait_until(served_client, job_id, lambda job: job["state"] in FINISHED)
+    assert (job["state"], job["error"], job["package"]) == ("failed", {"type": "ValueError"}, None)
+    assert not served_jobs.package_path(job_id).exists()
+```
+
+At the end of `test_failing_dataset_fails_the_job_without_a_package`, add the following. This extends the test's expectations rather than changing them: its name already says that the job has no package, and only a queued job's refusal was tested.
+
+```python
+    assert served_client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED).status_code == 409
+```
+
+- [ ] **Step 4: Check that the deletion test detects a missing deletion**
+
+Both tests cover behavior that Tasks 11 and 12 already implement, so they pass as written. To show that the deletion test can fail, temporarily remove `path.unlink()` from `Jobs.run` and run `pnpm engine:check tests/test_jobs.py -k "fails_validation or failing_dataset"`.
+Expected: `test_package_that_fails_validation_is_deleted` fails on its last assertion, and `test_failing_dataset_fails_the_job_without_a_package` passes. Restore the line, then confirm that `git diff apps/engine/dtcc_engine/jobs.py` is empty.
+
+- [ ] **Step 5: Receive a job only when a pool process is free**
+
+In `Jobs.__init__`, replace the Celery app's settings with:
+
+```python
+        self.celery_app.conf.update(
+            task_default_queue=target,
+            task_track_started=True,
+            result_expires=RECORD_LIFETIME,
+            # Redis redelivers a message left unacknowledged for an hour, so a job must not wait inside the worker.
+            worker_disable_prefetch=True,
+        )
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 64 passed, the 62 earlier tests plus the two new ones.
+
+- [ ] **Step 7: Correct the README's token wording**
+
+In `README.md`'s engine paragraph, replace "and the Dataset routes need one" with "and every other route needs one". In the next paragraph, replace "`pnpm dev:engine` also starts the engine's Redis and a Celery worker. Submit a job" with "`pnpm dev:engine` also starts the engine's Redis and a Celery worker. The job routes take the same token. Submit a job".
+
+Run: `npx --yes prettier@3.9.6 --check README.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 8: Validate**
+
+Start `pnpm dev:engine`, wait until the worker logs that it is ready, and run `docker compose --profile engine exec -T engine-worker /opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect conf`. Stop `pnpm dev:engine`. Then run `pnpm engine:check:prod` and `pnpm check`.
+Expected: the worker's configuration, printed as JSON, includes `"worker_disable_prefetch": true`; the production checks pass with `engine-redis` in their own Compose project; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
+
+- [ ] **Step 9: Stop for review**
+
+Record Task 14's results in Increment 2a's status, leave the changes uncommitted, and report Steps 2, 4, 6, and 8.
+
+Ruling (2026-09-30, increment review): the review of the whole increment gave this task, and its other findings are settled as follows.
+
+- A status read between the worker's record write and Celery's terminal state can report `running` with a finish time. This was settled at Task 11's review and is now recorded under Design.
+- These go to increment 4:
+  - a lost pool process, which Celery may record as a failure without Engine's exception type or finish time;
+  - a lost worker, which can leave its job's state stale rather than failed;
+  - a package left on disk for a failed job or for a job without a usable finish time.
+- These stay as they are:
+  - The `calibration_grid` test pins a type that Core cannot package at its pinned commit, and it fails visibly once Core supports it ([dtcc-core#135](https://github.com/dtcc-platform/dtcc-core/issues/135)).
+  - Celery's dependencies beyond `celery[redis]` stay unpinned, as FastAPI's are.
+- `docker compose --dry-run down -v`, run without a profile as `pnpm db:reset` runs it, targets only `postgres-data`, not `engine-packages`. With an Engine profile active, its behavior is not verified.
+- Increments 2b and 5b gain the checks the review raised.
+
 ## Increment 2b: Simulation execution (to be expanded)
 
 **Scope:** the Simulation execution row of the acceptance table: representative FEniCSx Sim Datasets run through the worker with their numerical dependencies, and their packages preserve model fields and provenance.
@@ -1949,6 +2181,8 @@ Ruling (2026-09-30, Task 13, review): the README's package table still said that
 - Sim pins Core `5ca2ca4`, a commit that no Core branch contains since `develop` was rewritten, so it can be garbage-collected. At that commit, point clouds carry float classifications and every terrain-based Dataset fails; `develop` fixes it (`c4d0293`). Sim must move its pin to a `develop` commit (an upstream Sim change); then `DTCC_SIM_COMMIT` changes and this increment's interfaces are re-verified (DESIGN.md upstream item 3). Engine does not pin Core separately.
 - `urban_wind_simulation` calls `dolfinx.fem.petsc.assemble_matrix_mat`, which dolfinx 0.11.0 lacks (`dtcc_sim/urban_wind.py`), and Sim's 8 test errors come from it. It needs a Sim fix.
 - `air_quality_field` has not run: it needs a box that contains a measuring station.
+
+**Checks:** besides the Simulation execution row, each representative FEniCSx Dataset runs through the worker service's prefork pool, not only in a process that imports Sim. The worker's main process imports Sim, which initializes PETSc, before it forks the pool process that runs the job. FEniCSx after such a fork is unverified, although `smoke` and `traffic_simulation` ran this way in Task 13. If it fails, other pools, such as `solo`, are evaluated rather than assumed, because they change concurrency and how the worker responds while a job runs.
 
 ## Increment 3: Remote targets and delivery (to be expanded)
 
@@ -1962,7 +2196,7 @@ Ruling (2026-09-30, Task 13, review): the README's package table still said that
 
 ## Increment 4: Lifecycle behavior (to be expanded)
 
-**Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages.
+**Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages, and of packages left without a completed job, such as one kept after its job failed or one whose record has no finish time. It also handles a failed job whose worker recorded no exception type. The loss of a pool process, which Celery may record as a failure, is distinguished from the loss of the whole worker, which can leave the job's state stale. Both gaps were found in increment 2a's review.
 
 **Upstream interfaces:** Celery 5.6.3's task states, revocation, and result expiry (increment 2a), read in its source at `v5.6.3`. `control.revoke` without termination makes each worker that receives the broadcast add the ID to an in-memory revoked set (by default at most 50,000 IDs, oldest evicted first when full, entries older than 10,800 seconds purged lazily; kept across restarts only with `--statedb`) and immediately attempt to write `REVOKED` to the result backend for the ID, whatever its state (`celery/worker/control.py`, `_revoke`). The write is skipped when the stored state is `SUCCESS` (`celery/backends/base.py`, `BaseKeyValueStoreBackend._store_result`); a queued message is discarded when a worker receives it (`celery/worker/request.py`, `Request.revoked`). So `REVOKED` does not confirm cancellation: a running task keeps running and its result overwrites it; revoking a failed job overwrites `FAILURE` and restarts its expiry, while a succeeded job keeps `SUCCESS`; revoking an unknown ID creates a record; a revoke sent while no worker runs is lost. The worker's `task_revoked` signal marks an actual discard. Core's `DatasetUpstreamError` (defined in `dtcc_core.datasets.dataset`; not re-exported from `dtcc_core.datasets` at the pinned commit) and `DatasetDescriptor.serialize_upstream_error`, which converts it into JSON-safe metadata (Dataset, operation, target, failure class, status code, message, transience). Engine still decides which of that metadata a consumer sees, so that no error response exposes the API token or provider credentials.
 
@@ -2606,7 +2840,7 @@ Expected: passes. Set Task 9's status in 5a's status line, leave changes uncommi
 
 **Upstream interfaces:** Celery's worker inspection for the health check, Celery 5.6.3 (increment 2a); the same `prod` image and `dtcc-engine` entry points as 5a.
 
-**Checks:** the Container deployment row of the acceptance table on a Linux host, including canonical package validation for a representative Sim job; both the API and worker containers report healthy; a restart keeps the FEniCSx cache and completed packages; the 5a checks pass on the native x86_64 host.
+**Checks:** the Container deployment row of the acceptance table on a Linux host, including canonical package validation for a representative Sim job; both the API and worker containers report healthy; a restart keeps the FEniCSx cache and completed packages; the 5a checks pass on the native x86_64 host; the API and worker containers write and serve packages on the mounted package volume as uid 10001. The 5a `engine-prod` check sets `ENGINE_PACKAGE_DIR` but runs only the HTTP service and mounts no volume. Whether the services check the directory at startup is decided when 5b is expanded.
 
 **Blockers:** the AGPL-3.0 license review for TetGen must be completed before the image is pushed to any registry, including a private one.
 
