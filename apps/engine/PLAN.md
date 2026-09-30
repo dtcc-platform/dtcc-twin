@@ -726,7 +726,7 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ## Increment 2a: Local execution and packaging
 
-Status: expanded into Tasks 10 to 14. Tasks 10 to 13 were executed 2026-09-30; Task 14, added after the review of the whole increment, is not yet executed. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`, and is committed in `bb881a0`. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. Task 11 was executed 2026-09-30 and is committed in `cf115d5`. Its results: before the implementation, with the worker fixture running, `engine:check` gave 6 failed, each on an assertion, and 50 passed: the 4 execution tests because every job completed at once without a package, the status test with `completed` and no finish time, and the sharing test because another Celery app had the task; after it, 56 passed in 5.5 s, and `pnpm check` passed. Task 12 was executed 2026-09-30 and is committed in `3609179`. Its results: before the implementation, `engine:check` gave 6 failed and 56 passed: the new token case, the download test, and `within-retention` got `404` from the missing route, the unknown-or-unfinished test got `(404, 404)`, `after-retention` got `200` for the status, and the completed job's record had no expiry while its Celery result had the one-day default; after it, 62 passed in 6.6 s, and `pnpm check` passed. Task 13 was executed 2026-09-30 and is committed in `f4cf8a1`. Its results: with `pnpm dev:engine` running the API and the worker, a `smoke` job was `running` at its first poll and finished 0.9 s after submission; its 114 KB package downloaded with the stored file's SHA-256, and Core read it as a `VolumeMesh` from `smoke`. A `traffic_simulation` job, with roads from Overpass and DeSO zones and statistics from Statistics Sweden, finished in 11.8 s without reporting progress, and Core read its 21 KB package as a `RoadNetwork`. `engine:check` then gave 62 passed while the development database still held exactly those two jobs and the API and the worker kept running. Stopped while idle, the worker logged a warm shutdown and exited with 0, without the `MPI_Abort` that still ends the API's process. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed.
+Status: expanded into Tasks 10 to 14. Tasks 10 to 13 were executed 2026-09-30; Task 14, added after the review of the whole increment, was executed 2026-10-01 and is not yet committed. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`, and is committed in `bb881a0`. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. Task 11 was executed 2026-09-30 and is committed in `cf115d5`. Its results: before the implementation, with the worker fixture running, `engine:check` gave 6 failed, each on an assertion, and 50 passed: the 4 execution tests because every job completed at once without a package, the status test with `completed` and no finish time, and the sharing test because another Celery app had the task; after it, 56 passed in 5.5 s, and `pnpm check` passed. Task 12 was executed 2026-09-30 and is committed in `3609179`. Its results: before the implementation, `engine:check` gave 6 failed and 56 passed: the new token case, the download test, and `within-retention` got `404` from the missing route, the unknown-or-unfinished test got `(404, 404)`, `after-retention` got `200` for the status, and the completed job's record had no expiry while its Celery result had the one-day default; after it, 62 passed in 6.6 s, and `pnpm check` passed. Task 13 was executed 2026-09-30 and is committed in `f4cf8a1`. Its results: with `pnpm dev:engine` running the API and the worker, a `smoke` job was `running` at its first poll and finished 0.9 s after submission; its 114 KB package downloaded with the stored file's SHA-256, and Core read it as a `VolumeMesh` from `smoke`. A `traffic_simulation` job, with roads from Overpass and DeSO zones and statistics from Statistics Sweden, finished in 11.8 s without reporting progress, and Core read its 21 KB package as a `RoadNetwork`. `engine:check` then gave 62 passed while the development database still held exactly those two jobs and the API and the worker kept running. Stopped while idle, the worker logged a warm shutdown and exited with 0, without the `MPI_Abort` that still ends the API's process. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 14's results: before the setting, the redelivery test failed on its last assertion with `['1', '2', '1']`, so the waiting job ran twice. With `path.unlink()` removed, the deletion test failed on its last assertion, because the package remained, and the failed job's download test passed; with the line restored, `jobs.py` was unchanged. After the setting, `engine:check` gave 64 passed in 11.3 s; in the full run, billiard warns that the test process is multi-threaded when the pool forks, which the test alone does not. With `pnpm dev:engine` running, `inspect conf` printed `"worker_disable_prefetch": true` for the worker, which logged a warm shutdown and exited with 0 when stopped. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed.
 
 **Scope:** Redis and a Celery worker from the same image; job submission (`POST`) with request-envelope and target validation, status polling with upstream progress, and `.dtccpkg` download for Datasets executed on the local target; a completed package is refused once 30 periods of 24 hours have passed since its job completed. Every registered Dataset can be submitted; one whose result Core cannot package canonically produces a failed job with Core's error, because the spec forbids a curated Dataset list and makes required packaging failures fail delivery. Pre-execution cancellation moves to increment 4.
 
@@ -1975,7 +1975,7 @@ The task also adds the review's agreed coverage of existing behavior: a package 
   - From kombu: `Connection(url, transport_options={"visibility_timeout": ...})` and its default channel's `qos.restore_visible(interval=1)`.
 - Produces: every `Jobs` instance's Celery app sets `worker_disable_prefetch=True`, so a worker, `engine-worker` included, receives a job only when a pool process is free. No API change.
 
-- [ ] **Step 1: Write the redelivery test**
+- [x] **Step 1: Write the redelivery test**
 
 Create `apps/engine/tests/test_redelivery.py`:
 
@@ -2086,12 +2086,12 @@ def test_job_waiting_behind_a_running_job_runs_once(prefork_jobs: Jobs, counting
 
 The count is of actual Dataset runs: a job's final `completed` state cannot show that it ran once. The worker keeps kombu's one-hour visibility timeout, so its own restores cannot act during the test. The test restores once itself, through kombu's `restore_visible`, from a connection with a one-second timeout. It does so while the held job is still running, after the waiting job's message has had time to age. The two-second sleep allows time for the worker to receive that message and for it to age, but it does not synchronize with the receipt. A test cannot wait for the receipt, because with the fix the message is never received while the held job runs. The worker's own schedule cannot be timed (see "Redelivery" under "Interfaces verified for the tasks"). The test adds about 3 s to `engine:check`.
 
-- [ ] **Step 2: Run the test to verify it fails for the right reason**
+- [x] **Step 2: Run the test to verify it fails for the right reason**
 
 Run: `pnpm engine:check tests/test_redelivery.py`
 Expected: FAIL on the last assertion with `['1', '2', '1']`, because the waiting job ran twice. If it fails in any other way, or passes, stop and report. A pass means that the redelivery was not reproduced, so the task stops for review before the setting is implemented. Before the review, observe whether the worker had received the waiting job's message, and when: check its entry in kombu's `unacked` hash and its score in `unacked_index`. Don't just lengthen the sleep. Until Step 2 has failed as expected, the test is not a demonstrated regression test.
 
-- [ ] **Step 3: Cover package deletion and a failed job's download**
+- [x] **Step 3: Cover package deletion and a failed job's download**
 
 In `apps/engine/tests/test_jobs.py`, add after `test_result_core_cannot_package_fails_the_job`:
 
@@ -2117,12 +2117,12 @@ At the end of `test_failing_dataset_fails_the_job_without_a_package`, add the fo
     assert served_client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED).status_code == 409
 ```
 
-- [ ] **Step 4: Check that the deletion test detects a missing deletion**
+- [x] **Step 4: Check that the deletion test detects a missing deletion**
 
 Both tests cover behavior that Tasks 11 and 12 already implement, so they pass as written. To show that the deletion test can fail, temporarily remove `path.unlink()` from `Jobs.run` and run `pnpm engine:check tests/test_jobs.py -k "fails_validation or failing_dataset"`.
 Expected: `test_package_that_fails_validation_is_deleted` fails on its last assertion, and `test_failing_dataset_fails_the_job_without_a_package` passes. Restore the line, then confirm that `git diff apps/engine/dtcc_engine/jobs.py` is empty.
 
-- [ ] **Step 5: Receive a job only when a pool process is free**
+- [x] **Step 5: Receive a job only when a pool process is free**
 
 In `Jobs.__init__`, replace the Celery app's settings with:
 
@@ -2136,24 +2136,24 @@ In `Jobs.__init__`, replace the Celery app's settings with:
         )
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `pnpm engine:check`
 Expected: 64 passed, the 62 earlier tests plus the two new ones.
 
-- [ ] **Step 7: Correct the README's token wording**
+- [x] **Step 7: Correct the README's token wording**
 
 In `README.md`'s engine paragraph, replace "and the Dataset routes need one" with "and every other route needs one". In the next paragraph, replace "`pnpm dev:engine` also starts the engine's Redis and a Celery worker. Submit a job" with "`pnpm dev:engine` also starts the engine's Redis and a Celery worker. The job routes take the same token. Submit a job".
 
 Run: `npx --yes prettier@3.9.6 --check README.md apps/engine/PLAN.md`
 Expected: all files use Prettier code style.
 
-- [ ] **Step 8: Validate**
+- [x] **Step 8: Validate**
 
 Start `pnpm dev:engine`, wait until the worker logs that it is ready, and run `docker compose --profile engine exec -T engine-worker /opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect conf`. Stop `pnpm dev:engine`. Then run `pnpm engine:check:prod` and `pnpm check`.
 Expected: the worker's configuration, printed as JSON, includes `"worker_disable_prefetch": true`; the production checks pass with `engine-redis` in their own Compose project; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
 
-- [ ] **Step 9: Stop for review**
+- [x] **Step 9: Stop for review**
 
 Record Task 14's results in Increment 2a's status, leave the changes uncommitted, and report Steps 2, 4, 6, and 8.
 

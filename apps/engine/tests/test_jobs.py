@@ -288,6 +288,7 @@ def test_failing_dataset_fails_the_job_without_a_package(
     assert (job["state"], job["error"], job["package"]) == ("failed", {"type": "RuntimeError"}, None)
     assert job["finished_at"] is not None
     assert not served_jobs.package_path(job_id).exists()
+    assert served_client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED).status_code == 409
 
 
 def test_result_core_cannot_package_fails_the_job(served_client: TestClient, served_jobs: Jobs) -> None:
@@ -295,6 +296,21 @@ def test_result_core_cannot_package_fails_the_job(served_client: TestClient, ser
     job_id = submit(served_client, {"dataset": "calibration_grid", "parameters": {"bounds": BOUNDS}})
     job = wait_until(served_client, job_id, lambda job: job["state"] in FINISHED)
     assert (job["state"], job["error"]) == ("failed", {"type": "NotImplementedError"})
+    assert not served_jobs.package_path(job_id).exists()
+
+
+def test_package_that_fails_validation_is_deleted(
+    served_client: TestClient, served_jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def reject(path: Path) -> None:
+        # Fails the job with another type if the export wrote no package, so the deletion below is real.
+        assert path.is_file()
+        raise ValueError("probe rejection")
+
+    monkeypatch.setattr("dtcc_engine.jobs.datasets.load_model_package", reject)
+    job_id = submit(served_client, SMOKE)
+    job = wait_until(served_client, job_id, lambda job: job["state"] in FINISHED)
+    assert (job["state"], job["error"], job["package"]) == ("failed", {"type": "ValueError"}, None)
     assert not served_jobs.package_path(job_id).exists()
 
 

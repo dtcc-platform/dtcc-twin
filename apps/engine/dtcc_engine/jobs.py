@@ -73,7 +73,13 @@ class Jobs:
         self.package_dir = package_dir
         self.records = redis.Redis.from_url(redis_url, decode_responses=True)
         self.celery_app = Celery("dtcc_engine", broker=redis_url, backend=redis_url)
-        self.celery_app.conf.update(task_default_queue=target, task_track_started=True, result_expires=RECORD_LIFETIME)
+        self.celery_app.conf.update(
+            task_default_queue=target,
+            task_track_started=True,
+            result_expires=RECORD_LIFETIME,
+            # Redis redelivers a message left unacknowledged for an hour, so a job must not wait inside the worker.
+            worker_disable_prefetch=True,
+        )
         # With a result backend, send_task subscribes this process to the job's result channel,
         # which an API that never waits for results would accumulate.
         self.sender = Celery("dtcc_engine", broker=redis_url, set_as_current=False)
