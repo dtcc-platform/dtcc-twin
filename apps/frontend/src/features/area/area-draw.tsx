@@ -12,7 +12,7 @@ import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import { areaSizeProblem, areaSquareMetres, type Area } from "./area";
 import { AreaStoreContext, type AreaStore } from "./area-store";
 
-const orange = "#e35a1d";
+const dtccOrange = "#e35a1d";
 const white = "#ffffff";
 
 /** Draws the area on the map and lets the user draw, move and resize it; renders nothing itself. */
@@ -29,6 +29,7 @@ export function AreaDraw() {
   return null;
 }
 
+/** Starts Terra Draw on a loaded map and keeps it and the store in step; returns the cleanup. */
 function syncAreaDrawing(map: MapLibreMap, store: AreaStore): () => void {
   const draw = new TerraDraw({
     adapter: new TerraDrawMapLibreGLAdapter({ map }),
@@ -41,7 +42,7 @@ function syncAreaDrawing(map: MapLibreMap, store: AreaStore): () => void {
         validation: (feature, { updateType }) =>
           // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison -- Terra Draw doesn't export its UpdateTypes enum
           updateType === "finish" ? withinLimits(feature) : { valid: true },
-        styles: { fillColor: orange, fillOpacity: 0.2, outlineColor: orange, outlineWidth: 2 },
+        styles: { fillColor: dtccOrange, fillOpacity: 0.2, outlineColor: dtccOrange, outlineWidth: 2 },
       }),
       new TerraDrawSelectMode({
         keyEvents: null,
@@ -57,24 +58,20 @@ function syncAreaDrawing(map: MapLibreMap, store: AreaStore): () => void {
           },
         },
         styles: {
-          selectedPolygonColor: orange,
+          selectedPolygonColor: dtccOrange,
           selectedPolygonFillOpacity: 0.2,
-          selectedPolygonOutlineColor: orange,
+          selectedPolygonOutlineColor: dtccOrange,
           selectedPolygonOutlineWidth: 2,
           selectionPointColor: white,
           selectionPointWidth: 5,
-          selectionPointOutlineColor: orange,
+          selectionPointOutlineColor: dtccOrange,
           selectionPointOutlineWidth: 2,
         },
       }),
     ],
   });
-  // The area last put on the map, so the store echoing it back doesn't redraw it.
-  let shown: Area | null = null;
-  let started = false;
 
   function show(area: Area | null) {
-    shown = area;
     draw.clear();
     draw.setMode("select");
     if (!area) return;
@@ -93,42 +90,34 @@ function syncAreaDrawing(map: MapLibreMap, store: AreaStore): () => void {
     }
   };
 
-  const onFinish: TerraDrawEventListeners["finish"] = (id, context) => {
+  const onFinish: TerraDrawEventListeners["finish"] = (id) => {
     const feature = draw.getSnapshotFeature(id);
     if (feature?.geometry.type !== "Polygon") return;
     const area = toArea(feature);
-    // trap: selecting a drawn box from its own finish event throws, so the subscription redraws it selected instead.
-    if (context.mode !== "rectangle") shown = area;
-    store.getState().actions.setArea(area);
+    // trap: Terra Draw is still handling the finished box during this event, so it's redrawn selected only after.
+    queueMicrotask(() => {
+      store.getState().actions.setArea(area);
+    });
   };
 
-  function start() {
-    draw.start();
-    draw.on("change", onChange);
-    draw.on("finish", onFinish);
-    started = true;
-    show(store.getState().area);
-  }
-
   const unsubscribe = store.subscribe((state, previous) => {
-    if (!started) return;
     if (state.drawing && !previous.drawing) {
-      shown = null;
       draw.clear();
       draw.setMode("rectangle");
       return;
     }
     // A cancelled drawing leaves rectangle mode behind, so show even when there's still no area.
-    if (state.area !== shown || (previous.drawing && !state.drawing)) show(state.area);
+    if (state.area !== previous.area || (previous.drawing && !state.drawing)) show(state.area);
   });
 
-  if (map.isStyleLoaded()) start();
-  else map.once("load", start);
+  draw.start();
+  draw.on("change", onChange);
+  draw.on("finish", onFinish);
+  show(store.getState().area);
 
   return () => {
     unsubscribe();
-    map.off("load", start);
-    if (started) draw.stop();
+    draw.stop();
   };
 }
 
@@ -160,13 +149,9 @@ function toArea(feature: GeoJSONStoreFeatures): Area {
   const longitudes = ring.map(([longitude]) => longitude ?? Number.NaN);
   const latitudes = ring.map(([, latitude]) => latitude ?? Number.NaN);
   return {
-    west: round(Math.min(...longitudes)),
-    south: round(Math.min(...latitudes)),
-    east: round(Math.max(...longitudes)),
-    north: round(Math.max(...latitudes)),
+    west: Math.min(...longitudes),
+    south: Math.min(...latitudes),
+    east: Math.max(...longitudes),
+    north: Math.max(...latitudes),
   };
-}
-
-function round(degrees: number): number {
-  return Math.round(degrees * 1e6) / 1e6;
 }

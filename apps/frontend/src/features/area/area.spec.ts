@@ -1,28 +1,54 @@
 import { describe, expect, it } from "vitest";
-import { areaSizeProblem, areaSquareMetres, formatSquareMetres, swerefBounds, type Area } from "./area.ts";
+import { sweref } from "@/lib/sweref";
+import {
+  areaBounds,
+  areaSizeProblem,
+  areaSizeProblemText,
+  areaSquareMetres,
+  formatSquareMetres,
+  type Area,
+} from "./area.ts";
 
-// A box around Chalmers, Gothenburg, and the EPSG:3006 bounds DTCC Core computed for it.
+// A box around Chalmers, Gothenburg, and the EPSG:3006 bounds DTCC Core computes between its south-west and north-east corners.
 const chalmers: Area = { west: 11.97, south: 57.686, east: 11.98, north: 57.692 };
-const chalmersBounds = [319370, 6397790, 319996, 6398431];
+const coreBounds = [319370, 6397790, 319996, 6398431];
 
-describe("swerefBounds", () => {
-  it("matches the bounds DTCC Core computes, to the metre", () => {
-    const bounds = swerefBounds(chalmers);
+describe("areaBounds", () => {
+  it("contains every corner of the box, in whole metres", () => {
+    const [minX, minY, maxX, maxY] = areaBounds(chalmers);
+    const corners = [
+      [chalmers.west, chalmers.south],
+      [chalmers.east, chalmers.south],
+      [chalmers.east, chalmers.north],
+      [chalmers.west, chalmers.north],
+    ];
 
-    bounds.forEach((value, index) => {
-      expect(Math.abs(value - (chalmersBounds[index] ?? Number.NaN))).toBeLessThanOrEqual(1);
-    });
+    expect([minX, minY, maxX, maxY].every(Number.isInteger)).toBe(true);
+    for (const corner of corners) {
+      const [x = Number.NaN, y = Number.NaN] = sweref.forward(corner);
+      expect(x).toBeGreaterThanOrEqual(minX);
+      expect(x).toBeLessThanOrEqual(maxX);
+      expect(y).toBeGreaterThanOrEqual(minY);
+      expect(y).toBeLessThanOrEqual(maxY);
+    }
   });
 
-  it("rounds to whole metres", () => {
-    expect(swerefBounds(chalmers).every(Number.isInteger)).toBe(true);
+  it("reaches past DTCC Core's bounds only where the grid's turn pushes a corner out", () => {
+    const [minX, minY, maxX, maxY] = areaBounds(chalmers);
+
+    // West of the central meridian, the box's south-east corner lies south of its south-west one,
+    // and its north-west corner north of its north-east one; the other two sides are Core's.
+    expect(Math.abs(minX - (coreBounds[0] ?? Number.NaN))).toBeLessThanOrEqual(1);
+    expect(Math.abs(maxX - (coreBounds[2] ?? Number.NaN))).toBeLessThanOrEqual(1);
+    expect(minY).toBe(6397763);
+    expect(maxY).toBe(6398458);
   });
 });
 
 describe("areaSquareMetres", () => {
-  it("measures the box on the EPSG:3006 grid", () => {
-    // 626 m by 641 m
-    expect(areaSquareMetres(chalmers)).toBeCloseTo(401_266, -3);
+  it("measures the bounds that contain the box", () => {
+    // 626 m by 695 m
+    expect(areaSquareMetres(chalmers)).toBe(435_070);
   });
 });
 
@@ -47,7 +73,12 @@ describe("areaSizeProblem", () => {
   });
 
   it("names the limit an area breaks", () => {
-    expect(areaSizeProblem(24.9)).toBe("Under the 25 m² minimum");
-    expect(areaSizeProblem(25_000_001)).toBe("Over the 25 km² limit");
+    expect(areaSizeProblem(24.9)).toBe("too-small");
+    expect(areaSizeProblem(25_000_001)).toBe("too-large");
+  });
+
+  it("explains each problem with its limit", () => {
+    expect(areaSizeProblemText["too-small"]).toBe("Under the 25 m² minimum");
+    expect(areaSizeProblemText["too-large"]).toBe("Over the 25 km² limit");
   });
 });

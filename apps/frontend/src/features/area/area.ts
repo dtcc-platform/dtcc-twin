@@ -9,15 +9,29 @@ export type SwerefBounds = [number, number, number, number];
 export const minSquareMetres = 25;
 export const maxSquareMetres = 25_000_000;
 
-/** The EPSG:3006 box between the south-west and north-east corners, as DTCC Core computes it. */
-export function swerefBounds(area: Area): SwerefBounds {
-  const [minX, minY] = sweref.forward([area.west, area.south]);
-  const [maxX, maxY] = sweref.forward([area.east, area.north]);
-  return [Math.round(minX), Math.round(minY), Math.round(maxX), Math.round(maxY)];
+/**
+ * The EPSG:3006 bounds that contain the whole area, so its data covers everything drawn.
+ * The grid is turned against longitude and latitude, so they reach past the box on two sides.
+ */
+export function areaBounds({ west, south, east, north }: Area): SwerefBounds {
+  const corners = [
+    [west, south],
+    [east, south],
+    [east, north],
+    [west, north],
+  ].map((corner) => sweref.forward(corner));
+  const xs = corners.map(([x]) => x ?? Number.NaN);
+  const ys = corners.map(([, y]) => y ?? Number.NaN);
+  return [
+    Math.floor(Math.min(...xs)),
+    Math.floor(Math.min(...ys)),
+    Math.ceil(Math.max(...xs)),
+    Math.ceil(Math.max(...ys)),
+  ];
 }
 
 export function areaSquareMetres(area: Area): number {
-  const [minX, minY, maxX, maxY] = swerefBounds(area);
+  const [minX, minY, maxX, maxY] = areaBounds(area);
   return (maxX - minX) * (maxY - minY);
 }
 
@@ -30,8 +44,15 @@ export function formatSquareMetres(squareMetres: number): string {
   return `${squareKilometresFormat.format(squareMetres / 1_000_000)} km²`;
 }
 
-export function areaSizeProblem(squareMetres: number): string | undefined {
-  if (squareMetres < minSquareMetres) return "Under the 25 m² minimum";
-  if (squareMetres > maxSquareMetres) return "Over the 25 km² limit";
+export type AreaSizeProblem = "too-small" | "too-large";
+
+export function areaSizeProblem(squareMetres: number): AreaSizeProblem | undefined {
+  if (squareMetres < minSquareMetres) return "too-small";
+  if (squareMetres > maxSquareMetres) return "too-large";
   return undefined;
 }
+
+export const areaSizeProblemText: Record<AreaSizeProblem, string> = {
+  "too-small": `Under the ${String(minSquareMetres)} m² minimum`,
+  "too-large": `Over the ${String(maxSquareMetres / 1_000_000)} km² limit`,
+};
