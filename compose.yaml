@@ -21,7 +21,9 @@ services:
   engine:
     # Optional: a large Core, Sim and FEniCSx image.
     profiles: [engine]
-    build: apps/engine
+    build:
+      context: apps/engine
+      target: dev
     command:
       [
         "uvicorn",
@@ -46,6 +48,24 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+
+  engine-lock:
+    # Regenerates the Engine's conda lock files: `pnpm engine:lock`.
+    profiles: [engine-lock]
+    image: condaforge/miniforge3:26.7.2-0
+    working_dir: /engine
+    command: ["sh", "lock.sh"]
+    volumes:
+      - ./apps/engine:/engine
+
+  engine-prod:
+    # Local check of the production target: `pnpm engine:check:prod`. No port is published.
+    profiles: [engine-prod]
+    build:
+      context: apps/engine
+      target: prod
+    environment:
+      ENGINE_API_TOKEN: local-prod-check-token
 
 volumes:
   postgres-data:

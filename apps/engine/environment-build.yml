@@ -1,0 +1,12 @@
+# Tools that build the TetGen wrapper, Core and Sim; the image removes them after the build.
+category: build
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - cxx-compiler
+  # The unprefixed `ar` that CMake looks for, which the compilers do not provide.
+  - binutils
+  - cmake
+  - ninja
+  - git

@@ -1,8 +1,8 @@
 """Environment tests for the DTCC Engine development image.
 
 They check that Core, Sim, FEniCSx, PETSc, HDF5, and the TetGen wrapper are installed
-and work together. Passing them verifies only the development image,
-not a production deployment.
+and work together. They run in the development image through `pnpm engine:check`
+and in the production image through `pnpm engine:check:prod`; passing them does not verify a deployment.
 """
 
 from importlib.metadata import distribution

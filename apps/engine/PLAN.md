@@ -16,6 +16,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 
 - **Increments 0 and 1** are written as executable tasks with complete code.
 - **Increments 2 to 6** are specified by scope, upstream interfaces, checks, and blockers. Each is expanded into executable tasks, in this file, when its prerequisites are verified. Expanding an increment is a plan change and is reviewed like one.
+- **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part and the Linux deployment, stays an outline until increments 2 to 4 provide what it verifies.
 
 ## Global Constraints
 
@@ -36,6 +37,8 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 3. A Dataset Definition is installed and registered after Engine started: it appears in the listing and the revision changes, without Engine code changes. Pinned in Task 3, Step 1 (`test_new_dataset_definition_appears_and_changes_revision`).
 4. A developer runs `pnpm engine:check` while `pnpm dev:engine` is serving: both work, because `compose run` does not publish the service port. Pinned in Task 4, Step 5.
 5. A frontend or backend developer runs the README's `docker compose up -d --wait`: only Postgres starts. Pinned in Task 4, Step 5.
+6. The `prod` image is built: it contains exactly the runtime lock's conda packages, with their dependencies still consistent, so no C++ compiler, CMake, Ninja, or Git, and FEniCSx still compiles a form, as the non-root user, into an empty cache. Pinned in Task 6, Step 1 (`test_conda_packages_match_the_runtime_lock`, `test_conda_dependencies_are_consistent`, `test_build_only_tools_are_removed`, `test_fenicsx_compiles_a_form_into_an_empty_cache`).
+7. A developer runs `pnpm engine:check:prod` while `pnpm dev:engine` and Postgres are running: both keep running, because the check uses its own Compose project and publishes no port. Pinned in Task 7, Step 5.
 
 ---
 
@@ -747,13 +750,517 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 **Blockers:** the Celery version and its cancellation semantics are unverified until increment 2 selects them; queued-task revocation races must be verified against that version before the cancellation contract is claimed.
 
-## Increment 5: Production image and Linux deployment (to be expanded)
+## Increment 5a: Production image for the HTTP service
 
-**Scope:** add a `prod` target to `apps/engine/Dockerfile` that shares the conda, TetGen, Core, and Sim layers with `dev`: the Engine package installed without its test extra or test files, no source mounts or reloading, a non-root user, a `HEALTHCHECK` against `/api/v1/health` with a Celery-specific override for worker containers, and only a C compiler kept from the build tools; resolve the conda environment from a lock file; document the production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); choose the deployment's single CPU architecture; deploy the API and worker on a Linux host of that architecture, run representative Core and Sim jobs, and record the baseline measurements the spec lists, with hardware, image digest, and software versions.
+Status: expanded 2026-09-29 to run before increment 2; not yet executed.
 
-**Upstream interfaces:** the conda-forge packages already pinned in the image (dolfinx 0.11.0 has `linux-64` and `linux-aarch64` builds), a conda lock tool such as `conda-lock`, the TetGen wrapper and Core and Sim at the pinned commits, and the same `dtcc-engine` package and entry points as `dev`.
+**Scope:** a `prod` target in `apps/engine/Dockerfile` that shares the conda, TetGen, Core, and Sim layers with `dev`: the Engine package installed without its test extra or test files, no source mounts or reloading, a non-root user, a `HEALTHCHECK` against `/api/v1/health`, and only a C compiler kept from the build tools. Both targets' conda environment is resolved from a lock file for `linux-64` and `linux-aarch64`. 5a lays the image's foundation; increment 2 still adds Celery and the worker to it.
 
-**Checks:** the Container deployment row of the acceptance table on a Linux host, including canonical package validation for a representative Sim job; the `prod` image contains neither the Engine test extra nor test files (pytest from Core's own dependencies is expected until removed upstream) and runs as a non-root user; both the API and worker containers report healthy; FEniCSx still compiles forms in `prod`; a restart keeps the FEniCSx cache and completed packages.
+**Upstream interfaces:**
+
+- conda-lock 4.0.2, verified in its source at `v4.0.2`: an `environment.yml` may set a top-level `category:`; several `--file` sources are solved together; a package reachable from `main` keeps only the `main` category (`conda_lock/lockfile/__init__.py`, `_truncate_main_category`); `render --kind explicit` writes one explicit file per platform, and `--extras build` adds the `build` category.
+- conda: `conda create --file` installs an explicit lock file without solving; `conda remove --force` removes only the named packages, not those that depend on them (conda documentation, `conda remove`).
+- dolfinx 0.11.0 caches compiled forms in `$XDG_CACHE_HOME/fenics`, by default `~/.cache/fenics` (`python/dolfinx/jit.py` at `v0.11.0`); `fem.form` accepts `jit_options={"cache_dir": ...}` (`python/dolfinx/fem/forms.py`).
+- Core at `5ca2ca4` compiles C++ when installed (scikit-build-core and pybind11) and installs `dtcc-mesher` from Git; the TetGen wrapper builds with CMake. The build tools are needed at install time only.
+- pip: a direct-URL requirement's only candidate is its link, never the installed distribution (`src/pip/_internal/resolution/resolvelib/factory.py`, explicit candidates), and the resolver follows installed distributions' dependencies. Any install that resolves Sim's dependencies therefore fetches `dtcc-core @ git+...` again and needs Git.
+- conda 26.7.2's `conda doctor consistency` checks every installed record's `depends` and `constrains` with `MatchSpec` and prints "The environment is consistent." or "The environment is not consistent."; it exits 0 either way (`conda/plugins/subcommands/doctor/health_checks/consistency.py`).
+
+**Design:** one solve covers the runtime packages (`environment.yml`, category `main`, including `c-compiler` because FEniCSx compiles forms at runtime) and the build-only tools (`environment-build.yml`, category `build`). A `builder` stage creates the environment from the rendered build lock, installs the TetGen wrapper and Sim with pip as the development image does now, installs the Engine's runtime dependencies from `pyproject.toml` while Git is still present, and then force-removes the packages that only the build lock contains; by construction of the categories, no runtime package depends on them. A `runtime` stage copies the environment to the same absolute path on the same pinned base image, because a conda environment contains absolute paths. `dev` and `prod` both start from `runtime` and install the Engine package itself with `--no-deps`, so they never resolve Sim's Git requirements; `dev` then installs the test extra's requirements, which do not reach Sim. No wheels move between stages: pip resolves against the installed conda packages as it does now, so Fiona, Rasterio, PyProj, Pyogrio, and h5py stay conda's, and compiled extensions run against the libraries they were built with.
+
+**Recorded limits:**
+
+- Pip dependencies of Core and Sim that conda does not provide stay unlocked; the spec requires only the conda lock. A rebuild can resolve different pip versions, so a deployment runs the exact image digest it tested (5b).
+- Only the build host's architecture is built and tested in 5a (`linux-aarch64` on Apple silicon). The `linux-64` lock is resolved but not built or tested.
+- The production checks run with the pytest that Core depends on. If Core drops it upstream, `pnpm engine:check:prod` needs another runner.
+
+**Checks:** the environment tests pass in `dev` and, as the production user, in `prod`; `prod` runs as a non-root user; it contains no Engine source checkout (`/app`, `/src`), its installed Engine distribution contains no tests and is not editable; the test extra's current package `httpx` is absent; the build-only tools are absent, including conda's target-prefixed compilers; the installed conda packages equal the runtime lock and `conda doctor` reports them consistent; `pip check` passes; FEniCSx compiles a form into an empty cache; the container reports healthy; the Dataset routes reject a missing token and accept the configured one. The Container deployment acceptance row stays not run until 5b.
+
+**Blockers:** none for building and checking locally. The AGPL-3.0 license review for TetGen must be completed before the image is pushed to any registry, including a private one.
+
+### Task 5: Lock the conda environment
+
+**Files:**
+
+- Create: `apps/engine/environment.yml`
+- Create: `apps/engine/environment-build.yml`
+- Create: `apps/engine/lock.sh`
+- Create (generated): `apps/engine/conda-lock.yml`, `apps/engine/conda-linux-64.lock`, `apps/engine/conda-linux-aarch64.lock`, `apps/engine/conda-build-linux-64.lock`, `apps/engine/conda-build-linux-aarch64.lock`
+- Modify: `compose.yaml` (add `engine-lock`)
+- Modify: `package.json` (add `engine:lock`)
+- Modify: `.prettierignore`
+
+**Interfaces:**
+
+- Consumes: the package list of the current Dockerfile's `mamba create`.
+- Produces: `conda-{platform}.lock` (runtime, category `main`) and `conda-build-{platform}.lock` (runtime plus build tools) for `linux-64` and `linux-aarch64`; `pnpm engine:lock` regenerates all five files.
+
+- [ ] **Step 1: Write the environment files**
+
+Create `apps/engine/environment.yml`:
+
+```yaml
+# Conda packages of the Engine image at runtime. After a change, run `pnpm engine:lock`.
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  # Not a dependency of python: conda adds pip only when it solves an environment itself, and conda-lock does not.
+  - pip
+  - fenics-dolfinx=0.11.0
+  - petsc4py=3.25.5
+  - mpich=5.0.1
+  # Packages linking GDAL, PROJ or HDF5 come from conda-forge so one copy of each library is shared;
+  # their pip wheels bundle their own. h5py matches Core's exact pin.
+  - fiona
+  - rasterio
+  - pyproj
+  - pyogrio
+  - h5py=3.16.0
+  # FEniCSx compiles forms when a simulation runs.
+  - c-compiler
+```
+
+Create `apps/engine/environment-build.yml`:
+
+```yaml
+# Tools that build the TetGen wrapper, Core and Sim; the image removes them after the build.
+category: build
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - cxx-compiler
+  # The unprefixed `ar` that CMake looks for, which the compilers do not provide.
+  - binutils
+  - cmake
+  - ninja
+  - git
+```
+
+Ruling (2026-09-29, Task 5, Step 3): the first lock contained no `pip`. conda-forge's `python` does not depend on it, and conda-lock's solve does not add it as conda does, so without it the builder's `pip install` fails or uses the base environment's pip. `pip` is added to `environment.yml`.
+
+`compilers` becomes `c-compiler` plus `cxx-compiler`, because nothing in the image compiles Fortran. If the Task 7 build fails for a missing tool, add that tool to `environment-build.yml`, record the change as a ruling, and relock.
+
+- [ ] **Step 2: Add the lock command**
+
+Create `apps/engine/lock.sh`:
+
+```sh
+#!/bin/sh
+# Solves the Engine's conda environment for both Linux platforms; run it through `pnpm engine:lock`.
+set -eu
+conda create --yes --quiet --prefix /tmp/conda-lock conda-lock=4.0.2
+lock=/tmp/conda-lock/bin/conda-lock
+"$lock" lock --file environment.yml --file environment-build.yml --platform linux-64 --platform linux-aarch64 --lockfile conda-lock.yml
+"$lock" render --kind explicit --filename-template "conda-{platform}.lock" conda-lock.yml
+"$lock" render --kind explicit --extras build --filename-template "conda-build-{platform}.lock" conda-lock.yml
+```
+
+Add to `compose.yaml`, after the `engine` service and indented like it:
+
+```yaml
+engine-lock:
+  # Regenerates the Engine's conda lock files: `pnpm engine:lock`.
+  profiles: [engine-lock]
+  image: condaforge/miniforge3:26.7.2-0
+  working_dir: /engine
+  command: ["sh", "lock.sh"]
+  volumes:
+    - ./apps/engine:/engine
+```
+
+In `package.json`, add after `dev:engine`:
+
+```json
+"engine:lock": "docker compose --profile engine-lock run --rm engine-lock",
+```
+
+Add `apps/engine/conda-lock.yml` to `.prettierignore`; it is generated.
+
+- [ ] **Step 3: Generate and inspect the lock**
+
+Run: `pnpm engine:lock`
+Expected: `conda-lock.yml` and the four explicit `.lock` files exist; each explicit file contains `@EXPLICIT` and lists `https://conda.anaconda.org/conda-forge/...` URLs.
+
+Run, for `linux-aarch64` and then `linux-64`:
+
+```sh
+comm -23 <(grep '^https' apps/engine/conda-build-linux-aarch64.lock | sed 's/#.*//' | sort) <(grep '^https' apps/engine/conda-linux-aarch64.lock | sed 's/#.*//' | sort) | sed 's#.*/##'
+comm -13 <(grep '^https' apps/engine/conda-build-linux-aarch64.lock | sed 's/#.*//' | sort) <(grep '^https' apps/engine/conda-linux-aarch64.lock | sed 's/#.*//' | sort)
+```
+
+Expected: the first lists only build-only packages (the C++ compiler packages, `binutils`, `cmake`, `ninja`, `git`, and dependencies only they need) and no Python, numerical, GDAL, or C compiler package; the second is empty, because the build lock contains the whole runtime lock with the same builds. If a runtime package appears in the first list, stop: the category split does not behave as read in conda-lock's source.
+
+- [ ] **Step 4: Stop for review**
+
+Leave changes uncommitted. Report the package counts per platform and the build-only lists.
+
+### Task 6: Production checks
+
+**Files:**
+
+- Create: `apps/engine/prod_checks/test_prod_image.py`
+- Create: `apps/engine/check-prod.sh`
+- Modify: `apps/engine/tests/test_environment.py` (module docstring)
+- Modify: `apps/engine/Dockerfile` (name the stage `dev`; add a placeholder `prod` stage)
+- Modify: `compose.yaml` (`engine` target; add `engine-prod`)
+- Modify: `package.json` (add `engine:check:prod`)
+
+**Interfaces:**
+
+- Consumes: the explicit lock files from Task 5; `tests/test_environment.py`.
+- Produces: `pnpm engine:check:prod` builds the `prod` target and, in the separate Compose project `dtcc-twin-engine-prod`, runs the environment tests and the production checks inside it as the image's user, then checks health and authentication. `apps/engine` is mounted read-only at `/checks`; the image contains no checks.
+
+- [ ] **Step 1: Write the production checks**
+
+Create `apps/engine/prod_checks/test_prod_image.py`:
+
+```python
+"""Checks of the DTCC Engine production image, run inside it by `pnpm engine:check:prod`.
+
+The image contains no tests; `check-prod.sh` mounts this directory read-only.
+"""
+
+import json
+import os
+import platform
+import subprocess
+import sys
+import sysconfig
+from importlib.metadata import Distribution, distributions
+from importlib.util import find_spec
+from pathlib import Path
+
+import ufl
+from dolfinx import fem, mesh
+from mpi4py import MPI
+
+ENGINE_DIR = Path(__file__).resolve().parents[1]
+LOCK_PLATFORMS = {"x86_64": "linux-64", "aarch64": "linux-aarch64"}
+# Conda also installs compilers under a target prefix, such as aarch64-conda-linux-gnu-g++.
+BUILD_ONLY_TOOLS = ("g++", "c++", "gfortran", "cmake", "ninja", "git")
+
+
+def package_urls(explicit_list: str) -> set[str]:
+    """The package URLs of a conda explicit list, without their hashes."""
+    return {line.split("#")[0] for line in explicit_list.splitlines() if line.startswith("https://")}
+
+
+def installed_engine() -> Distribution:
+    """The dtcc-engine distribution in the environment's site-packages, not a source tree's egg-info on sys.path."""
+    [engine] = distributions(name="dtcc-engine", path=[sysconfig.get_path("purelib")])
+    return engine
+
+
+def test_runs_as_a_non_root_user() -> None:
+    assert os.getuid() != 0
+
+
+def test_image_has_no_engine_source_checkout() -> None:
+    # /app is the development image's checkout; /src is where the production build mounts it.
+    assert [path for path in (Path("/app"), Path("/src")) if path.exists()] == []
+
+
+def test_engine_distribution_contains_no_tests() -> None:
+    files = installed_engine().files or []
+    assert [str(file) for file in files if "tests" in file.parts or file.name.startswith("test_")] == []
+
+
+def test_engine_is_not_an_editable_install() -> None:
+    direct_url = json.loads(installed_engine().read_text("direct_url.json") or "{}")
+    assert not direct_url.get("dir_info", {}).get("editable", False)
+
+
+def test_test_extra_is_not_installed() -> None:
+    # httpx is the test extra's only package that nothing else installs; pytest comes from Core.
+    assert find_spec("httpx") is None
+
+
+def test_build_only_tools_are_removed() -> None:
+    bin_dir = Path(sys.prefix) / "bin"
+    found = sorted(
+        path.name
+        for tool in BUILD_ONLY_TOOLS
+        for path in bin_dir.glob(f"*{tool}")
+        if path.name == tool or path.name.endswith(f"-{tool}")
+    )
+    assert found == []
+
+
+def test_conda_packages_match_the_runtime_lock() -> None:
+    lock = ENGINE_DIR / f"conda-{LOCK_PLATFORMS[platform.machine()]}.lock"
+    installed = subprocess.run(
+        ["conda", "list", "--prefix", sys.prefix, "--explicit"], check=True, capture_output=True, text=True
+    ).stdout
+    assert package_urls(installed) == package_urls(lock.read_text())
+
+
+def test_conda_dependencies_are_consistent() -> None:
+    # Removing the build-only packages bypassed conda's dependency checks; conda doctor exits 0 either way.
+    report = subprocess.run(
+        ["conda", "doctor", "--prefix", sys.prefix, "--verbose", "consistency"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "The environment is consistent." in report, report
+
+
+def test_installed_distributions_have_compatible_requirements() -> None:
+    result = subprocess.run([sys.executable, "-m", "pip", "check"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout
+
+
+def test_fenicsx_compiles_a_form_into_an_empty_cache(tmp_path: Path) -> None:
+    domain = mesh.create_unit_cube(MPI.COMM_WORLD, 1, 1, 1)
+    fem.form(fem.Constant(domain, 1.0) * ufl.dx(domain=domain), jit_options={"cache_dir": tmp_path})
+    assert any(tmp_path.iterdir())
+```
+
+Ruling (2026-09-29, Task 6, Step 3): the first run looked the distribution up with `distribution("dtcc-engine")`, which searches `sys.path` in order. `python -m` puts the working directory first, and the placeholder's `/app/dtcc_engine.egg-info` shadowed the installed `dist-info`, so the editable-install check passed without reading it. Both checks now use `installed_engine()`, which searches only the environment's `site-packages` and fails on a missing or duplicate distribution.
+
+In `apps/engine/tests/test_environment.py`, replace the docstring sentence "Passing them verifies only the development image, not a production deployment." with "They run in the development image through `pnpm engine:check` and in the production image through `pnpm engine:check:prod`; passing them does not verify a deployment."
+
+- [ ] **Step 2: Add the check command and a placeholder `prod` target**
+
+Create `apps/engine/check-prod.sh`:
+
+```sh
+#!/bin/sh
+# Builds the Engine's prod target and checks it in its own Compose project, so a running
+# `pnpm dev:engine` or Postgres is left alone. The checks are mounted; the image contains none.
+set -eu
+cd "$(dirname "$0")/../.."
+compose() { docker compose --project-name dtcc-twin-engine-prod --profile engine-prod "$@"; }
+trap 'compose down' EXIT
+
+compose build engine-prod
+# A fresh container has an empty FEniCSx cache, so every form in these tests is compiled.
+compose run --rm -T --volume "$PWD/apps/engine:/checks:ro" --env XDG_CACHE_HOME=/tmp/cache \
+    --env PYTHONDONTWRITEBYTECODE=1 engine-prod \
+    python -m pytest -p no:cacheprovider --rootdir /checks /checks/tests/test_environment.py /checks/prod_checks
+compose up --detach --wait engine-prod
+compose exec -T engine-prod python -c '
+import os, urllib.error, urllib.request
+
+def status(headers):
+    request = urllib.request.Request("http://localhost:8000/api/v1/datasets", headers=headers)
+    try:
+        return urllib.request.urlopen(request).status
+    except urllib.error.HTTPError as error:
+        return error.code
+
+assert status({}) == 401
+assert status({"Authorization": "Bearer " + os.environ["ENGINE_API_TOKEN"]}) == 200
+print("prod API: healthy, rejects a missing token, accepts the configured token")
+'
+```
+
+In `apps/engine/Dockerfile`, change `FROM condaforge/miniforge3:26.7.2-0` to `FROM condaforge/miniforge3:26.7.2-0 AS dev` and append `FROM dev AS prod`. The placeholder makes the checks fail on the missing production properties rather than on a missing build target.
+
+In `compose.yaml`, change the `engine` service's `build: apps/engine` to:
+
+```yaml
+build:
+  context: apps/engine
+  target: dev
+```
+
+and add after `engine-lock`, indented like it:
+
+```yaml
+engine-prod:
+  # Local check of the production target: `pnpm engine:check:prod`. No port is published.
+  profiles: [engine-prod]
+  build:
+    context: apps/engine
+    target: prod
+  environment:
+    ENGINE_API_TOKEN: local-prod-check-token
+```
+
+In `package.json`, add after `engine:lock`:
+
+```json
+"engine:check:prod": "sh apps/engine/check-prod.sh",
+```
+
+- [ ] **Step 3: Run the checks to verify they fail for the right reason**
+
+Run: `pnpm engine:check:prod`
+Expected: the environment tests and `test_fenicsx_compiles_a_form_into_an_empty_cache` pass; `test_engine_distribution_contains_no_tests` and `test_conda_dependencies_are_consistent` pass as guards, because the development image already has those properties (Task 7, Step 4 shows the consistency check can fail); `test_runs_as_a_non_root_user`, `test_image_has_no_engine_source_checkout`, `test_engine_is_not_an_editable_install`, `test_test_extra_is_not_installed`, `test_build_only_tools_are_removed`, and `test_conda_packages_match_the_runtime_lock` fail on their assertions; the script exits non-zero after pytest, and `compose down` removes the project's containers. Any import, mount, or collection error is a setup mistake to fix first. If `test_installed_distributions_have_compatible_requirements` fails, stop and report its output: a pip conflict that already exists in the development environment is a separate decision, not something to work around here.
+
+Run: `pnpm engine:check`
+Expected: `37 passed`, unchanged.
+
+- [ ] **Step 4: Stop for review**
+
+Leave changes uncommitted. Report Step 3's passing and failing checks.
+
+### Task 7: Build `dev` and `prod` from the lock
+
+**Files:**
+
+- Modify: `apps/engine/Dockerfile` (whole file)
+- Modify: `apps/engine/.dockerignore`
+
+**Interfaces:**
+
+- Consumes: the lock files from Task 5; the build arguments `TETGEN_WRAPPER_COMMIT` and `DTCC_SIM_COMMIT` with their current defaults; `project.dependencies` and the `test` extra in `pyproject.toml`, read with the standard library's `tomllib`.
+- Produces: stages `builder`, `runtime`, `dev`, and `prod`, with `prod` last and therefore the default target. `dev` behaves as before for `pnpm engine:check` and `pnpm dev:engine`; `prod` runs Uvicorn as user `engine` (uid 10001) with an image `HEALTHCHECK`.
+
+- [ ] **Step 1: Replace the Dockerfile**
+
+Replace `apps/engine/Dockerfile` with:
+
+```dockerfile
+# DTCC Engine image: the `dev` target for local development and tests, `prod` for deployment; see DESIGN.md.
+# It bundles AGPL-3.0 TetGen through dtcc-tetgen-wrapper: review licensing before publishing it.
+# Conda packages are pinned by environment*.yml through `pnpm engine:lock`, Git dependencies by the build arguments below.
+FROM condaforge/miniforge3:26.7.2-0 AS builder
+
+ARG TARGETARCH
+COPY conda-*.lock /locks/
+# The build lock is the runtime lock plus the build-only tools, from one solve.
+RUN case "$TARGETARCH" in amd64) platform=linux-64 ;; arm64) platform=linux-aarch64 ;; esac \
+    && conda create --yes --name engine --file "/locks/conda-build-$platform.lock"
+
+# Activation sets the conda compiler and data-path variables that native builds and GDAL need.
+SHELL ["conda", "run", "--no-capture-output", "-n", "engine", "/bin/bash", "-c"]
+
+ARG TETGEN_WRAPPER_COMMIT=22ab9ff2ee1dd03f82ce24dd0f378f00da7e487c
+RUN pip install --no-cache-dir \
+    "dtcc-tetgen-wrapper @ git+https://github.com/dtcc-platform/dtcc-tetgen-wrapper.git@${TETGEN_WRAPPER_COMMIT}"
+
+# Sim pins the Core commit it is tested with, so Core is not pinned separately.
+ARG DTCC_SIM_COMMIT=2422bbafac6ef07466ca1bcd6905bbd99a8c2ecf
+RUN pip install --no-cache-dir \
+    "dtcc-sim @ git+https://github.com/dtcc-platform/dtcc-sim.git@${DTCC_SIM_COMMIT}"
+
+# Resolving Sim's dependencies fetches Core from Git again, so the Engine's dependencies are installed while Git is
+# present; later stages install the Engine with --no-deps.
+COPY pyproject.toml /engine/
+RUN python -c "import tomllib; print(*tomllib.load(open('/engine/pyproject.toml', 'rb'))['project']['dependencies'], sep='\n')" \
+        > /engine/requirements.txt \
+    && pip install --no-cache-dir -r /engine/requirements.txt
+
+# Removes the packages that only the build lock has; no runtime package depends on them.
+SHELL ["/bin/bash", "-c"]
+RUN case "$TARGETARCH" in amd64) platform=linux-64 ;; arm64) platform=linux-aarch64 ;; esac \
+    && comm -23 <(grep '^https' "/locks/conda-build-$platform.lock" | sed 's/#.*//' | sort) \
+        <(grep '^https' "/locks/conda-$platform.lock" | sed 's/#.*//' | sort) \
+    | sed -E 's#.*/##; s/\.(conda|tar\.bz2)$//; s/-[^-]+-[^-]+$//' \
+    | xargs conda remove --yes --name engine --force --offline
+
+FROM condaforge/miniforge3:26.7.2-0 AS runtime
+# Same base image and path as the builder: a conda environment contains absolute paths.
+COPY --from=builder /opt/conda/envs/engine /opt/conda/envs/engine
+ENV PYTHONUNBUFFERED=1
+SHELL ["conda", "run", "--no-capture-output", "-n", "engine", "/bin/bash", "-c"]
+# `conda run` does not forward SIGTERM to its child, so activate and exec under the base image's tini.
+ENTRYPOINT ["tini", "--", "/bin/bash", "-c", "source /opt/conda/etc/profile.d/conda.sh && conda activate engine && exec \"$@\"", "engine"]
+EXPOSE 8000
+CMD ["uvicorn", "dtcc_engine.api:create_app_from_environment", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM runtime AS dev
+WORKDIR /app
+COPY pyproject.toml ./
+COPY dtcc_engine ./dtcc_engine
+RUN pip install --no-cache-dir --no-deps -e . \
+    && python -c "import tomllib; print(*tomllib.load(open('pyproject.toml', 'rb'))['project']['optional-dependencies']['test'], sep='\n')" \
+        > /tmp/test-requirements.txt \
+    && pip install --no-cache-dir -r /tmp/test-requirements.txt \
+    && rm /tmp/test-requirements.txt
+COPY tests ./tests
+
+FROM runtime AS prod
+# setuptools writes build files into the source tree; the writable mount discards them.
+RUN --mount=type=bind,target=/src,rw pip install --no-cache-dir --no-deps /src \
+    && useradd --create-home --uid 10001 engine
+USER engine
+WORKDIR /home/engine
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --start-interval=5s \
+    CMD ["/opt/conda/envs/engine/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+```
+
+In `apps/engine/.dockerignore`, add `!conda-*.lock` after `!pyproject.toml`.
+
+- [ ] **Step 2: Verify the development image**
+
+Run: `pnpm engine:check`
+Expected: `37 passed`. The build log shows `conda create` installing from the explicit file without a solve; the Engine-dependency step reporting `dtcc-core` and `dtcc-sim` as already satisfied and installing FastAPI and Uvicorn; the removal step removing only the build-only packages from Task 5, Step 3; and no Git clone in the `dev` stage. If the TetGen wrapper, Core, or Sim build fails for a missing tool, follow Task 5, Step 1's ruling rule. If FEniCSx fails to compile a form, the runtime lock lacks a compiler piece: stop and report the error; do not move build tools back into `prod`.
+
+- [ ] **Step 3: Verify the production image**
+
+Run: `pnpm engine:check:prod`
+Expected: all environment tests and production checks pass; the container reports healthy; the script prints `prod API: healthy, rejects a missing token, accepts the configured token` and exits 0.
+
+- [ ] **Step 4: Verify the checks catch a regression**
+
+Temporarily delete the removal `RUN` from the `builder` stage and run `pnpm engine:check:prod`.
+Expected: `test_build_only_tools_are_removed` and `test_conda_packages_match_the_runtime_lock` fail. Restore the `RUN`.
+
+Run, in a throwaway container:
+
+```sh
+docker compose --project-name dtcc-twin-engine-prod --profile engine-prod run --rm -T --user root \
+  --volume "$PWD/apps/engine:/checks:ro" engine-prod bash -c \
+  'rm "$CONDA_PREFIX"/conda-meta/libzlib-*.json \
+   && python -m pytest -p no:cacheprovider --rootdir /checks /checks/prod_checks -k consistent'
+```
+
+Only `libzlib`'s conda record is removed; its library files stay, so the module's numerical imports still load and the test reaches its assertion.
+Expected: `test_conda_dependencies_are_consistent` fails on its assertion, and the report lists `libzlib` as missing for the packages that depend on it. An import or collection error means the control did not reach the check. The container is discarded, so the image is unchanged.
+
+- [ ] **Step 5: Verify the check leaves the development services alone**
+
+Run `docker compose up -d --wait`, start `pnpm dev:engine` in another terminal, then run `pnpm engine:check:prod`.
+Expected: it passes; afterwards `docker compose --profile engine ps` still lists `postgres` and `engine` as running and healthy, and `docker compose --project-name dtcc-twin-engine-prod ps --all` lists nothing.
+
+Run: `docker compose config --services`
+Expected: exactly `postgres`. Stop the development services.
+
+- [ ] **Step 6: Record the image sizes**
+
+Run: `docker image ls --format '{{.Repository}} {{.Size}}' | grep engine`
+Expected: sizes for the `dev` and `prod` images. Record them next to the previous development image's 4.91 GB, as observations rather than targets.
+
+- [ ] **Step 7: Stop for review**
+
+Leave changes uncommitted. Report Steps 2 to 6.
+
+### Task 8: Documentation and validation
+
+**Files:**
+
+- Modify: `README.md` (engine note and Commands table)
+- Modify: `apps/engine/PLAN.md` (Increment 5a status)
+
+- [ ] **Step 1: Update the README**
+
+Append to the README's engine paragraph: "`pnpm engine:check:prod` builds the production image and checks it; after a change to `apps/engine/environment*.yml`, `pnpm engine:lock` re-solves its conda packages."
+
+Add Commands rows after `pnpm dev:engine`: `pnpm engine:check:prod` with "Build the engine's production image and check it. Needs Docker", and `pnpm engine:lock` with "Re-solve the engine's conda lock files. Needs Docker".
+
+- [ ] **Step 2: Validate**
+
+Run: `pnpm check`, `pnpm engine:check`, and `pnpm engine:check:prod`.
+Expected: all pass. Report passed, failed, skipped, and not-run checks separately; the `linux-64` image build and the Container deployment row are not run.
+
+- [ ] **Step 3: Stop for review**
+
+Set Increment 5a's status to executed with the date, leave changes uncommitted, and report.
+
+## Increment 5b: Worker image and Linux deployment (to be expanded)
+
+**Depends on:** increment 2 for the worker, Redis, and packages; increment 3 for remote delivery measurements and comparing image digests across hosts; increment 4 for restart behavior.
+
+**Scope:** the worker containers' Celery-specific health-check override; the documented production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); choosing the deployment's single CPU architecture and building and validating the image on it; deploying the API and worker on a Linux host of that architecture, running representative Core and Sim jobs, and recording the baseline measurements the spec lists, with hardware, image digest, and software versions. The deployment runs the exact image digest it tested.
+
+**Upstream interfaces:** Celery's worker inspection for the health check, in the version increment 2 selects; the same `prod` image and `dtcc-engine` entry points as 5a.
+
+**Checks:** the Container deployment row of the acceptance table on a Linux host, including canonical package validation for a representative Sim job; both the API and worker containers report healthy; a restart keeps the FEniCSx cache and completed packages; the 5a checks pass on the chosen architecture.
 
 **Blockers:** the AGPL-3.0 license review for TetGen must be completed before the image is pushed to any registry, including a private one.
 

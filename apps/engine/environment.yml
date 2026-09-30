@@ -1,0 +1,20 @@
+# Conda packages of the Engine image at runtime. After a change, run `pnpm engine:lock`.
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  # Not a dependency of python: conda adds pip only when it solves an environment itself, and conda-lock does not.
+  - pip
+  - fenics-dolfinx=0.11.0
+  - petsc4py=3.25.5
+  - mpich=5.0.1
+  # Packages linking GDAL, PROJ or HDF5 come from conda-forge so one copy of each library is shared;
+  # their pip wheels bundle their own. h5py matches Core's exact pin.
+  - fiona
+  - rasterio
+  - pyproj
+  - pyogrio
+  - h5py=3.16.0
+  # FEniCSx compiles forms when a simulation runs.
+  - c-compiler
