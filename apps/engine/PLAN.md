@@ -752,7 +752,7 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ## Increment 5a: Production image for the HTTP service
 
-Status: expanded 2026-09-29 to run before increment 2; not yet executed.
+Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are committed in `8d934a8`; Task 8's changes are left uncommitted for team review. Image sizes on `linux-aarch64`: `dev` 4.08 GB and `prod` 4.07 GB, against 4.91 GB for the previous development image. Not run: the `linux-64` image build and checks, and the Container deployment acceptance row (5b).
 
 **Scope:** a `prod` target in `apps/engine/Dockerfile` that shares the conda, TetGen, Core, and Sim layers with `dev`: the Engine package installed without its test extra or test files, no source mounts or reloading, a non-root user, a `HEALTHCHECK` against `/api/v1/health`, and only a C compiler kept from the build tools. Both targets' conda environment is resolved from a lock file for `linux-64` and `linux-aarch64`. 5a lays the image's foundation; increment 2 still adds Celery and the worker to it.
 
@@ -794,7 +794,7 @@ Status: expanded 2026-09-29 to run before increment 2; not yet executed.
 - Consumes: the package list of the current Dockerfile's `mamba create`.
 - Produces: `conda-{platform}.lock` (runtime, category `main`) and `conda-build-{platform}.lock` (runtime plus build tools) for `linux-64` and `linux-aarch64`; `pnpm engine:lock` regenerates all five files.
 
-- [ ] **Step 1: Write the environment files**
+- [x] **Step 1: Write the environment files**
 
 Create `apps/engine/environment.yml`:
 
@@ -842,7 +842,7 @@ Ruling (2026-09-29, Task 5, Step 3): the first lock contained no `pip`. conda-fo
 
 `compilers` becomes `c-compiler` plus `cxx-compiler`, because nothing in the image compiles Fortran. If the Task 7 build fails for a missing tool, add that tool to `environment-build.yml`, record the change as a ruling, and relock.
 
-- [ ] **Step 2: Add the lock command**
+- [x] **Step 2: Add the lock command**
 
 Create `apps/engine/lock.sh`:
 
@@ -878,7 +878,7 @@ In `package.json`, add after `dev:engine`:
 
 Add `apps/engine/conda-lock.yml` to `.prettierignore`; it is generated.
 
-- [ ] **Step 3: Generate and inspect the lock**
+- [x] **Step 3: Generate and inspect the lock**
 
 Run: `pnpm engine:lock`
 Expected: `conda-lock.yml` and the four explicit `.lock` files exist; each explicit file contains `@EXPLICIT` and lists `https://conda.anaconda.org/conda-forge/...` URLs.
@@ -892,7 +892,7 @@ comm -13 <(grep '^https' apps/engine/conda-build-linux-aarch64.lock | sed 's/#.*
 
 Expected: the first lists only build-only packages (the C++ compiler packages, `binutils`, `cmake`, `ninja`, `git`, and dependencies only they need) and no Python, numerical, GDAL, or C compiler package; the second is empty, because the build lock contains the whole runtime lock with the same builds. If a runtime package appears in the first list, stop: the category split does not behave as read in conda-lock's source.
 
-- [ ] **Step 4: Stop for review**
+- [x] **Step 4: Stop for review**
 
 Leave changes uncommitted. Report the package counts per platform and the build-only lists.
 
@@ -912,7 +912,7 @@ Leave changes uncommitted. Report the package counts per platform and the build-
 - Consumes: the explicit lock files from Task 5; `tests/test_environment.py`.
 - Produces: `pnpm engine:check:prod` builds the `prod` target and, in the separate Compose project `dtcc-twin-engine-prod`, runs the environment tests and the production checks inside it as the image's user, then checks health and authentication. `apps/engine` is mounted read-only at `/checks`; the image contains no checks.
 
-- [ ] **Step 1: Write the production checks**
+- [x] **Step 1: Write the production checks**
 
 Create `apps/engine/prod_checks/test_prod_image.py`:
 
@@ -1022,7 +1022,7 @@ Ruling (2026-09-29, Task 6, Step 3): the first run looked the distribution up wi
 
 In `apps/engine/tests/test_environment.py`, replace the docstring sentence "Passing them verifies only the development image, not a production deployment." with "They run in the development image through `pnpm engine:check` and in the production image through `pnpm engine:check:prod`; passing them does not verify a deployment."
 
-- [ ] **Step 2: Add the check command and a placeholder `prod` target**
+- [x] **Step 2: Add the check command and a placeholder `prod` target**
 
 Create `apps/engine/check-prod.sh`:
 
@@ -1086,7 +1086,7 @@ In `package.json`, add after `engine:lock`:
 "engine:check:prod": "sh apps/engine/check-prod.sh",
 ```
 
-- [ ] **Step 3: Run the checks to verify they fail for the right reason**
+- [x] **Step 3: Run the checks to verify they fail for the right reason**
 
 Run: `pnpm engine:check:prod`
 Expected: the environment tests and `test_fenicsx_compiles_a_form_into_an_empty_cache` pass; `test_engine_distribution_contains_no_tests` and `test_conda_dependencies_are_consistent` pass as guards, because the development image already has those properties (Task 7, Step 4 shows the consistency check can fail); `test_runs_as_a_non_root_user`, `test_image_has_no_engine_source_checkout`, `test_engine_is_not_an_editable_install`, `test_test_extra_is_not_installed`, `test_build_only_tools_are_removed`, and `test_conda_packages_match_the_runtime_lock` fail on their assertions; the script exits non-zero after pytest, and `compose down` removes the project's containers. Any import, mount, or collection error is a setup mistake to fix first. If `test_installed_distributions_have_compatible_requirements` fails, stop and report its output: a pip conflict that already exists in the development environment is a separate decision, not something to work around here.
@@ -1094,7 +1094,7 @@ Expected: the environment tests and `test_fenicsx_compiles_a_form_into_an_empty_
 Run: `pnpm engine:check`
 Expected: `37 passed`, unchanged.
 
-- [ ] **Step 4: Stop for review**
+- [x] **Step 4: Stop for review**
 
 Leave changes uncommitted. Report Step 3's passing and failing checks.
 
@@ -1110,7 +1110,7 @@ Leave changes uncommitted. Report Step 3's passing and failing checks.
 - Consumes: the lock files from Task 5; the build arguments `TETGEN_WRAPPER_COMMIT` and `DTCC_SIM_COMMIT` with their current defaults; `project.dependencies` and the `test` extra in `pyproject.toml`, read with the standard library's `tomllib`.
 - Produces: stages `builder`, `runtime`, `dev`, and `prod`, with `prod` last and therefore the default target. `dev` behaves as before for `pnpm engine:check` and `pnpm dev:engine`; `prod` runs Uvicorn as user `engine` (uid 10001) with an image `HEALTHCHECK`.
 
-- [ ] **Step 1: Replace the Dockerfile**
+- [x] **Step 1: Replace the Dockerfile**
 
 Replace `apps/engine/Dockerfile` with:
 
@@ -1186,17 +1186,17 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --start-interval=5s \
 
 In `apps/engine/.dockerignore`, add `!conda-*.lock` after `!pyproject.toml`.
 
-- [ ] **Step 2: Verify the development image**
+- [x] **Step 2: Verify the development image**
 
 Run: `pnpm engine:check`
 Expected: `37 passed`. The build log shows `conda create` installing from the explicit file without a solve; the Engine-dependency step reporting `dtcc-core` and `dtcc-sim` as already satisfied and installing FastAPI and Uvicorn; the removal step removing only the build-only packages from Task 5, Step 3; and no Git clone in the `dev` stage. If the TetGen wrapper, Core, or Sim build fails for a missing tool, follow Task 5, Step 1's ruling rule. If FEniCSx fails to compile a form, the runtime lock lacks a compiler piece: stop and report the error; do not move build tools back into `prod`.
 
-- [ ] **Step 3: Verify the production image**
+- [x] **Step 3: Verify the production image**
 
 Run: `pnpm engine:check:prod`
 Expected: all environment tests and production checks pass; the container reports healthy; the script prints `prod API: healthy, rejects a missing token, accepts the configured token` and exits 0.
 
-- [ ] **Step 4: Verify the checks catch a regression**
+- [x] **Step 4: Verify the checks catch a regression**
 
 Temporarily delete the removal `RUN` from the `builder` stage and run `pnpm engine:check:prod`.
 Expected: `test_build_only_tools_are_removed` and `test_conda_packages_match_the_runtime_lock` fail. Restore the `RUN`.
@@ -1213,7 +1213,7 @@ docker compose --project-name dtcc-twin-engine-prod --profile engine-prod run --
 Only `libzlib`'s conda record is removed; its library files stay, so the module's numerical imports still load and the test reaches its assertion.
 Expected: `test_conda_dependencies_are_consistent` fails on its assertion, and the report lists `libzlib` as missing for the packages that depend on it. An import or collection error means the control did not reach the check. The container is discarded, so the image is unchanged.
 
-- [ ] **Step 5: Verify the check leaves the development services alone**
+- [x] **Step 5: Verify the check leaves the development services alone**
 
 Run `docker compose up -d --wait`, start `pnpm dev:engine` in another terminal, then run `pnpm engine:check:prod`.
 Expected: it passes; afterwards `docker compose --profile engine ps` still lists `postgres` and `engine` as running and healthy, and `docker compose --project-name dtcc-twin-engine-prod ps --all` lists nothing.
@@ -1221,12 +1221,12 @@ Expected: it passes; afterwards `docker compose --profile engine ps` still lists
 Run: `docker compose config --services`
 Expected: exactly `postgres`. Stop the development services.
 
-- [ ] **Step 6: Record the image sizes**
+- [x] **Step 6: Record the image sizes**
 
 Run: `docker image ls --format '{{.Repository}} {{.Size}}' | grep engine`
 Expected: sizes for the `dev` and `prod` images. Record them next to the previous development image's 4.91 GB, as observations rather than targets.
 
-- [ ] **Step 7: Stop for review**
+- [x] **Step 7: Stop for review**
 
 Leave changes uncommitted. Report Steps 2 to 6.
 
@@ -1237,18 +1237,18 @@ Leave changes uncommitted. Report Steps 2 to 6.
 - Modify: `README.md` (engine note and Commands table)
 - Modify: `apps/engine/PLAN.md` (Increment 5a status)
 
-- [ ] **Step 1: Update the README**
+- [x] **Step 1: Update the README**
 
 Append to the README's engine paragraph: "`pnpm engine:check:prod` builds the production image and checks it; after a change to `apps/engine/environment*.yml`, `pnpm engine:lock` re-solves its conda packages."
 
 Add Commands rows after `pnpm dev:engine`: `pnpm engine:check:prod` with "Build the engine's production image and check it. Needs Docker", and `pnpm engine:lock` with "Re-solve the engine's conda lock files. Needs Docker".
 
-- [ ] **Step 2: Validate**
+- [x] **Step 2: Validate**
 
 Run: `pnpm check`, `pnpm engine:check`, and `pnpm engine:check:prod`.
 Expected: all pass. Report passed, failed, skipped, and not-run checks separately; the `linux-64` image build and the Container deployment row are not run.
 
-- [ ] **Step 3: Stop for review**
+- [x] **Step 3: Stop for review**
 
 Set Increment 5a's status to executed with the date, leave changes uncommitted, and report.
 

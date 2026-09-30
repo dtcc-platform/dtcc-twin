@@ -39,7 +39,7 @@ pnpm dev
 - Frontend: <http://localhost:3000>, proxying `/api` to the backend. Log in as `admin@example.com` with password `password`.
 - Backend: <http://localhost:3030/api>, Swagger UI at <http://localhost:3030/api/docs>.
 
-The engine is optional and its image is large; frontend and backend work does not need it. `pnpm dev:engine` serves its API on port 8000: <http://127.0.0.1:8000/api/v1/health> needs no token, and the Dataset routes need one (`local-dev-engine-token` unless `ENGINE_API_TOKEN` is set), for example `curl -H "Authorization: Bearer local-dev-engine-token" http://127.0.0.1:8000/api/v1/datasets`. `pnpm engine:check` runs its tests in the image.
+The engine is optional and its image is large; frontend and backend work does not need it. `pnpm dev:engine` serves its API on port 8000: <http://127.0.0.1:8000/api/v1/health> needs no token, and the Dataset routes need one (`local-dev-engine-token` unless `ENGINE_API_TOKEN` is set), for example `curl -H "Authorization: Bearer local-dev-engine-token" http://127.0.0.1:8000/api/v1/datasets`. `pnpm engine:check` runs its tests in the image. `pnpm engine:check:prod` builds the production image and checks it; after a change to `apps/engine/environment*.yml`, `pnpm engine:lock` re-solves its conda packages.
 
 ## Commands
 
@@ -57,6 +57,8 @@ From the repo root:
 | `pnpm db:reset`                              | Recreate the compose database, push and seed                                     |
 | `pnpm engine:check`                          | Run the engine's tests in its image. Needs Docker                                |
 | `pnpm dev:engine`                            | The engine API in its image, reloading on code changes. Needs Docker             |
+| `pnpm engine:check:prod`                     | Build the engine's production image and check it. Needs Docker                   |
+| `pnpm engine:lock`                           | Re-solve the engine's conda lock files. Needs Docker                             |
 | `pnpm build`                                 | Build the contracts, the backend and the frontend into their `dist/` directories |
 
 The package READMEs list their own, such as running one e2e file.
