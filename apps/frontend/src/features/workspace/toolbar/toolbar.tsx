@@ -65,8 +65,12 @@ export function Toolbar() {
         className={item}
         aria-pressed={drawing !== null}
         onClick={() => {
-          if (drawing) cancelDrawing();
-          else startDrawing();
+          if (drawing) {
+            cancelDrawing();
+            return;
+          }
+          startDrawing();
+          setLeft("bounds");
         }}
       >
         <SquareDashedIcon />

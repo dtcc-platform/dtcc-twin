@@ -4,6 +4,7 @@ import { FloatingCard } from "@/components/floating-card";
 import { AreaDraw } from "@/features/area/area-draw";
 import { AreaSizeLabel } from "@/features/area/area-size-label";
 import { AreaStoreContext, createAreaStore } from "@/features/area/area-store";
+import { BoundsInspector } from "@/features/area/bounds-inspector";
 import { HintBar } from "@/features/workspace/hint-bar/hint-bar";
 import { MapView } from "@/features/workspace/map/map-view";
 import { Toolbar } from "@/features/workspace/toolbar/toolbar";
@@ -48,7 +49,8 @@ export function Workspace() {
           <Toolbar />
           {left && (
             <div key={left} className={cn(column, "self-stretch animate-in duration-200 fade-in slide-in-from-left-2")}>
-              <FloatingCard title="Layers" onClose={closeLeft} />
+              {left === "layers" && <FloatingCard title="Layers" onClose={closeLeft} />}
+              {left === "bounds" && <BoundsInspector onClose={closeLeft} />}
             </div>
           )}
         </div>

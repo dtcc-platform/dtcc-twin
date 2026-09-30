@@ -5,7 +5,7 @@ import { createStore, useStore } from "zustand";
 export type RightContent = "bookmarks" | "datasets" | "simulations" | "downloads" | "upload";
 
 /** What the panel column beside the toolbar can show; one at a time. */
-export type LeftContent = "layers";
+export type LeftContent = "layers" | "bounds";
 
 type WorkspaceState = {
   right: RightContent | null;
