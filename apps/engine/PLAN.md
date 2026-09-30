@@ -725,7 +725,7 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ## Increment 2a: Local execution and packaging
 
-Status: expanded 2026-09-30 into Tasks 10 to 13. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`; its changes are left uncommitted for team review. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed.
+Status: expanded 2026-09-30 into Tasks 10 to 13. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`, and is committed in `bb881a0`. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. Task 11 was executed 2026-09-30; its changes are left uncommitted for team review. Its results: before the implementation, with the worker fixture running, `engine:check` gave 6 failed, each on an assertion, and 50 passed: the 4 execution tests because every job completed at once without a package, the status test with `completed` and no finish time, and the sharing test because another Celery app had the task; after it, 56 passed in 5.5 s, and `pnpm check` passed.
 
 **Scope:** Redis and a Celery worker from the same image; job submission (`POST`) with request-envelope and target validation, status polling with upstream progress, and `.dtccpkg` download for Datasets executed on the local target; a completed package is refused once 30 periods of 24 hours have passed since its job completed. Every registered Dataset can be submitted; one whose result Core cannot package canonically produces a failed job with Core's error, because the spec forbids a curated Dataset list and makes required packaging failures fail delivery. Pre-execution cancellation moves to increment 4.
 
@@ -1399,7 +1399,7 @@ Ruling (2026-09-30, Task 10, review): DESIGN.md's local-development paragraph sa
   - `status` reads Celery's state before Engine's record, and the task is not shared with other Celery apps.
   - The `served_jobs` fixture: jobs on a target served by a worker thread in the test process.
 
-- [ ] **Step 1: Write the execution tests and a skeleton task**
+- [x] **Step 1: Write the execution tests and a skeleton task**
 
 Add to `apps/engine/tests/conftest.py` the imports:
 
@@ -1592,12 +1592,12 @@ In `apps/engine/dtcc_engine/jobs.py`, register a task with an empty body and Cel
             pass
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail for the right reason**
+- [x] **Step 2: Run the tests to verify they fail for the right reason**
 
 Run: `pnpm engine:check`
 Expected: FAIL. The worker fixture starts, and each of the 4 execution tests fails on an assertion within seconds: each job completes at once without a package, so `wait_until` reports a finished job that never ran or failed. `test_status_read_while_the_job_finishes_is_consistent` gets `completed` without a finish time, because Task 10's `status` reads the record first; `test_job_task_is_not_shared_with_other_celery_apps` finds the task on the other app. The 50 tests from Task 10 pass.
 
-- [ ] **Step 3: Run the Dataset, report its progress, and package its result**
+- [x] **Step 3: Run the Dataset, report its progress, and package its result**
 
 Replace `apps/engine/dtcc_engine/jobs.py` with the Task 10 version and these changes. Imports:
 
@@ -1701,12 +1701,12 @@ The worker records `finished_at` and `error_type` before Celery stores a termina
             self.records.hset(key, "finished_at", datetime.now(UTC).isoformat())
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `pnpm engine:check`
 Expected: 56 passed.
 
-- [ ] **Step 5: Stop for review**
+- [x] **Step 5: Stop for review**
 
 Leave changes uncommitted. Report Steps 2 and 4.
 
