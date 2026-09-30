@@ -39,7 +39,7 @@ pnpm dev
 - Frontend: <http://localhost:3000>, proxying `/api` to the backend. Log in as `admin@example.com` with password `password`.
 - Backend: <http://localhost:3030/api>, Swagger UI at <http://localhost:3030/api/docs>.
 
-The engine is optional and its image is large; frontend and backend work does not need it. `pnpm dev:engine` serves its API on port 8000: <http://127.0.0.1:8000/api/v1/health> needs no token, and the Dataset routes need one (`local-dev-engine-token` unless `ENGINE_API_TOKEN` is set), for example `curl -H "Authorization: Bearer local-dev-engine-token" http://127.0.0.1:8000/api/v1/datasets`. `pnpm engine:check` runs its tests in the image. `pnpm engine:check:prod` builds the production image and checks it; after a change to `apps/engine/environment*.yml`, `pnpm engine:lock` re-solves its conda packages.
+The engine is optional and its image is large; frontend and backend work does not need it. `pnpm dev:engine` serves its API on port 8000: <http://127.0.0.1:8000/api/v1/health> needs no token, and the Dataset routes need one (`local-dev-engine-token` unless `ENGINE_API_TOKEN` is set), for example `curl -H "Authorization: Bearer local-dev-engine-token" http://127.0.0.1:8000/api/v1/datasets`. `pnpm engine:check` runs its tests in the image. `pnpm engine:check:prod` builds the production image and checks it; after a change to `apps/engine/environment*.yml`, `pnpm engine:lock` re-solves its conda packages. The engine image is built for `linux/amd64`; on Apple silicon, Docker emulates it, so its builds and tests are slower.
 
 ## Commands
 

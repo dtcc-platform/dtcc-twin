@@ -21,6 +21,8 @@ services:
   engine:
     # Optional: a large Core, Sim and FEniCSx image.
     profiles: [engine]
+    # The image supports linux/amd64 only (apps/engine/DESIGN.md); Apple silicon emulates it.
+    platform: linux/amd64
     build:
       context: apps/engine
       target: dev
@@ -61,6 +63,7 @@ services:
   engine-prod:
     # Local check of the production target: `pnpm engine:check:prod`. No port is published.
     profiles: [engine-prod]
+    platform: linux/amd64
     build:
       context: apps/engine
       target: prod

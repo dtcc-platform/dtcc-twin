@@ -730,6 +730,7 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 - `dtcc_core.datasets.load_model_package(path)` accepts only a v3 package with exactly one canonical artifact, checks every artifact's size and sha256, decodes the model, cross-checks its metadata, and restores its context.
 - Canonical exchange does not support `FootprintCollection`, `CalibrationGrid`, `BuildingCollection`, or `TreeCollection` results (the last two confirmed on Core `develop`, where their Datasets build).
 - Sim's `service/progress.py` sets Core's thread-local progress callback and reports it as a `PROGRESS` state. At the pinned commit, Core's callback always supplies `percent` (`dtcc_core/common/progress.py`, `_get_state_dict`), along with a message, phase, and ETA, so the bridge's fallback of 0 is not reached; Engine keeps the percentage Core reports, including zero, and reports none when none is supplied.
+- Importing Sim initializes PETSc, whose signal handler catches SIGTERM and calls `MPI_Abort`, so the process ends without its own shutdown (observed 2026-09-30 when stopping `pnpm dev:engine` on `linux/amd64`, and in a Python process that imports Sim and receives SIGTERM, on both `linux/amd64` and `linux/arm64`). This may interfere with a Celery worker's warm shutdown, but it is not established: the worker imports task modules before it installs its own SIGTERM handler (`celery/worker/worker.py`, `WorkController.__init__`; `celery/apps/worker.py`, `install_platform_tweaks`), and prefork children handle signals separately. Verify with a real worker before choosing a workaround such as PETSc's `-no_signal_handler` option.
 - Celery 5.6.3, the latest stable release (2026-03-26); kombu 5.6.2's `redis` extra caps redis-py below 6.5. A task ID with no stored result reads as `PENDING` (`celery/backends/base.py`, `_get_task_meta_for`), so Engine must record accepted jobs itself. `task_track_started` defaults to false. The Redis result backend stores each state with `SETEX` and `result_expires`, so a key's lifetime restarts on each effective write (`celery/backends/redis.py`, `_set`); a write is skipped once the stored state is `SUCCESS` (`celery/backends/base.py`, `BaseKeyValueStoreBackend._store_result`). `result_expires` defaults to one day. Runtime behavior is not yet verified.
 
 **Round-trip evidence** (development image, 200 m box in Gothenburg, EPSG:3006): at Core `5ca2ca4`, 15 of 28 registered Datasets pass canonical export and `load_model_package` with an identical model encoding and context: `air_quality`, `weather`, `hydrology`, `ocean`, `buses`, `ferries`, `metros`, `trains`, `trams`, `transit_vehicles`, `deso`, `roads`, `space_syntax`, `smoke`, and Sim's `traffic_simulation`. The vehicle and sensor results may be empty (no API keys, and `strict_live` defaults to false), so they show that the format works, not that content is complete. Point-cloud-based Datasets fail at the pin on a Core bug that `develop` fixes (increment 2b).
@@ -783,7 +784,7 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ## Increment 5a: Production image for the HTTP service
 
-Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are committed in `8d934a8` and Task 8 in `9d32bd3`. Image sizes on `linux-aarch64`: `dev` 4.08 GB and `prod` 4.07 GB, against 4.91 GB for the previous development image. Not run: the `linux-64` image build and checks, and the Container deployment acceptance row (5b). Task 9, added 2026-09-30 when `linux/amd64` was chosen as the only architecture, is not yet executed.
+Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are committed in `8d934a8` and Task 8 in `9d32bd3`. Tasks 5 to 8 ran on `linux-aarch64`, with image sizes `dev` 4.08 GB and `prod` 4.07 GB, against 4.91 GB for the previous development image. Task 9, added 2026-09-30 when `linux/amd64` was chosen as the only architecture, was executed the same day under emulation on Apple silicon; its changes are left uncommitted for team review. Its results: before the switch, `engine:check` gave 1 failed (the new test, with TetGen's internal error) and 37 passed; on `linux/amd64`, `engine:check` gave 38 passed on `x86_64`, `engine:check:prod` gave 18 passed with the container healthy and the token checks passing, `dev:engine` answered health, the Dataset listing, and 401 without a token, and `pnpm check` passed on a rerun after one backend e2e test timed out at 5 s under heavy machine load. Observed timings: 5.3 s for the 38 tests; 88 s for a build that reuses the conda, TetGen, and Sim layers; 116 s for the Sim layer, which compiles Core. Not run: native x86_64 execution and the Container deployment acceptance row (5b).
 
 **Scope:** a `prod` target in `apps/engine/Dockerfile` that shares the conda, TetGen, Core, and Sim layers with `dev`: the Engine package installed without its test extra or test files, no source mounts or reloading, a non-root user, a `HEALTHCHECK` against `/api/v1/health`, and only a C compiler kept from the build tools. Both targets' conda environment is resolved from a lock file for `linux-64` and `linux-aarch64`. 5a lays the image's foundation; increment 2 still adds Celery and the worker to it.
 
@@ -801,7 +802,7 @@ Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are 
 **Recorded limits:**
 
 - Pip dependencies of Core and Sim that conda does not provide stay unlocked; the spec requires only the conda lock. A rebuild can resolve different pip versions, so a deployment runs the exact image digest it tested (5b).
-- Only the build host's architecture is built and tested in Tasks 5 to 8 (`linux-aarch64` on Apple silicon). The `linux-64` lock is resolved but not built or tested. Task 9 moves the image to `linux/amd64`.
+- Tasks 5 to 8 built and tested only the build host's architecture (`linux-aarch64` on Apple silicon). Task 9 moves the image to `linux/amd64` and builds and tests the `linux-64` lock under emulation; native x86_64 is not tested until 5b.
 - The production checks run with the pytest that Core depends on. If Core drops it upstream, `pnpm engine:check:prod` needs another runner.
 
 **Checks:** the environment tests pass in `dev` and, as the production user, in `prod`; `prod` runs as a non-root user; it contains no Engine source checkout (`/app`, `/src`), its installed Engine distribution contains no tests and is not editable; the test extra's current package `httpx` is absent; the build-only tools are absent, including conda's target-prefixed compilers; the installed conda packages equal the runtime lock and `conda doctor` reports them consistent; `pip check` passes; FEniCSx compiles a form into an empty cache; the container reports healthy; the Dataset routes reject a missing token and accept the configured one. The Container deployment acceptance row stays not run until 5b.
@@ -1298,7 +1299,7 @@ Added 2026-09-30. On Linux arm64, GCC contracts floating-point multiply-adds by 
 - Consumes: DESIGN.md's `linux/amd64` rule; the `linux-64` lock files from Task 5, which the Dockerfile already selects when `TARGETARCH` is `amd64`; Core's `build_city_volume_mesh` and the model classes `City`, `Building`, `Surface`, `Terrain`, `Raster`, `Bounds`, and `GeometryType`, public at `5ca2ca4` and used the same way by Core's `test_build_city_volume_mesh_smoke`.
 - Produces: `pnpm engine:check`, `pnpm dev:engine`, and `pnpm engine:check:prod` build and run the `linux/amd64` image on any host. The `linux-aarch64` lock files stay: removing that platform from `lock.sh` re-solves the lock, so it waits for the next relock.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `apps/engine/tests/test_environment.py`, add the imports:
 
@@ -1336,7 +1337,9 @@ def flat_city(buildings: list[tuple[tuple[float, float, float, float], float]]) 
 Add after `test_tetgen_tetrahedralizes_the_unit_cube`:
 
 ```python
-def test_core_builds_a_volume_mesh_of_a_small_city() -> None:
+def test_core_builds_a_volume_mesh_of_a_small_city(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # TetGen writes its failure dumps to the working directory, which is the mounted source tree in the dev image.
+    monkeypatch.chdir(tmp_path)
     # Core's own smoke case. On Linux arm64, GCC's floating-point contraction makes TetGen reject its surface.
     city = flat_city([((10, 10, 18, 18), 10.0), ((24, 10, 32, 18), 12.0)])
     volume_mesh = build_city_volume_mesh(
@@ -1356,12 +1359,14 @@ def test_core_builds_a_volume_mesh_of_a_small_city() -> None:
     assert volume_mesh.cells.shape[0] > 0
 ```
 
-- [ ] **Step 2: Confirm it fails on the current `linux/arm64` image**
+- [x] **Step 2: Confirm it fails on the current `linux/arm64` image**
 
 Run on Apple silicon: `pnpm engine:check`
 Expected: `1 failed, 37 passed`; the new test fails with `RuntimeError: TetGen failed (code 2): internal error (report bug)`, as it did in the 2026-09-30 experiment. An import or collection error means the test is wrong, not the architecture.
 
-- [ ] **Step 3: Target `linux/amd64`**
+Ruling (2026-09-30, Task 9, Step 2): the first run left TetGen's four `tetgen_fail.*` dump files in `apps/engine`, because TetGen writes them to the working directory, which in the development image is the mounted source tree. The test now changes into its temporary directory first, as the Step 1 listing shows.
+
+- [x] **Step 3: Target `linux/amd64`**
 
 In `compose.yaml`, add to the `engine` service, after `profiles`:
 
@@ -1372,17 +1377,17 @@ platform: linux/amd64
 
 Add `platform: linux/amd64` to the `engine-prod` service, after `profiles`. `engine-lock` stays native: conda-lock solves both platforms from any host.
 
-- [ ] **Step 4: Verify the development image**
+- [x] **Step 4: Verify the development image**
 
 Run: `pnpm engine:check`, then `docker compose --profile engine run --rm -T engine uname -m`
 Expected: `38 passed`; `x86_64`. The build log shows `conda create` installing from `conda-build-linux-64.lock`. Record the build and test durations as observations; this is the first build from the `linux-64` lock.
 
-- [ ] **Step 5: Verify the production image**
+- [x] **Step 5: Verify the production image**
 
 Run: `pnpm engine:check:prod`
 Expected: all environment tests and production checks pass, including `test_conda_packages_match_the_runtime_lock` against `conda-linux-64.lock`; the container reports healthy; the script prints `prod API: healthy, rejects a missing token, accepts the configured token`. If the health check does not pass within its 60-second start period under emulation, stop and report the startup time rather than changing the health check.
 
-- [ ] **Step 6: Verify the development server**
+- [x] **Step 6: Verify the development server**
 
 Run `pnpm dev:engine`, then:
 
@@ -1393,14 +1398,14 @@ curl -fsS -H "Authorization: Bearer local-dev-engine-token" http://127.0.0.1:800
 
 Expected: `{"status":"ok"}`; a listing that starts with `catalog_revision`. Stop the server.
 
-- [ ] **Step 7: Update the README**
+- [x] **Step 7: Update the README**
 
 Append to the README's engine paragraph: "The engine image is built for `linux/amd64`; on Apple silicon, Docker emulates it, so its builds and tests are slower."
 
 Run: `npx --yes prettier@3.9.6 --write README.md compose.yaml && npx --yes prettier@3.9.6 --check README.md compose.yaml apps/engine/DESIGN.md apps/engine/PLAN.md`
 Expected: all files use Prettier code style.
 
-- [ ] **Step 8: Validate and stop for review**
+- [x] **Step 8: Validate and stop for review**
 
 Run: `pnpm check`
 Expected: passes. Set Task 9's status in 5a's status line, leave changes uncommitted, and report Steps 2, 4, 5, and 6 with passed, failed, skipped, and not-run checks. Native x86_64 execution stays not run until 5b.
