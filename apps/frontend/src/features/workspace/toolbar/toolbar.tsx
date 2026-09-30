@@ -13,10 +13,11 @@ import {
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { useAreaStore } from "@/features/area/area-store";
 import { useWorkspaceStore, type LeftContent, type RightContent } from "@/features/workspace/workspace-store";
 
 const item =
-  "h-10.5 w-full justify-start gap-3 px-0.75 aria-expanded:bg-primary/10 aria-expanded:text-primary [&_svg]:stroke-[1.5] [&_svg:not([class*='size-'])]:size-7.5";
+  "h-10.5 w-full justify-start gap-3 px-0.75 aria-expanded:bg-primary/10 aria-expanded:text-primary aria-pressed:bg-primary/10 aria-pressed:text-primary [&_svg]:stroke-[1.5] [&_svg:not([class*='size-'])]:size-7.5";
 
 /** The tools on the left of the map */
 export function Toolbar() {
@@ -25,6 +26,9 @@ export function Toolbar() {
   const right = useWorkspaceStore((state) => state.right);
   const left = useWorkspaceStore((state) => state.left);
   const { setRight, closeRight, setLeft, closeLeft } = useWorkspaceStore((state) => state.actions);
+  const drawing = useAreaStore((state) => state.drawing);
+  const hasArea = useAreaStore((state) => state.area !== null);
+  const { startDrawing, cancelDrawing, clearArea } = useAreaStore((state) => state.actions);
 
   function openOrCloseRight(content: RightContent) {
     if (right === content) closeRight();
@@ -56,13 +60,21 @@ export function Toolbar() {
       onPointerLeave={collapseSoon}
       className="pointer-events-auto flex w-12 shrink-0 flex-col gap-1 overflow-hidden rounded-3xl border bg-card p-1 py-2 shadow-md transition-[width] duration-200 focus-within:w-52 data-expanded:w-52"
     >
-      <Button variant="ghost" className={item} disabled>
+      <Button
+        variant="ghost"
+        className={item}
+        aria-pressed={drawing !== null}
+        onClick={() => {
+          if (drawing) cancelDrawing();
+          else startDrawing();
+        }}
+      >
         <SquareDashedIcon />
         Draw area
       </Button>
-      <Button variant="ghost" className={item} disabled>
+      <Button variant="ghost" className={item} disabled={!hasArea && !drawing} onClick={clearArea}>
         <XIcon />
-        Cancel
+        Clear area
       </Button>
       <Button
         variant="ghost"
