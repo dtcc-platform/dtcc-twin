@@ -9,12 +9,12 @@ import { HidePointsOfInterest } from "./hide-points-of-interest";
 setWorkerUrl(workerUrl);
 
 const brightStyle = "https://tiles.openfreemap.org/styles/bright";
-const swedenView = { longitude: 15, latitude: 62, zoom: 5 };
+const chalmersView = { longitude: 11.975, latitude: 57.689, zoom: 15 };
 
 /** The full-screen map the workspace is built on; its children render inside the map. */
 export function MapView({ children }: { children?: ReactNode }) {
   return (
-    <Map initialViewState={swedenView} mapStyle={brightStyle}>
+    <Map initialViewState={chalmersView} mapStyle={brightStyle}>
       <NavigationControl position="bottom-right" />
       <HidePointsOfInterest />
       {children}
