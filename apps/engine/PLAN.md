@@ -725,7 +725,7 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ## Increment 2a: Local execution and packaging
 
-Status: expanded 2026-09-30 into Tasks 10 to 13; not yet executed.
+Status: expanded 2026-09-30 into Tasks 10 to 13. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`; its changes are left uncommitted for team review. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed.
 
 **Scope:** Redis and a Celery worker from the same image; job submission (`POST`) with request-envelope and target validation, status polling with upstream progress, and `.dtccpkg` download for Datasets executed on the local target; a completed package is refused once 30 periods of 24 hours have passed since its job completed. Every registered Dataset can be submitted; one whose result Core cannot package canonically produces a failed job with Core's error, because the spec forbids a curated Dataset list and makes required packaging failures fail delivery. Pre-execution cancellation moves to increment 4.
 
@@ -802,7 +802,7 @@ Status: expanded 2026-09-30 into Tasks 10 to 13; not yet executed.
   - `GET /api/v1/jobs/{job_id}` (token) → `200 {"job_id", "dataset", "target", "submitted_at", "finished_at", "state", "progress", "error", "package"}`, where this task produces `queued` and `unconfirmed`; `404` for an unknown or expired job; `503` when Redis is unreachable.
   - The `engine-redis` service, in the `engine` and `engine-prod` profiles.
 
-- [ ] **Step 1: Write the tests, their services, and a skeleton**
+- [x] **Step 1: Write the tests, their services, and a skeleton**
 
 In `apps/engine/pyproject.toml`, set the dependencies to:
 
@@ -1117,12 +1117,12 @@ def jobs_from_environment() -> Jobs:
 
 In `apps/engine/dtcc_engine/api.py`, give `create_app` a second parameter, `jobs: Jobs`, imported from `dtcc_engine.jobs`, and leave its body unchanged.
 
-- [ ] **Step 2: Run the tests to verify they fail for the right reason**
+- [x] **Step 2: Run the tests to verify they fail for the right reason**
 
 Run: `pnpm engine:check`
 Expected: FAIL. The build installs Celery 5.6.3, kombu 5.6.2, and redis-py 6.4.0 in the Engine-dependency step, and `compose run` starts `engine-redis` first. The 12 job tests fail on status codes or details: `404` from missing routes where `202`, `401`, `422`, or `503` is expected, and the default `Not Found` detail where "unknown or expired" is expected. The 38 existing tests pass. No test fails on an import, collection, or connection error.
 
-- [ ] **Step 3: Implement submission and status**
+- [x] **Step 3: Implement submission and status**
 
 Replace `apps/engine/dtcc_engine/jobs.py` with:
 
@@ -1371,14 +1371,16 @@ Add after the `describe_dataset` route:
 
 `validate` receives a copy, because Core converts a `Bounds` value in place. Change `create_app_from_environment` to `return create_app(os.environ.get("ENGINE_API_TOKEN", ""), jobs_from_environment())`, and its docstring to name the three job settings; a missing setting fails the start with a `KeyError` naming it.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `pnpm engine:check`
 Expected: 50 passed: the 38 existing tests and 12 job tests.
 
-- [ ] **Step 5: Stop for review**
+- [x] **Step 5: Stop for review**
 
 Leave changes uncommitted. Report Steps 2 and 4.
+
+Ruling (2026-09-30, Task 10, review): DESIGN.md's local-development paragraph said that Redis is added together with the worker, but Task 10 adds Redis for the HTTP service before Task 13 adds the worker, and `engine-prod` uses Redis without one. The paragraph now says that the `engine` profile includes Redis, which both the HTTP service and the worker use.
 
 ### Task 11: Run jobs in a worker and package their results
 
@@ -1966,7 +1968,7 @@ Set Increment 2a's status to executed with the date, leave changes uncommitted, 
 
 ## Increment 5a: Production image for the HTTP service
 
-Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are committed in `8d934a8` and Task 8 in `9d32bd3`. Tasks 5 to 8 ran on `linux-aarch64`, with image sizes `dev` 4.08 GB and `prod` 4.07 GB, against 4.91 GB for the previous development image. Task 9, added 2026-09-30 when `linux/amd64` was chosen as the only architecture, was executed the same day under emulation on Apple silicon; its changes are left uncommitted for team review. Its results: before the switch, `engine:check` gave 1 failed (the new test, with TetGen's internal error) and 37 passed; on `linux/amd64`, `engine:check` gave 38 passed on `x86_64`, `engine:check:prod` gave 18 passed with the container healthy and the token checks passing, `dev:engine` answered health, the Dataset listing, and 401 without a token, and `pnpm check` passed on a rerun after one backend e2e test timed out at 5 s under heavy machine load. Observed timings: 5.3 s for the 38 tests; 88 s for a build that reuses the conda, TetGen, and Sim layers; 116 s for the Sim layer, which compiles Core. Not run: native x86_64 execution and the Container deployment acceptance row (5b).
+Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are committed in `8d934a8` and Task 8 in `9d32bd3`. Tasks 5 to 8 ran on `linux-aarch64`, with image sizes `dev` 4.08 GB and `prod` 4.07 GB, against 4.91 GB for the previous development image. Task 9, added 2026-09-30 when `linux/amd64` was chosen as the only architecture, was executed the same day under emulation on Apple silicon and is committed in `1d45970`. Its results: before the switch, `engine:check` gave 1 failed (the new test, with TetGen's internal error) and 37 passed; on `linux/amd64`, `engine:check` gave 38 passed on `x86_64`, `engine:check:prod` gave 18 passed with the container healthy and the token checks passing, `dev:engine` answered health, the Dataset listing, and 401 without a token, and `pnpm check` passed on a rerun after one backend e2e test timed out at 5 s under heavy machine load. Observed timings: 5.3 s for the 38 tests; 88 s for a build that reuses the conda, TetGen, and Sim layers; 116 s for the Sim layer, which compiles Core. Not run: native x86_64 execution and the Container deployment acceptance row (5b).
 
 **Scope:** a `prod` target in `apps/engine/Dockerfile` that shares the conda, TetGen, Core, and Sim layers with `dev`: the Engine package installed without its test extra or test files, no source mounts or reloading, a non-root user, a `HEALTHCHECK` against `/api/v1/health`, and only a C compiler kept from the build tools. Both targets' conda environment is resolved from a lock file for `linux-64` and `linux-aarch64`. 5a lays the image's foundation; increment 2 still adds Celery and the worker to it.
 

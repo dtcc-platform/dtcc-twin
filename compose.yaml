@@ -40,16 +40,35 @@ services:
     environment:
       # Local development only: the port below is reachable from this machine alone.
       ENGINE_API_TOKEN: ${ENGINE_API_TOKEN:-local-dev-engine-token}
+      ENGINE_REDIS_URL: redis://engine-redis:6379/0
+      ENGINE_TARGET: local
+      ENGINE_PACKAGE_DIR: /var/lib/dtcc-engine/packages
+      # The tests' own database, so `pnpm engine:check` leaves a running `pnpm dev:engine`'s jobs alone.
+      ENGINE_TEST_REDIS_URL: redis://engine-redis:6379/1
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./apps/engine:/app
+      - engine-packages:/var/lib/dtcc-engine/packages
+    depends_on:
+      engine-redis:
+        condition: service_healthy
     healthcheck:
       test:
         ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 5s
       timeout: 3s
       retries: 30
+
+  engine-redis:
+    # The Engine's Celery broker and result backend. Redis's default policy never evicts queued tasks or results.
+    profiles: [engine, engine-prod]
+    image: redis:8
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   engine-lock:
     # Regenerates the Engine's conda lock files: `pnpm engine:lock`.
@@ -69,6 +88,13 @@ services:
       target: prod
     environment:
       ENGINE_API_TOKEN: local-prod-check-token
+      ENGINE_REDIS_URL: redis://engine-redis:6379/0
+      ENGINE_TARGET: local
+      ENGINE_PACKAGE_DIR: /home/engine/packages
+    depends_on:
+      engine-redis:
+        condition: service_healthy
 
 volumes:
   postgres-data:
+  engine-packages:

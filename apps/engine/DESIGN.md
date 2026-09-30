@@ -481,8 +481,9 @@ Both targets follow these rules:
 
 For local development, the root `compose.yaml` places Engine services behind
 the `engine` profile, so developers who work only on the frontend or backend
-never build the image. Redis is added together with the worker. Engine
-publishes its HTTP port on the loopback interface only.
+never build the image. The profile includes Redis, which both the HTTP service
+and the worker use. Engine publishes its HTTP port on the loopback interface
+only.
 
 Engine's test suite runs in the `dev` target through `pnpm engine:check`. It is
 not part of the repository-wide `pnpm check`, which does not build the image.

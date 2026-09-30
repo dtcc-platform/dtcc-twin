@@ -9,14 +9,15 @@ from fastapi.testclient import TestClient
 from pydantic import Field
 
 from dtcc_engine.api import create_app
+from dtcc_engine.jobs import Jobs
 
 TOKEN = "test-token"
 AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(create_app(TOKEN))
+def client(jobs: Jobs) -> TestClient:
+    return TestClient(create_app(TOKEN, jobs))
 
 
 def test_health_needs_no_token(client: TestClient) -> None:
@@ -53,14 +54,14 @@ def test_api_documentation_is_not_served(client: TestClient, path: str) -> None:
     ["", " padded-token", "padded-token ", "has space", "line\nbreak", "tést-token", "quote\"token", "=leading-padding"],
     ids=["empty", "leading-space", "trailing-space", "inner-space", "newline", "non-ascii", "quote", "leading-equals"],
 )
-def test_unusable_tokens_are_rejected_at_startup(token: str) -> None:
+def test_unusable_tokens_are_rejected_at_startup(token: str, jobs: Jobs) -> None:
     with pytest.raises(ValueError):
-        create_app(token)
+        create_app(token, jobs)
 
 
 @pytest.mark.parametrize("token", ["local-dev-engine-token", "aZ09-._~+/", "base64token=="])
-def test_bearer_token_characters_are_accepted(token: str) -> None:
-    client = TestClient(create_app(token))
+def test_bearer_token_characters_are_accepted(token: str, jobs: Jobs) -> None:
+    client = TestClient(create_app(token, jobs))
     response = client.get("/api/v1/datasets", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
 

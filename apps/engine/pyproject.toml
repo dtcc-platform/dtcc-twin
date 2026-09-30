@@ -9,9 +9,11 @@ description = "DTCC Engine: an HTTP service over the Datasets of DTCC Core and D
 requires-python = ">=3.12"
 # Core and Sim versions are pinned by the environment (see Dockerfile), not here.
 dependencies = [
+    "celery[redis]==5.6.3",
     "dtcc-core",
     "dtcc-sim",
     "fastapi==0.141.1",
+    "redis==6.4.0",
     "uvicorn==0.54.0",
 ]
 
