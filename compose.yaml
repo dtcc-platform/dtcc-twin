@@ -70,6 +70,25 @@ services:
       timeout: 3s
       retries: 10
 
+  engine-worker:
+    # Runs the Engine's jobs. Celery does not reload code: restart it after changing the engine.
+    profiles: [engine]
+    platform: linux/amd64
+    build:
+      context: apps/engine
+      target: dev
+    command: ["celery", "--app", "dtcc_engine.worker", "worker", "--concurrency", "1", "--loglevel", "INFO"]
+    environment:
+      ENGINE_REDIS_URL: redis://engine-redis:6379/0
+      ENGINE_TARGET: local
+      ENGINE_PACKAGE_DIR: /var/lib/dtcc-engine/packages
+    volumes:
+      - ./apps/engine:/app
+      - engine-packages:/var/lib/dtcc-engine/packages
+    depends_on:
+      engine-redis:
+        condition: service_healthy
+
   engine-lock:
     # Regenerates the Engine's conda lock files: `pnpm engine:lock`.
     profiles: [engine-lock]

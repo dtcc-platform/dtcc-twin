@@ -13,12 +13,12 @@ This project is part of the [Digital Twin Platform (DTCC Platform)](https://gith
 
 TypeScript / ESM monorepo managed with pnpm workspaces, plus the Python engine.
 
-| Package                                              | What it is                                                                        |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [`apps/frontend`](apps/frontend/README.md)           | The web app: React SPA with TanStack Router                                       |
-| [`apps/backend`](apps/backend/README.md)             | NestJS API under `/api`                                                           |
-| [`apps/engine`](apps/engine/AGENTS.md)               | DTCC Engine, a Python API over DTCC Core and Sim; serves Dataset discovery so far |
-| [`packages/contracts`](packages/contracts/README.md) | Zod schemas and types shared by the backend and the frontend                      |
+| Package                                              | What it is                                                                                                     |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| [`apps/frontend`](apps/frontend/README.md)           | The web app: React SPA with TanStack Router                                                                    |
+| [`apps/backend`](apps/backend/README.md)             | NestJS API under `/api`                                                                                        |
+| [`apps/engine`](apps/engine/AGENTS.md)               | DTCC Engine, a Python API over DTCC Core and Sim that serves Dataset discovery, local jobs, and their packages |
+| [`packages/contracts`](packages/contracts/README.md) | Zod schemas and types shared by the backend and the frontend                                                   |
 
 Table, the experience projected onto physical city models, will be `apps/table`.
 
@@ -41,25 +41,27 @@ pnpm dev
 
 The engine is optional and its image is large; frontend and backend work does not need it. `pnpm dev:engine` serves its API on port 8000: <http://127.0.0.1:8000/api/v1/health> needs no token, and the Dataset routes need one (`local-dev-engine-token` unless `ENGINE_API_TOKEN` is set), for example `curl -H "Authorization: Bearer local-dev-engine-token" http://127.0.0.1:8000/api/v1/datasets`. `pnpm engine:check` runs its tests in the image. `pnpm engine:check:prod` builds the production image and checks it; after a change to `apps/engine/environment*.yml`, `pnpm engine:lock` re-solves its conda packages. The engine image is built for `linux/amd64`; on Apple silicon, Docker emulates it, so its builds and tests are slower.
 
+`pnpm dev:engine` also starts the engine's Redis and a Celery worker. Submit a job with `POST /api/v1/jobs` and a body such as `{"dataset": "smoke", "parameters": {"bounds": [319891, 6399790, 320091, 6399990]}}`, poll `GET /api/v1/jobs/<job id>`, and download a completed job's package from `GET /api/v1/jobs/<job id>/package`. The worker does not reload code: after changing the engine, run `docker compose --profile engine restart engine-worker`. `pnpm engine:check` starts the engine's Redis if it is not running and leaves it running.
+
 ## Commands
 
 From the repo root:
 
-| Command                                      | Purpose                                                                          |
-| -------------------------------------------- | -------------------------------------------------------------------------------- |
-| `pnpm dev`                                   | The backend and the frontend in watch mode                                       |
-| `pnpm check`                                 | Everything CI runs: format, lint, typecheck, unit, e2e, build. Needs Docker      |
-| `pnpm lint` / `pnpm typecheck` / `pnpm test` | The fast subset while iterating                                                  |
-| `pnpm test:e2e`                              | Backend e2e tests                                                                |
-| `pnpm format`                                | Format the repo with Prettier                                                    |
-| `pnpm db:push`                               | Sync the backend tables into `DATABASE_URL`                                      |
-| `pnpm db:seed`                               | Add the sample users; asks before wiping a non-empty database                    |
-| `pnpm db:reset`                              | Recreate the compose database, push and seed                                     |
-| `pnpm engine:check`                          | Run the engine's tests in its image. Needs Docker                                |
-| `pnpm dev:engine`                            | The engine API in its image, reloading on code changes. Needs Docker             |
-| `pnpm engine:check:prod`                     | Build the engine's production image and check it. Needs Docker                   |
-| `pnpm engine:lock`                           | Re-solve the engine's conda lock files. Needs Docker                             |
-| `pnpm build`                                 | Build the contracts, the backend and the frontend into their `dist/` directories |
+| Command                                      | Purpose                                                                                      |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                   | The backend and the frontend in watch mode                                                   |
+| `pnpm check`                                 | Everything CI runs: format, lint, typecheck, unit, e2e, build. Needs Docker                  |
+| `pnpm lint` / `pnpm typecheck` / `pnpm test` | The fast subset while iterating                                                              |
+| `pnpm test:e2e`                              | Backend e2e tests                                                                            |
+| `pnpm format`                                | Format the repo with Prettier                                                                |
+| `pnpm db:push`                               | Sync the backend tables into `DATABASE_URL`                                                  |
+| `pnpm db:seed`                               | Add the sample users; asks before wiping a non-empty database                                |
+| `pnpm db:reset`                              | Recreate the compose database, push and seed                                                 |
+| `pnpm engine:check`                          | Run the engine's tests in its image. Needs Docker                                            |
+| `pnpm dev:engine`                            | Engine API with automatic reload, Redis, and a worker requiring manual restart. Needs Docker |
+| `pnpm engine:check:prod`                     | Build the engine's production image and check it. Needs Docker                               |
+| `pnpm engine:lock`                           | Re-solve the engine's conda lock files. Needs Docker                                         |
+| `pnpm build`                                 | Build the contracts, the backend and the frontend into their `dist/` directories             |
 
 The package READMEs list their own, such as running one e2e file.
 

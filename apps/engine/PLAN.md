@@ -725,7 +725,7 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ## Increment 2a: Local execution and packaging
 
-Status: expanded 2026-09-30 into Tasks 10 to 13. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`, and is committed in `bb881a0`. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. Task 11 was executed 2026-09-30 and is committed in `cf115d5`. Its results: before the implementation, with the worker fixture running, `engine:check` gave 6 failed, each on an assertion, and 50 passed: the 4 execution tests because every job completed at once without a package, the status test with `completed` and no finish time, and the sharing test because another Celery app had the task; after it, 56 passed in 5.5 s, and `pnpm check` passed. Task 12 was executed 2026-09-30; its changes are left uncommitted for team review. Its results: before the implementation, `engine:check` gave 6 failed and 56 passed: the new token case, the download test, and `within-retention` got `404` from the missing route, the unknown-or-unfinished test got `(404, 404)`, `after-retention` got `200` for the status, and the completed job's record had no expiry while its Celery result had the one-day default; after it, 62 passed in 6.6 s, and `pnpm check` passed.
+Status: expanded into Tasks 10 to 13 and executed 2026-09-30. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`, and is committed in `bb881a0`. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. Task 11 was executed 2026-09-30 and is committed in `cf115d5`. Its results: before the implementation, with the worker fixture running, `engine:check` gave 6 failed, each on an assertion, and 50 passed: the 4 execution tests because every job completed at once without a package, the status test with `completed` and no finish time, and the sharing test because another Celery app had the task; after it, 56 passed in 5.5 s, and `pnpm check` passed. Task 12 was executed 2026-09-30 and is committed in `3609179`. Its results: before the implementation, `engine:check` gave 6 failed and 56 passed: the new token case, the download test, and `within-retention` got `404` from the missing route, the unknown-or-unfinished test got `(404, 404)`, `after-retention` got `200` for the status, and the completed job's record had no expiry while its Celery result had the one-day default; after it, 62 passed in 6.6 s, and `pnpm check` passed. Task 13 was executed 2026-09-30; its changes are left uncommitted for team review. Its results: with `pnpm dev:engine` running the API and the worker, a `smoke` job was `running` at its first poll and finished 0.9 s after submission; its 114 KB package downloaded with the stored file's SHA-256, and Core read it as a `VolumeMesh` from `smoke`. A `traffic_simulation` job, with roads from Overpass and DeSO zones and statistics from Statistics Sweden, finished in 11.8 s without reporting progress, and Core read its 21 KB package as a `RoadNetwork`. `engine:check` then gave 62 passed while the development database still held exactly those two jobs and the API and the worker kept running. Stopped while idle, the worker logged a warm shutdown and exited with 0, without the `MPI_Abort` that still ends the API's process. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed.
 
 **Scope:** Redis and a Celery worker from the same image; job submission (`POST`) with request-envelope and target validation, status polling with upstream progress, and `.dtccpkg` download for Datasets executed on the local target; a completed package is refused once 30 periods of 24 hours have passed since its job completed. Every registered Dataset can be submitted; one whose result Core cannot package canonically produces a failed job with Core's error, because the spec forbids a curated Dataset list and makes required packaging failures fail delivery. Pre-execution cancellation moves to increment 4.
 
@@ -1847,7 +1847,7 @@ Leave changes uncommitted. Report Steps 2 and 4.
 - Consumes: `jobs_from_environment()` and the `dtcc_engine.run_dataset` task from Tasks 10 to 12; the Celery command, which finds the `Celery` instance in the module that `--app` names.
 - Produces: `celery --app dtcc_engine.worker worker` runs the jobs of the host's target; `pnpm dev:engine` starts Redis, the API, and a worker that runs one job at a time.
 
-- [ ] **Step 1: Add the worker**
+- [x] **Step 1: Add the worker**
 
 Create `apps/engine/dtcc_engine/worker.py`:
 
@@ -1884,7 +1884,7 @@ engine-worker:
 
 In `package.json`, change `dev:engine` to `docker compose --profile engine up --build engine engine-worker`.
 
-- [ ] **Step 2: Run a Core job through the worker container**
+- [x] **Step 2: Run a Core job through the worker container**
 
 Start `pnpm dev:engine` in another terminal and wait for the API's health check, then run:
 
@@ -1895,7 +1895,7 @@ JOB=$(curl -fsS -H "$AUTH" -H 'Content-Type: application/json' \
   http://127.0.0.1:8000/api/v1/jobs | python3 -c 'import json, sys; print(json.load(sys.stdin)["job_id"])')
 curl -fsS -H "$AUTH" http://127.0.0.1:8000/api/v1/jobs/$JOB
 curl -fsS -H "$AUTH" -o /tmp/smoke.dtccpkg http://127.0.0.1:8000/api/v1/jobs/$JOB/package
-docker compose --profile engine exec -T engine python -c "from dtcc_core.datasets import load_model_package; m = load_model_package('/var/lib/dtcc-engine/packages/$JOB.dtccpkg'); print(type(m).__name__, m.dataset_context.request.dataset_name)"
+docker compose --profile engine exec -T engine /opt/conda/envs/engine/bin/python -c "from dtcc_core.datasets import load_model_package; m = load_model_package('/var/lib/dtcc-engine/packages/$JOB.dtccpkg'); print(type(m).__name__, m.dataset_context.request.dataset_name)"
 shasum -a 256 /tmp/smoke.dtccpkg
 docker compose --profile engine exec -T engine sha256sum /var/lib/dtcc-engine/packages/$JOB.dtccpkg
 docker compose --profile engine logs engine-worker | grep "$JOB"
@@ -1904,17 +1904,19 @@ docker compose --profile engine logs engine-worker | grep "$JOB"
 Repeat the status request until the state is `completed` before downloading.
 Expected: the job goes from `queued` or `running` to `completed`; Core reads the package as a `VolumeMesh` from `smoke`; both SHA-256 digests match; the worker's log shows the task received and succeeded.
 
-- [ ] **Step 3: Run a representative Sim job by hand**
+Ruling (2026-09-30, Task 13, Step 2): the first run's `docker compose exec -T engine python` failed with `ModuleNotFoundError: No module named 'dtcc_core'`, because `exec` does not run the image's entrypoint, which activates the `engine` environment, so `python` was the base environment's. The command now runs the `engine` environment's interpreter, as the production health check does.
+
+- [x] **Step 3: Run a representative Sim job by hand**
 
 Repeat Step 2 with `"dataset": "traffic_simulation"`, and record the result, the job's duration, and the package size. It downloads roads from OpenStreetMap and zones from Statistics Sweden: if either is unreachable or rate-limits, the job fails with the provider's error type, and that outcome is recorded rather than retried automatically.
 Expected, when the providers respond: `completed`, with a `RoadNetwork` package that Core reads.
 
-- [ ] **Step 4: Verify the tests leave development jobs alone**
+- [x] **Step 4: Verify the tests leave development jobs alone**
 
 With `pnpm dev:engine` still running, run `pnpm engine:check`, then `docker compose --profile engine exec -T engine-redis redis-cli -n 0 keys 'dtcc-engine:job:*'`.
 Expected: the tests pass; the development database still lists exactly the jobs from Steps 2 and 3; the API and the worker keep running. Stop `pnpm dev:engine`.
 
-- [ ] **Step 5: Update the README**
+- [x] **Step 5: Update the README**
 
 After the engine paragraph, add:
 
@@ -1925,14 +1927,16 @@ After the engine paragraph, add:
 Run: `npx --yes prettier@3.9.6 --write README.md compose.yaml package.json && npx --yes prettier@3.9.6 --check README.md compose.yaml package.json apps/engine/PLAN.md`
 Expected: all files use Prettier code style.
 
-- [ ] **Step 6: Validate**
+- [x] **Step 6: Validate**
 
 Run: `pnpm engine:check`, `pnpm engine:check:prod`, `docker compose config --services`, and `pnpm check`.
 Expected: 62 passed; the production checks pass with `engine-redis` in their own Compose project; the services without a profile are only `postgres`; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately, including Step 3's outcome.
 
-- [ ] **Step 7: Stop for review**
+- [x] **Step 7: Stop for review**
 
 Set Increment 2a's status to executed with the date, leave changes uncommitted, and report Steps 2 to 4 and 6.
+
+Ruling (2026-09-30, Task 13, review): the README's package table still said that the engine serves Dataset discovery so far, although increment 2a adds local jobs and their packages. The row now names all three.
 
 ## Increment 2b: Simulation execution (to be expanded)
 
