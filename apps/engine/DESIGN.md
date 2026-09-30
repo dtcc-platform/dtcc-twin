@@ -272,7 +272,10 @@ must use Core's export contract and must not trigger a second Dataset
 computation merely to serialize an existing realization.
 
 Job status distinguishes queued, running, completed, failed, and confirmed
-cancelled work. Cancellation being requested is separate information from
+cancelled work. A job whose submission the broker did not confirm is
+unconfirmed rather than queued, because it may or may not be queued; it is
+reported as running once a worker starts it, and Engine never sends it again.
+Cancellation being requested is separate information from
 confirmation that work was cancelled. Unknown or expired jobs and temporary
 status unavailability must be distinguishable from queued work.
 

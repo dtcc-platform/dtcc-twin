@@ -16,7 +16,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 
 - **Increments 0 and 1** are written as executable tasks with complete code.
 - **Increments 2 to 6** are specified by scope, upstream interfaces, checks, and blockers. Each is expanded into executable tasks, in this file, when its prerequisites are verified. Expanding an increment is a plan change and is reviewed like one.
-- **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins; 2b, execution of FEniCSx simulations, waits for upstream Sim changes. Cancellation moves to increment 4, because Celery's revocation needs its race handling (see increment 4).
+- **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins and is expanded into Tasks 10 to 13; 2b, execution of FEniCSx simulations, waits for upstream Sim changes. Cancellation moves to increment 4, because Celery's revocation needs its race handling (see increment 4).
 - **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part and the Linux deployment, stays an outline until increments 2 to 4 provide what it verifies.
 
 ## Global Constraints
@@ -41,6 +41,11 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 6. The `prod` image is built: it contains exactly the runtime lock's conda packages, with their dependencies still consistent, so no C++ compiler, CMake, Ninja, or Git, and FEniCSx still compiles a form, as the non-root user, into an empty cache. Pinned in Task 6, Step 1 (`test_conda_packages_match_the_runtime_lock`, `test_conda_dependencies_are_consistent`, `test_build_only_tools_are_removed`, `test_fenicsx_compiles_a_form_into_an_empty_cache`).
 7. A developer runs `pnpm engine:check:prod` while `pnpm dev:engine` and Postgres are running: both keep running, because the check uses its own Compose project and publishes no port. Pinned in Task 7, Step 5.
 8. A developer on Apple silicon builds the Engine image: it is built for `linux/amd64`, and Core builds a volume mesh of a small city, which fails on Linux arm64. Pinned in Task 9, Step 1 (`test_core_builds_a_volume_mesh_of_a_small_city`).
+9. A consumer polls a job ID that Engine never accepted: `404` with "unknown or expired", not `queued`. Pinned in Task 10 (`test_unknown_job_is_not_found_rather_than_queued`).
+10. Redis cannot record a submitted job: `503`, and nothing is sent. The broker does not confirm a job's message: `503` with the job's ID, the job is reported as `unconfirmed`, and it is not sent again, because it may already be queued. Pinned in Task 10 (`test_unreachable_redis_is_reported_as_unavailable`, `test_unconfirmed_submission_keeps_the_job_and_reports_it`).
+11. A running job has not reported progress: its status has no progress at all; once Core reports, the report appears unchanged. Pinned in Task 11 (`test_running_job_reports_upstream_progress_and_invents_none`).
+12. A package is requested a minute before and a second after 30 days from its job's finish: the first is served, the second is `404` with its status, although the file and Celery's result still exist. Pinned in Task 12 (`test_finished_job_and_its_package_expire_after_the_retention`).
+13. A consumer sends a provider credential where Engine or the Dataset rejects it, as a value or by mistake as a field name: the `422` gives each error's type and location without repeating it. Pinned in Task 10 (`test_validation_errors_repeat_no_submitted_names_or_values`).
 
 ---
 
@@ -718,7 +723,9 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ---
 
-## Increment 2a: Local execution and packaging (to be expanded)
+## Increment 2a: Local execution and packaging
+
+Status: expanded 2026-09-30 into Tasks 10 to 13; not yet executed.
 
 **Scope:** Redis and a Celery worker from the same image; job submission (`POST`) with request-envelope and target validation, status polling with upstream progress, and `.dtccpkg` download for Datasets executed on the local target; a completed package is refused once 30 periods of 24 hours have passed since its job completed. Every registered Dataset can be submitted; one whose result Core cannot package canonically produces a failed job with Core's error, because the spec forbids a curated Dataset list and makes required packaging failures fail delivery. Pre-execution cancellation moves to increment 4.
 
@@ -735,20 +742,1195 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 **Round-trip evidence** (development image, 200 m box in Gothenburg, EPSG:3006): at Core `5ca2ca4`, 15 of 28 registered Datasets pass canonical export and `load_model_package` with an identical model encoding and context: `air_quality`, `weather`, `hydrology`, `ocean`, `buses`, `ferries`, `metros`, `trains`, `trams`, `transit_vehicles`, `deso`, `roads`, `space_syntax`, `smoke`, and Sim's `traffic_simulation`. The vehicle and sensor results may be empty (no API keys, and `strict_live` defaults to false), so they show that the format works, not that content is complete. Point-cloud-based Datasets fail at the pin on a Core bug that `develop` fixes (increment 2b).
 
-**Proposed decisions**, to settle when the increment is expanded:
+**Decisions**, settled 2026-09-30:
 
 - A request whose parameters set `format` is rejected with an explanation; supplementary artifacts through `export(..., format=...)` are later work.
 - `celery[redis]==5.6.3` goes in `pyproject.toml` `dependencies`, so the builder installs it while Git is present; `task_track_started=True`, so running jobs are distinguishable from queued ones.
-- Development Redis is the `redis:8.2` series with `maxmemory-policy noeviction`; Sim's Compose file used `allkeys-lru`, which can evict queued tasks and results. Redis 8 is licensed AGPL-3.0, RSALv2, or SSPL; Valkey (BSD) is the alternative.
-- Job metadata stays available until 30 periods of 24 hours after completion (DESIGN.md, "Package creation, delivery, and retention"): `result_expires` is set to 30 days, and Engine writes an acceptance record per job (Dataset, target, submission time) that does not expire while the job is queued or running and, at completion, is given the same 30 days. Unknown and expired jobs are then distinguishable from queued ones. How the record of a job lost before completion ends is settled with increment 4's restart behavior.
+- Development Redis is `redis:8`, pinned to the major like Postgres, with `maxmemory-policy noeviction`; Sim's Compose file used `allkeys-lru`, which can evict queued tasks and results. Redis 8 is licensed AGPL-3.0, RSALv2, or SSPL, which permits running the unmodified image; Valkey (BSD) was considered.
+- Job metadata stays available until 30 periods of 24 hours after completion (DESIGN.md, "Package creation, delivery, and retention"). Engine writes its own acceptance record per job in Redis (Dataset, target, submission time) rather than relying on a Celery state; the record does not expire while the job is queued or running. When the job finishes, the record and Celery's result are kept for 31 days, a day beyond the retention, while status and package are refused from 30 periods of 24 hours after the finish time. Unknown and expired jobs are then distinguishable from queued ones. How the record of a job lost before completion ends is settled with increment 4's restart behavior.
 - Packages are stored as `<job id>.dtccpkg` in `ENGINE_PACKAGE_DIR`, a volume shared by a host's API and worker containers and writable by uid 10001. Expiry is enforced from the job's UTC completion time, not from the Redis key's lifetime.
-- The checks use `smoke` (Core; deterministic and offline) and `traffic_simulation` (Sim).
+- Automated checks use `smoke` (Core; synthetic, deterministic, and offline). `traffic_simulation` (Sim), which downloads roads from OpenStreetMap and zones from Statistics Sweden, runs once as a manual, recorded verification step, so `engine:check` does not depend on those services.
 
 **Migration from Sim's mini-service:** adapt `service/tasks.py` (Celery task invoking a Dataset inside the progress bridge) as one generic task taking the Dataset name and parameters, and `service/progress.py`, passing Core's reported values through without a fallback percentage, with the submission-validation and status-snapshot cases of `tests/test_service_routes.py`. Do not carry over the module-prefix filter, default `format` injection, reporting `PENDING` as pending, `str(result)` failure messages, `terminate=True` cancellation, `service/results.py` shared-volume delivery, or the server-sent-events stream; the spec requires polling and `.dtccpkg` over HTTP.
 
 **Checks:** invalid parameters and bounds fail before execution with Core's validation errors (Validation row); a deterministic Core Dataset runs through the real broker and worker and produces a canonical package that `load_model_package` reads back (Local execution and Package correctness rows); a Dataset whose result Core cannot package produces a failed job and no downloadable package; queued and running states are distinguishable; missing progress is not fabricated; unknown job IDs are not reported as queued; a job that spends nonzero time queued and running keeps its status and package for 30 days after completion, and both are refused after that, measured from completion time.
 
 **Blockers:** none known; `smoke` and `traffic_simulation` round-trip at the current pins.
+
+**Design** (for Tasks 10 to 13):
+
+- One module, `dtcc_engine/jobs.py`, holds what the HTTP API and the worker share: a `Jobs` object for one compute target, created from `ENGINE_REDIS_URL`, `ENGINE_TARGET`, and `ENGINE_PACKAGE_DIR`. `api.py` validates requests and maps outcomes to HTTP; `worker.py` is only the entry point of the Celery command.
+- Celery owns the execution state, which Engine translates: `PENDING` with an Engine record is `queued`, or `unconfirmed` if the broker never confirmed the job's message; `STARTED` and `PROGRESS` are `running`, `SUCCESS` is `completed`, and `FAILURE` is `failed`. 2a produces no other state: it exposes no cancellation and configures no retries. Increment 4 translates cancellation.
+- Engine's record of a job is a Redis hash, `dtcc-engine:job:<job id>`, holding the Dataset, the target, the submission time, the time the broker confirmed the job's message, and, written by the worker, the finish time and a failed job's exception type. Retention is measured from that finish time, because a revoke broadcast can rewrite a failed job's Celery result, including its `date_done`. The exception type is read from the record, because Celery cannot rebuild every exception from the result backend: Core's `DatasetUpstreamError` takes only keyword arguments, and Celery calls `cls(message)`.
+- Submission records the job first and sends it second. If Redis cannot record the job, nothing was sent: `503`. If sending fails, or its confirmation is lost, the message may already be queued, because kombu publishes with `LPUSH`: Engine keeps the record, answers `503` with the job's ID and status reference, reports the job as `unconfirmed` until a worker starts it, and does not send it again (DESIGN.md, "Failure reporting").
+- `status` reads Celery's state before Engine's record. The worker writes the record's finish time and error type before Celery stores the terminal state, so a terminal state read first implies a record that already has them.
+- The job task is registered with `shared=False`. Celery's default adds a task to every app finalized later, and the first registration of a name wins, so a worker could run another `Jobs` instance's closure; the tests create many instances in one process.
+- Validation errors, from the request envelope and from the Dataset, return only each error's location and type. An error's input, its context, and a validator's message can all repeat a submitted value, such as a provider credential; location parts other than the schema's field names and list positions become `<unexpected>`, because an unexpected field's name, or a dictionary key, can itself be a credential.
+- Jobs are sent through a second Celery app that has a broker but no result backend. On an app with the Redis result backend, `send_task` subscribes the sending process to the job's result channel (`celery/backends/redis.py`, `on_task_call`), and the API never reads those messages, so subscriptions and unread state messages would accumulate for as long as it runs.
+- The worker writes the package with Core's canonical export at `<ENGINE_PACKAGE_DIR>/<job id>.dtccpkg`, reads it back with `load_model_package` before the job succeeds, and deletes it if that check fails. The API serves a package only for a completed job within its retention.
+- A failed job reports only its exception type; the worker's log keeps the full error. Which error messages are safe to return is increment 4's Failure reporting row.
+- Automated tests use real Redis (`engine-redis`, database 1, apart from the development server's database 0) and a real Celery worker started in the test process with `celery.contrib.testing.worker.start_worker`, so that tests can register their own Dataset Definitions. Task 13 checks the worker container end to end by hand. Considered and not chosen: a worker container for the automated tests, which is closer to production but cannot see test-defined Datasets and needs its own code reloading.
+
+**Interfaces verified for the tasks** (2026-09-30, in the sources at the stated versions):
+
+- Celery 5.6.3: `Celery(main, broker=..., backend=..., set_as_current=...)`; an app without a result backend has the base backend's no-op `on_task_call` (`celery/backends/base.py`), while the Redis backend's subscribes (`celery/backends/redis.py`); `send_task(name, args=..., task_id=..., queue=...)`, whose publish retry defaults to `task_publish_retry` (`celery/app/amqp.py`); `backend.get_task_meta(task_id)` returns the state and result in one read; `@app.task(name=..., bind=True, shared=False)`, where the default `shared=True` registers the task on every app finalized later and the first registration of a name wins (`celery/app/base.py`, `celery/_state.py`); `backend.mark_as_done(task_id, result)` (tests); `Task.update_state(state=..., meta=...)`; `task_track_started` defaults to false and `result_expires` to one day (`celery/app/defaults.py`); `celery.contrib.testing.worker.start_worker(app)` runs a worker thread in the test process and first waits for the `celery.ping` task, which `celery.contrib.testing.tasks` registers; `celery --app` needs a `Celery` instance or a module holding one, not a factory (`celery/app/utils.py`, `find_app`).
+- kombu 5.6.2: publishing re-raises connection errors as `kombu.exceptions.OperationalError` (`kombu/connection.py`); the Redis transport publishes with `LPUSH` (`kombu/transport/redis.py`), so an error can follow a message Redis already accepted.
+- redis-py 6.4.0: `Redis.from_url(url, decode_responses=True)`, `hset(name, key, value)` and `hset(name, mapping=...)`, `hgetall`, `delete`, `expire(name, time)` with seconds or a `timedelta`, `ttl`, `keys`, `flushdb`, `pipeline()`; `redis.RedisError` is the base of its errors.
+- Redis 8: the default `maxmemory-policy` is `noeviction` (`redis.conf` at `8.10.2`).
+- Starlette 1.7.0 (under FastAPI 0.141.1): `FileResponse(path, media_type=..., filename=...)` sends `Content-Disposition: attachment; filename="<name>"` for an ASCII name; the 422 constant is `HTTP_422_UNPROCESSABLE_CONTENT`. FastAPI's default handler for `RequestValidationError` returns `exc.errors()`, input values included (`fastapi/exception_handlers.py`).
+- Core at `5ca2ca4`: `get_dataset(name)` raises `KeyError` for an unregistered name; `dtcc_core.common.progress.set_progress_callback` and `get_progress_callback` hold a callback per thread, and a `ProgressTracker` created while one is set calls it with Core's progress dictionary (`percent`, `message`, `phase`, `phases`, `eta_seconds`, `eta_formatted`, `elapsed`) unless `DTCC_PROGRESS_MODE` selects another mode; `report_progress(percent=..., message=...)` does nothing outside a tracker and, in a tracker without phases, changes only the message, because such a tracker reports `current / total` (0 when `total` is 0); `ProgressTracker(total=100)` with `update(current=50, message=...)` reports 50.0; entering a tracker does not report, so its first update is not throttled; `smoke` makes no network requests; `calibration_grid` builds a `CalibrationGrid`, which canonical export rejects with `NotImplementedError`.
+
+### Task 10: Submit jobs and report queued ones
+
+**Files:**
+
+- Modify: `apps/engine/pyproject.toml` (dependencies)
+- Modify: `compose.yaml` (add `engine-redis` and the `engine-packages` volume; job settings for `engine` and `engine-prod`)
+- Create: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/dtcc_engine/api.py`
+- Create: `apps/engine/tests/conftest.py`
+- Create: `apps/engine/tests/test_jobs.py`
+- Modify: `apps/engine/tests/test_discovery.py` (construct the app with its jobs)
+
+**Interfaces:**
+
+- Consumes: Increment 1's `create_app` and token check; Core's `list()` and `DatasetDescriptor.validate()`; the Celery, kombu, and redis-py interfaces above.
+- Produces:
+  - `dtcc_engine.jobs.Jobs(redis_url, target, package_dir)` with `submit(dataset_name, parameters) -> str`, which raises `redis.RedisError` when nothing was sent and `UnconfirmedSubmission` (carrying `job_id`) when the job may be queued, `status(job_id) -> dict | None`, `package_path(job_id) -> Path`, and the attributes `target`, `package_dir`, `records` (Redis client), `celery_app`, and `sender`; `record_key(job_id)`; `jobs_from_environment()`, which reads `ENGINE_REDIS_URL`, `ENGINE_TARGET`, and `ENGINE_PACKAGE_DIR`.
+  - `create_app(api_token, jobs)`; `create_app_from_environment()` also creates the jobs from the environment.
+  - `POST /api/v1/jobs` (token) with `{"dataset": str, "parameters": object, "target": str | null}` → `202 {"job_id", "status_url"}`; `422` for an unregistered Dataset, another target, a non-null `format`, or parameters the Dataset rejects; validation errors, of the envelope as of the parameters, are `[{"loc", "type"}]`, with location parts other than the schema's field names and list positions replaced by `<unexpected>`; `503` with a message when Redis cannot record the job, and `503` with `{"message", "job_id", "status_url"}` when the broker did not confirm it.
+  - `GET /api/v1/jobs/{job_id}` (token) → `200 {"job_id", "dataset", "target", "submitted_at", "finished_at", "state", "progress", "error", "package"}`, where this task produces `queued` and `unconfirmed`; `404` for an unknown or expired job; `503` when Redis is unreachable.
+  - The `engine-redis` service, in the `engine` and `engine-prod` profiles.
+
+- [ ] **Step 1: Write the tests, their services, and a skeleton**
+
+In `apps/engine/pyproject.toml`, set the dependencies to:
+
+```toml
+dependencies = [
+    "celery[redis]==5.6.3",
+    "dtcc-core",
+    "dtcc-sim",
+    "fastapi==0.141.1",
+    "redis==6.4.0",
+    "uvicorn==0.54.0",
+]
+```
+
+In `compose.yaml`, add after the `engine` service:
+
+```yaml
+engine-redis:
+  # The Engine's Celery broker and result backend. Redis's default policy never evicts queued tasks or results.
+  profiles: [engine, engine-prod]
+  image: redis:8
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+```
+
+Set the `engine` service's `environment` and `volumes`, and add its `depends_on`:
+
+```yaml
+environment:
+  # Local development only: the port below is reachable from this machine alone.
+  ENGINE_API_TOKEN: ${ENGINE_API_TOKEN:-local-dev-engine-token}
+  ENGINE_REDIS_URL: redis://engine-redis:6379/0
+  ENGINE_TARGET: local
+  ENGINE_PACKAGE_DIR: /var/lib/dtcc-engine/packages
+  # The tests' own database, so `pnpm engine:check` leaves a running `pnpm dev:engine`'s jobs alone.
+  ENGINE_TEST_REDIS_URL: redis://engine-redis:6379/1
+volumes:
+  - ./apps/engine:/app
+  - engine-packages:/var/lib/dtcc-engine/packages
+depends_on:
+  engine-redis:
+    condition: service_healthy
+```
+
+Set the `engine-prod` service's `environment`, and add its `depends_on`:
+
+```yaml
+environment:
+  ENGINE_API_TOKEN: local-prod-check-token
+  ENGINE_REDIS_URL: redis://engine-redis:6379/0
+  ENGINE_TARGET: local
+  ENGINE_PACKAGE_DIR: /home/engine/packages
+depends_on:
+  engine-redis:
+    condition: service_healthy
+```
+
+Add `engine-packages:` under the top-level `volumes`.
+
+Create `apps/engine/tests/conftest.py`:
+
+```python
+"""Fixtures for Engine's tests that use Redis and Celery.
+
+`compose.yaml` gives the tests a Redis database of their own, `ENGINE_TEST_REDIS_URL`.
+"""
+
+import os
+from pathlib import Path
+
+import pytest
+import redis
+
+from dtcc_engine.jobs import Jobs
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> str:
+    """The tests' Redis database, emptied once per session so that no earlier run's jobs remain queued."""
+    url = os.environ["ENGINE_TEST_REDIS_URL"]
+    redis.Redis.from_url(url).flushdb()
+    return url
+
+
+@pytest.fixture
+def jobs(redis_url: str, tmp_path: Path) -> Jobs:
+    """Jobs on a target that no worker serves, so submitted jobs stay queued."""
+    return Jobs(redis_url, "unserved", tmp_path)
+```
+
+Create `apps/engine/tests/test_jobs.py`:
+
+```python
+"""Tests for Engine's job API against real Redis and, where a job must run, a real Celery worker.
+
+The `client` fixture's jobs stay queued, because no worker serves its target.
+"""
+
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister
+from fastapi.testclient import TestClient
+from kombu.exceptions import OperationalError
+from pydantic import field_validator
+
+from dtcc_engine.api import create_app
+from dtcc_engine.jobs import Jobs, record_key
+
+TOKEN = "test-token"
+AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
+BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
+SMOKE = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}}
+
+
+@pytest.fixture
+def client(jobs: Jobs) -> TestClient:
+    return TestClient(create_app(TOKEN, jobs))
+
+
+def submit(client: TestClient, request: dict) -> str:
+    """Submit a job that the API must accept, and return its ID."""
+    response = client.post("/api/v1/jobs", json=request, headers=AUTHORIZED)
+    assert response.status_code == 202, response.text
+    return response.json()["job_id"]
+
+
+def job_count(jobs: Jobs) -> int:
+    return len(jobs.records.keys(record_key("*")))
+
+
+@pytest.fixture
+def value_echoing_dataset() -> Iterator[str]:
+    """Register a Dataset whose validator repeats the rejected value in its message, as any validator may."""
+
+    class EchoingProbeArgs(DatasetBaseArgs):
+        key: str = ""
+
+        @field_validator("key")
+        @classmethod
+        def reject(cls, value: str) -> str:
+            raise ValueError(f"key {value} is not accepted")
+
+    class EchoingProbeDataset(DatasetDescriptor):
+        name = "engine_echoing_probe"
+        description = "Dataset defined by an Engine test whose validation error repeats the value"
+        ArgsModel = EchoingProbeArgs
+
+        def build(self, args):
+            raise NotImplementedError
+
+    try:
+        yield "engine_echoing_probe"
+    finally:
+        unregister("engine_echoing_probe")
+
+
+@pytest.mark.parametrize(("method", "path"), [("POST", "/api/v1/jobs"), ("GET", "/api/v1/jobs/some-job")])
+def test_job_routes_reject_missing_tokens(client: TestClient, method: str, path: str) -> None:
+    assert client.request(method, path, json=SMOKE).status_code == 401
+
+
+def test_submitted_job_is_queued(client: TestClient, jobs: Jobs) -> None:
+    response = client.post("/api/v1/jobs", json=SMOKE, headers=AUTHORIZED)
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+    job = client.get(response.json()["status_url"], headers=AUTHORIZED).json()
+    assert job == {
+        "job_id": job_id,
+        "dataset": "smoke",
+        "target": jobs.target,
+        "submitted_at": job["submitted_at"],
+        "finished_at": None,
+        "state": "queued",
+        "progress": None,
+        "error": None,
+        "package": None,
+    }
+
+
+def test_unknown_job_is_not_found_rather_than_queued(client: TestClient) -> None:
+    response = client.get(f"/api/v1/jobs/{uuid.uuid4()}", headers=AUTHORIZED)
+    assert response.status_code == 404
+    assert "unknown or expired" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("parameters", "location"),
+    [({"bounds": [1.0, 0.0, 0.0, 1.0]}, ["bounds"]), ({"bounds": BOUNDS, "no_such_parameter": 1}, ["<unexpected>"])],
+    ids=["reversed-bounds", "unknown-parameter"],
+)
+def test_invalid_parameters_fail_before_submission_with_the_datasets_errors(
+    client: TestClient, jobs: Jobs, parameters: dict, location: list[str]
+) -> None:
+    before = job_count(jobs)
+    response = client.post("/api/v1/jobs", json={"dataset": "smoke", "parameters": parameters}, headers=AUTHORIZED)
+    assert response.status_code == 422
+    assert [error["loc"] for error in response.json()["detail"]] == [location]
+    assert job_count(jobs) == before
+
+
+def test_validation_errors_repeat_no_submitted_names_or_values(client: TestClient, value_echoing_dataset: str) -> None:
+    # A consumer may send a provider credential as a value, or by mistake as a name; no error may repeat it.
+    secret = "credential-7f3a9c"
+    requests = [
+        {**SMOKE, "api_key": secret},
+        {**SMOKE, secret: 1},
+        {"dataset": value_echoing_dataset, "parameters": {"bounds": BOUNDS, "key": secret}},
+        {"dataset": "smoke", "parameters": {"bounds": BOUNDS, secret: 1}},
+    ]
+    responses = [client.post("/api/v1/jobs", json=request, headers=AUTHORIZED) for request in requests]
+    assert [response.status_code for response in responses] == [422, 422, 422, 422]
+    assert all(secret not in response.text for response in responses)
+    assert [response.json()["detail"] for response in responses] == [
+        [{"loc": ["body", "<unexpected>"], "type": "extra_forbidden"}],
+        [{"loc": ["body", "<unexpected>"], "type": "extra_forbidden"}],
+        [{"loc": ["key"], "type": "value_error"}],
+        [{"loc": ["<unexpected>"], "type": "extra_forbidden"}],
+    ]
+
+
+def test_unregistered_dataset_is_rejected(client: TestClient) -> None:
+    response = client.post("/api/v1/jobs", json={"dataset": "no_such_dataset", "parameters": {}}, headers=AUTHORIZED)
+    assert response.status_code == 422
+    assert "no_such_dataset" in response.json()["detail"]
+
+
+def test_format_parameter_is_rejected(client: TestClient) -> None:
+    # A format makes Datasets return serialized bytes, which cannot become a canonical package.
+    request = {"dataset": "smoke", "parameters": {"bounds": BOUNDS, "format": "vtu"}}
+    response = client.post("/api/v1/jobs", json=request, headers=AUTHORIZED)
+    assert response.status_code == 422
+    assert "format" in response.json()["detail"]
+
+
+def test_only_this_hosts_target_is_accepted(client: TestClient, jobs: Jobs) -> None:
+    elsewhere = client.post("/api/v1/jobs", json={**SMOKE, "target": "elsewhere"}, headers=AUTHORIZED)
+    here = client.post("/api/v1/jobs", json={**SMOKE, "target": jobs.target}, headers=AUTHORIZED)
+    assert elsewhere.status_code == 422
+    assert "elsewhere" in elsewhere.json()["detail"]
+    assert here.status_code == 202
+
+
+def test_unreachable_redis_is_reported_as_unavailable(tmp_path: Path) -> None:
+    client = TestClient(create_app(TOKEN, Jobs("redis://127.0.0.1:1/0", "unserved", tmp_path)))
+    submitted = client.post("/api/v1/jobs", json=SMOKE, headers=AUTHORIZED)
+    polled = client.get(f"/api/v1/jobs/{uuid.uuid4()}", headers=AUTHORIZED)
+    assert (submitted.status_code, polled.status_code) == (503, 503)
+    assert "not submitted" in submitted.json()["detail"]
+
+
+def test_unconfirmed_submission_keeps_the_job_and_reports_it(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Redis can accept the message and the reply still be lost, so the job may be queued.
+    def lose_the_confirmation(*args, **kwargs):
+        raise OperationalError("connection lost before the broker replied")
+
+    monkeypatch.setattr(jobs.sender, "send_task", lose_the_confirmation)
+    response = client.post("/api/v1/jobs", json=SMOKE, headers=AUTHORIZED)
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    job = client.get(detail["status_url"], headers=AUTHORIZED).json()
+    assert (job["job_id"], job["state"]) == (detail["job_id"], "unconfirmed")
+```
+
+In `apps/engine/tests/test_discovery.py`, import `from dtcc_engine.jobs import Jobs`, and construct the app with the `jobs` fixture. The discovery expectations are unchanged; the app now needs its jobs. The `client` fixture becomes:
+
+```python
+@pytest.fixture
+def client(jobs: Jobs) -> TestClient:
+    return TestClient(create_app(TOKEN, jobs))
+```
+
+`test_unusable_tokens_are_rejected_at_startup` and `test_bearer_token_characters_are_accepted` take a `jobs: Jobs` argument and call `create_app(token, jobs)`.
+
+Create `apps/engine/dtcc_engine/jobs.py` as a skeleton, so that the tests fail on behavior rather than on an import error:
+
+```python
+"""Asynchronous Dataset jobs on one compute target."""
+
+from pathlib import Path
+
+import redis
+from celery import Celery
+
+
+def record_key(job_id: str) -> str:
+    """Return the Redis key of Engine's record of a job."""
+    return f"dtcc-engine:job:{job_id}"
+
+
+class Jobs:
+    """Dataset jobs on one compute target."""
+
+    def __init__(self, redis_url: str, target: str, package_dir: Path) -> None:
+        self.target = target
+        self.package_dir = package_dir
+        self.records = redis.Redis.from_url(redis_url, decode_responses=True)
+        self.sender = Celery("dtcc_engine", broker=redis_url, set_as_current=False)
+
+
+def jobs_from_environment() -> Jobs:
+    """Create this host's jobs from the environment."""
+    raise NotImplementedError
+```
+
+In `apps/engine/dtcc_engine/api.py`, give `create_app` a second parameter, `jobs: Jobs`, imported from `dtcc_engine.jobs`, and leave its body unchanged.
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reason**
+
+Run: `pnpm engine:check`
+Expected: FAIL. The build installs Celery 5.6.3, kombu 5.6.2, and redis-py 6.4.0 in the Engine-dependency step, and `compose run` starts `engine-redis` first. The 12 job tests fail on status codes or details: `404` from missing routes where `202`, `401`, `422`, or `503` is expected, and the default `Not Found` detail where "unknown or expired" is expected. The 38 existing tests pass. No test fails on an import, collection, or connection error.
+
+- [ ] **Step 3: Implement submission and status**
+
+Replace `apps/engine/dtcc_engine/jobs.py` with:
+
+```python
+"""Asynchronous Dataset jobs on one compute target.
+
+A job runs one Dataset in a Celery worker and delivers its realization as a canonical Dataset
+Package. Celery owns the queue and the execution state; Engine keeps its own record of each job
+in the same Redis, so unknown and expired jobs are distinguishable from queued ones.
+"""
+
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import redis
+from celery import Celery
+from kombu.exceptions import OperationalError
+
+RUN_DATASET = "dtcc_engine.run_dataset"
+STATES = {
+    "PENDING": "queued",
+    "STARTED": "running",
+    "PROGRESS": "running",
+    "SUCCESS": "completed",
+    "FAILURE": "failed",
+}
+
+
+def record_key(job_id: str) -> str:
+    """Return the Redis key of Engine's record of a job."""
+    return f"dtcc-engine:job:{job_id}"
+
+
+class UnconfirmedSubmission(Exception):
+    """The broker did not confirm a job's message, so the job may or may not be queued.
+
+    Attributes:
+        job_id: The job's ID, recorded with the job, so its status can be polled.
+    """
+
+    def __init__(self, job_id: str) -> None:
+        super().__init__(job_id)
+        self.job_id = job_id
+
+
+class Jobs:
+    """Dataset jobs on one compute target: submission, execution, status, and packages.
+
+    Args:
+        redis_url: Redis for Celery's broker and result backend, and for Engine's job records.
+        target: Identifier of this compute target; its jobs use the Celery queue of that name.
+        package_dir: Directory of completed packages, shared by this host's API and worker.
+    """
+
+    def __init__(self, redis_url: str, target: str, package_dir: Path) -> None:
+        self.target = target
+        self.package_dir = package_dir
+        self.records = redis.Redis.from_url(redis_url, decode_responses=True)
+        self.celery_app = Celery("dtcc_engine", broker=redis_url, backend=redis_url)
+        self.celery_app.conf.update(task_default_queue=target)
+        # With a result backend, send_task subscribes this process to the job's result channel,
+        # which an API that never waits for results would accumulate.
+        self.sender = Celery("dtcc_engine", broker=redis_url, set_as_current=False)
+        # Retrying a publish whose acknowledgement was lost could queue the job twice.
+        self.sender.conf.update(task_publish_retry=False)
+
+    def package_path(self, job_id: str) -> Path:
+        """Return where the job's package is stored once the job completes."""
+        return self.package_dir / f"{job_id}.dtccpkg"
+
+    def submit(self, dataset_name: str, parameters: dict[str, Any]) -> str:
+        """Record and queue a job that runs a Dataset with parameters the caller has validated; return its ID.
+
+        Raises:
+            redis.RedisError: If Redis cannot record the job; nothing was sent.
+            UnconfirmedSubmission: If sending the job, or recording its confirmation, failed; the job may be queued,
+                and it is not sent again.
+        """
+        job_id = str(uuid4())
+        key = record_key(job_id)
+        submitted_at = datetime.now(UTC).isoformat()
+        self.records.hset(key, mapping={"dataset": dataset_name, "target": self.target, "submitted_at": submitted_at})
+        try:
+            self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=self.target)
+            self.records.hset(key, "queued_at", datetime.now(UTC).isoformat())
+        except (redis.RedisError, OperationalError) as error:
+            raise UnconfirmedSubmission(job_id) from error
+        return job_id
+
+    def status(self, job_id: str) -> dict[str, Any] | None:
+        """Return the job's state, progress, error, and package, or None if the job is unknown or expired.
+
+        Raises:
+            redis.RedisError: If Redis is unreachable, so the state is unknown for now.
+        """
+        record = self.records.hgetall(record_key(job_id))
+        if not record:
+            return None
+        meta = self.celery_app.backend.get_task_meta(job_id)
+        state = STATES[meta["status"]]
+        if state == "queued" and "queued_at" not in record:
+            state = "unconfirmed"
+        return {
+            "job_id": job_id,
+            "dataset": record["dataset"],
+            "target": record["target"],
+            "submitted_at": record["submitted_at"],
+            "finished_at": record.get("finished_at"),
+            "state": state,
+            "progress": None,
+            "error": None,
+            "package": None,
+        }
+
+
+def jobs_from_environment() -> Jobs:
+    """Create this host's jobs from `ENGINE_REDIS_URL`, `ENGINE_TARGET`, and `ENGINE_PACKAGE_DIR`."""
+    return Jobs(os.environ["ENGINE_REDIS_URL"], os.environ["ENGINE_TARGET"], Path(os.environ["ENGINE_PACKAGE_DIR"]))
+```
+
+In `apps/engine/dtcc_engine/api.py`, change the module docstring's first paragraph to end "…as Core describes them, and runs them as asynchronous jobs." Add the imports:
+
+```python
+from fastapi import Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, ValidationError
+from redis import RedisError
+
+from dtcc_engine.jobs import Jobs, UnconfirmedSubmission, jobs_from_environment
+```
+
+(`Request` joins the existing `from fastapi import ...` line.)
+
+Add after `BEARER_TOKEN_PATTERN`:
+
+```python
+class JobRequest(BaseModel):
+    """A request to run one Dataset as a job."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset: str
+    parameters: dict[str, Any]
+    target: str | None = None
+
+
+# The names that locations in a job request's own validation errors can hold.
+REQUEST_FIELDS = {"body", *JobRequest.model_fields}
+
+
+def public_errors(errors: list[dict[str, Any]], fields: set[str]) -> list[dict[str, Any]]:
+    """Return each validation error's type and location without anything the consumer sent.
+
+    An error's input, context, and message can repeat a submitted value, and a location part that is neither
+    one of `fields` nor a list position can be a submitted name, so it becomes `<unexpected>`.
+    """
+    return [
+        {
+            "loc": [part if isinstance(part, int) or part in fields else "<unexpected>" for part in error["loc"]],
+            "type": error["type"],
+        }
+        for error in errors
+    ]
+```
+
+Document `jobs` in `create_app`'s docstring ("jobs: The jobs of this host's compute target."). After the `FastAPI(...)` call, add:
+
+```python
+    @app.exception_handler(RequestValidationError)
+    async def reject_invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"detail": public_errors(error.errors(), REQUEST_FIELDS)},
+        )
+```
+
+Add after `require_token`:
+
+```python
+    def find_job(job_id: str) -> dict[str, Any]:
+        try:
+            job = jobs.status(job_id)
+        except RedisError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job state is temporarily unavailable"
+            ) from None
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' is unknown or expired")
+        return job
+```
+
+Add after the `describe_dataset` route:
+
+```python
+    @app.post("/api/v1/jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_token)])
+    def submit_job(request: JobRequest) -> dict[str, str]:
+        registered = datasets.list()
+        if request.dataset not in registered:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Dataset '{request.dataset}' is not registered",
+            )
+        if request.target not in (None, jobs.target):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Target '{request.target}' is not configured; this Engine runs jobs on '{jobs.target}'",
+            )
+        if request.parameters.get("format") is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Engine delivers every job as a canonical .dtccpkg; remove the 'format' parameter",
+            )
+        try:
+            registered[request.dataset].validate(dict(request.parameters))
+        except ValidationError as error:
+            fields = set(registered[request.dataset].ArgsModel.model_fields)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=public_errors(error.errors(), fields)
+            ) from None
+        try:
+            job_id = jobs.submit(request.dataset, request.parameters)
+        except RedisError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The job queue is unavailable; the job was not submitted",
+            ) from None
+        except UnconfirmedSubmission as unconfirmed:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "message": "The queue did not confirm the job, which may still run; poll it before resubmitting",
+                    "job_id": unconfirmed.job_id,
+                    "status_url": f"/api/v1/jobs/{unconfirmed.job_id}",
+                },
+            ) from None
+        return {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}"}
+
+    @app.get("/api/v1/jobs/{job_id}", dependencies=[Depends(require_token)])
+    def job_status(job_id: str) -> dict[str, Any]:
+        return find_job(job_id)
+```
+
+`validate` receives a copy, because Core converts a `Bounds` value in place. Change `create_app_from_environment` to `return create_app(os.environ.get("ENGINE_API_TOKEN", ""), jobs_from_environment())`, and its docstring to name the three job settings; a missing setting fails the start with a `KeyError` naming it.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 50 passed: the 38 existing tests and 12 job tests.
+
+- [ ] **Step 5: Stop for review**
+
+Leave changes uncommitted. Report Steps 2 and 4.
+
+### Task 11: Run jobs in a worker and package their results
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/tests/conftest.py` (a worker)
+- Modify: `apps/engine/tests/test_jobs.py` (execution tests)
+
+**Interfaces:**
+
+- Consumes: Task 10's `Jobs`; the Celery task, progress, and testing interfaces above; Core's `get_dataset`, calling a Dataset, `export(path, canonical=True)` on its realization, `load_model_package`, and its progress callback; in tests, `ProgressTracker(total=...)` and its `update`, `dtcc_core.model.Mesh`, and Celery's `backend.mark_as_done`.
+- Produces:
+  - The Celery task `dtcc_engine.run_dataset(dataset_name, parameters)`, which runs the Dataset with Core's progress reported as the `PROGRESS` state, writes and validates the package, and records `finished_at` and, for a failed job, `error_type`.
+  - Status fields: `state` `running`, `completed`, or `failed`; `progress` is Core's latest report unchanged, and `null` while none exists; `error` is `{"type": <exception class name>}` for a failed job; `package` is `{"available": bool, "expires_at": <finish time + 30 days>}` for a completed job.
+  - `status` reads Celery's state before Engine's record, and the task is not shared with other Celery apps.
+  - The `served_jobs` fixture: jobs on a target served by a worker thread in the test process.
+
+- [ ] **Step 1: Write the execution tests and a skeleton task**
+
+Add to `apps/engine/tests/conftest.py` the imports:
+
+```python
+from collections.abc import Iterator
+
+import celery.contrib.testing.tasks  # noqa: F401  Registers the ping task that start_worker waits for.
+from celery.contrib.testing.worker import start_worker
+```
+
+and the fixture:
+
+```python
+@pytest.fixture(scope="module")
+def served_jobs(redis_url: str, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Jobs]:
+    """Jobs on a target served by a Celery worker in this process, which also runs test-defined Datasets."""
+    served = Jobs(redis_url, "served", tmp_path_factory.mktemp("packages"))
+    with start_worker(served.celery_app):
+        yield served
+```
+
+Add to `apps/engine/tests/test_jobs.py` the imports:
+
+```python
+import threading
+import time
+from collections.abc import Callable
+from datetime import UTC, datetime
+
+import numpy as np
+from celery import Celery
+from dtcc_core.common.progress import ProgressTracker
+from dtcc_core.datasets import load_model_package
+from dtcc_core.model import Mesh
+```
+
+and `RUN_DATASET` to the `dtcc_engine.jobs` import. Then
+
+extend the module docstring with "The `served_client` fixture's worker runs in this process, so it also runs the Dataset Definitions that tests register.", and add:
+
+```python
+FINISHED = ("completed", "failed")
+
+
+@pytest.fixture
+def served_client(served_jobs: Jobs) -> TestClient:
+    return TestClient(create_app(TOKEN, served_jobs))
+
+
+def wait_until(client: TestClient, job_id: str, condition: Callable[[dict], bool], timeout: float = 120.0) -> dict:
+    """Poll the job until `condition` holds; fail at once if the job finishes without meeting it."""
+    deadline = time.monotonic() + timeout
+    while True:
+        job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+        if condition(job):
+            return job
+        assert job["state"] not in FINISHED and time.monotonic() < deadline, job
+        time.sleep(0.1)
+
+
+def triangle() -> Mesh:
+    return Mesh(vertices=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), faces=np.array([[0, 1, 2]]))
+
+
+@pytest.fixture
+def gated_dataset() -> Iterator[tuple[threading.Event, threading.Event]]:
+    """Register a Dataset that waits for `start`, reports progress, waits for `finish`, and returns a triangle."""
+    start, finish = threading.Event(), threading.Event()
+
+    class GatedProbeArgs(DatasetBaseArgs):
+        pass
+
+    class GatedProbeDataset(DatasetDescriptor):
+        name = "engine_gated_probe"
+        description = "Dataset defined by an Engine test to hold a job at chosen points"
+        ArgsModel = GatedProbeArgs
+
+        def build(self, args):
+            start.wait(timeout=60)
+            with ProgressTracker(total=100) as tracker:
+                tracker.update(current=50, message="halfway")
+                finish.wait(timeout=60)
+            return triangle()
+
+    try:
+        yield start, finish
+    finally:
+        start.set()
+        finish.set()
+        unregister("engine_gated_probe")
+
+
+@pytest.fixture
+def failing_dataset() -> Iterator[str]:
+    """Register a Dataset whose build always raises, and return its name."""
+
+    class FailingProbeArgs(DatasetBaseArgs):
+        pass
+
+    class FailingProbeDataset(DatasetDescriptor):
+        name = "engine_failing_probe"
+        description = "Dataset defined by an Engine test that always fails"
+        ArgsModel = FailingProbeArgs
+
+        def build(self, args):
+            raise RuntimeError("probe failure")
+
+    try:
+        yield "engine_failing_probe"
+    finally:
+        unregister("engine_failing_probe")
+
+
+def test_job_runs_in_the_worker_into_a_valid_canonical_package(served_client: TestClient, served_jobs: Jobs) -> None:
+    job_id = submit(served_client, SMOKE)
+    job = wait_until(served_client, job_id, lambda job: job["state"] == "completed")
+    assert job["package"] is not None and job["package"]["available"]
+    model = load_model_package(served_jobs.package_path(job_id))
+    assert type(model).__name__ == "VolumeMesh"
+    assert model.dataset_context.request.dataset_name == "smoke"
+    assert model.dataset_context.request.parameters["bounds"] == BOUNDS
+
+
+def test_running_job_reports_upstream_progress_and_invents_none(
+    served_client: TestClient, gated_dataset: tuple[threading.Event, threading.Event]
+) -> None:
+    start, finish = gated_dataset
+    job_id = submit(served_client, {"dataset": "engine_gated_probe", "parameters": {"bounds": BOUNDS}})
+    before_report = wait_until(served_client, job_id, lambda job: job["state"] == "running")
+    start.set()
+    after_report = wait_until(served_client, job_id, lambda job: job["progress"] is not None)
+    finish.set()
+    completed = wait_until(served_client, job_id, lambda job: job["state"] == "completed")
+    assert before_report["progress"] is None
+    assert after_report["state"] == "running"
+    assert (after_report["progress"]["percent"], after_report["progress"]["message"]) == (50.0, "halfway")
+    assert completed["progress"] is None
+
+
+def test_failing_dataset_fails_the_job_without_a_package(
+    served_client: TestClient, served_jobs: Jobs, failing_dataset: str
+) -> None:
+    job_id = submit(served_client, {"dataset": failing_dataset, "parameters": {"bounds": BOUNDS}})
+    job = wait_until(served_client, job_id, lambda job: job["state"] in FINISHED)
+    assert (job["state"], job["error"], job["package"]) == ("failed", {"type": "RuntimeError"}, None)
+    assert job["finished_at"] is not None
+    assert not served_jobs.package_path(job_id).exists()
+
+
+def test_result_core_cannot_package_fails_the_job(served_client: TestClient, served_jobs: Jobs) -> None:
+    # Canonical exchange does not support CalibrationGrid at the pinned Core commit.
+    job_id = submit(served_client, {"dataset": "calibration_grid", "parameters": {"bounds": BOUNDS}})
+    job = wait_until(served_client, job_id, lambda job: job["state"] in FINISHED)
+    assert (job["state"], job["error"]) == ("failed", {"type": "NotImplementedError"})
+    assert not served_jobs.package_path(job_id).exists()
+
+
+def test_status_read_while_the_job_finishes_is_consistent(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job_id = submit(client, SMOKE)
+    read_record = jobs.records.hgetall
+
+    def finish_after_the_read(key: str) -> dict:
+        record = read_record(key)
+        # The job finishes between Engine's two reads: the worker records its finish time, then Celery stores SUCCESS.
+        jobs.records.hset(key, "finished_at", datetime.now(UTC).isoformat())
+        jobs.celery_app.backend.mark_as_done(job_id, None)
+        return record
+
+    monkeypatch.setattr(jobs.records, "hgetall", finish_after_the_read)
+    response = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    assert response.status_code == 200
+    assert (response.json()["state"], response.json()["finished_at"]) == ("queued", None)
+
+
+def test_job_task_is_not_shared_with_other_celery_apps(jobs: Jobs) -> None:
+    # A shared task joins every app finalized later, and a name's first registration wins,
+    # so a worker could run another Jobs instance's task.
+    other = Celery("other", set_as_current=False)
+    assert RUN_DATASET in jobs.celery_app.tasks
+    assert RUN_DATASET not in other.tasks
+```
+
+In `apps/engine/dtcc_engine/jobs.py`, register a task with an empty body and Celery's default sharing, so that jobs finish at once and the tests fail on their assertions rather than on a worker that ignores unknown tasks. Add `from celery import Celery, Task`, and at the end of `Jobs.__init__`:
+
+```python
+        @self.celery_app.task(name=RUN_DATASET, bind=True)
+        def run_dataset(task: Task, dataset_name: str, parameters: dict[str, Any]) -> None:
+            pass
+```
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reason**
+
+Run: `pnpm engine:check`
+Expected: FAIL. The worker fixture starts, and each of the 4 execution tests fails on an assertion within seconds: each job completes at once without a package, so `wait_until` reports a finished job that never ran or failed. `test_status_read_while_the_job_finishes_is_consistent` gets `completed` without a finish time, because Task 10's `status` reads the record first; `test_job_task_is_not_shared_with_other_celery_apps` finds the task on the other app. The 50 tests from Task 10 pass.
+
+- [ ] **Step 3: Run the Dataset, report its progress, and package its result**
+
+Replace `apps/engine/dtcc_engine/jobs.py` with the Task 10 version and these changes. Imports:
+
+```python
+import logging
+import os
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import dtcc_core.datasets as datasets
+import dtcc_sim  # noqa: F401  Importing Sim registers its Dataset Definitions with Core.
+import redis
+from celery import Celery, Task
+from dtcc_core.common.progress import get_progress_callback, set_progress_callback
+from kombu.exceptions import OperationalError
+```
+
+Before `RUN_DATASET`, add `RETENTION = timedelta(days=30)`; after `STATES`, add `logger = logging.getLogger(__name__)`; and after `record_key`, add:
+
+```python
+def store_progress(task: Task, progress: dict[str, Any]) -> None:
+    """Store a progress report from Core, unchanged, as the task's PROGRESS state."""
+    try:
+        task.update_state(state="PROGRESS", meta=progress)
+    except redis.RedisError:
+        # A lost progress report must not fail the computation.
+        logger.warning("Could not store the progress of job %s", task.request.id, exc_info=True)
+```
+
+In `Jobs.__init__`, set `task_track_started=True` together with `task_default_queue`, and replace the empty task with:
+
+```python
+        # Not shared: a shared task joins every app finalized later, and the first registration of a name wins.
+        @self.celery_app.task(name=RUN_DATASET, bind=True, shared=False)
+        def run_dataset(task: Task, dataset_name: str, parameters: dict[str, Any]) -> None:
+            self.run(task, dataset_name, parameters)
+```
+
+Replace `status` with a version that reads Celery's state before Engine's record:
+
+```python
+    def status(self, job_id: str) -> dict[str, Any] | None:
+        """Return the job's state, progress, error, and package, or None if the job is unknown or expired.
+
+        Raises:
+            redis.RedisError: If Redis is unreachable, so the state is unknown for now.
+        """
+        meta = self.celery_app.backend.get_task_meta(job_id)
+        record = self.records.hgetall(record_key(job_id))
+        if not record:
+            return None
+        state = STATES[meta["status"]]
+        if state == "queued" and "queued_at" not in record:
+            state = "unconfirmed"
+        finished_at = datetime.fromisoformat(record["finished_at"]) if "finished_at" in record else None
+        return {
+            "job_id": job_id,
+            "dataset": record["dataset"],
+            "target": record["target"],
+            "submitted_at": record["submitted_at"],
+            "finished_at": record.get("finished_at"),
+            "state": state,
+            "progress": meta["result"] if meta["status"] == "PROGRESS" else None,
+            "error": {"type": record.get("error_type")} if state == "failed" else None,
+            "package": (
+                {"available": self.package_path(job_id).is_file(), "expires_at": (finished_at + RETENTION).isoformat()}
+                if state == "completed"
+                else None
+            ),
+        }
+```
+
+The worker records `finished_at` and `error_type` before Celery stores a terminal state, so a terminal state read first implies a record that has them; reading the record first could pair a completed state with a record read before the job finished. Add to `Jobs`:
+
+```python
+    def run(self, task: Task, dataset_name: str, parameters: dict[str, Any]) -> None:
+        """Run a job in the worker: invoke the Dataset, export its realization, and validate the package.
+
+        Raises:
+            Exception: Whatever the Dataset, the export, or the validation raised; the job then fails.
+        """
+        key = record_key(task.request.id)
+        path = self.package_path(task.request.id)
+        previous_callback = get_progress_callback()
+        set_progress_callback(lambda progress: store_progress(task, progress))
+        try:
+            realization = datasets.get_dataset(dataset_name)(**parameters)
+            realization.export(path, canonical=True)
+            try:
+                datasets.load_model_package(path)
+            except Exception:
+                path.unlink()
+                raise
+        except Exception as error:
+            self.records.hset(key, "error_type", type(error).__name__)
+            raise
+        finally:
+            set_progress_callback(previous_callback)
+            self.records.hset(key, "finished_at", datetime.now(UTC).isoformat())
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 56 passed.
+
+- [ ] **Step 5: Stop for review**
+
+Leave changes uncommitted. Report Steps 2 and 4.
+
+### Task 12: Deliver packages until they expire
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/dtcc_engine/api.py` (download route)
+- Modify: `apps/engine/tests/test_jobs.py` (delivery and expiry tests)
+
+**Interfaces:**
+
+- Consumes: Task 11's completed jobs; Starlette's `FileResponse`; redis-py's `pipeline`, `expire`, and `ttl`; Celery's `result_expires` and `backend.get_key_for_task`.
+- Produces:
+  - `GET /api/v1/jobs/{job_id}/package` (token) → `200` with the package (`application/zip`, attachment `<job id>.dtccpkg`); `404` for an unknown or expired job; `409` for a job without an available package.
+  - Status and package are `404` from 30 periods of 24 hours after the job's finish time.
+  - Engine's record and Celery's result expire 31 days after the job finishes; a job's record does not expire while it is queued or running.
+  - `RETENTION` and `RECORD_LIFETIME` in `dtcc_engine.jobs`.
+
+- [ ] **Step 1: Write the delivery and expiry tests**
+
+In `apps/engine/tests/test_jobs.py`, add `("GET", "/api/v1/jobs/some-job/package")` to `test_job_routes_reject_missing_tokens`'s cases, add `timedelta` to the `datetime` import and `RECORD_LIFETIME, RETENTION` to the `dtcc_engine.jobs` import, and add:
+
+```python
+def test_completed_package_downloads_unchanged(served_client: TestClient, served_jobs: Jobs) -> None:
+    job_id = submit(served_client, SMOKE)
+    wait_until(served_client, job_id, lambda job: job["state"] == "completed")
+    response = served_client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert response.headers["content-disposition"] == f'attachment; filename="{job_id}.dtccpkg"'
+    assert response.content == served_jobs.package_path(job_id).read_bytes()
+
+
+def test_package_of_an_unknown_or_unfinished_job_is_refused(client: TestClient) -> None:
+    queued = submit(client, SMOKE)
+    unknown = client.get(f"/api/v1/jobs/{uuid.uuid4()}/package", headers=AUTHORIZED)
+    unfinished = client.get(f"/api/v1/jobs/{queued}/package", headers=AUTHORIZED)
+    assert (unknown.status_code, unfinished.status_code) == (404, 409)
+
+
+def test_job_records_outlast_the_package_retention(
+    client: TestClient, jobs: Jobs, served_client: TestClient, served_jobs: Jobs
+) -> None:
+    queued = submit(client, SMOKE)
+    completed = submit(served_client, SMOKE)
+    wait_until(served_client, completed, lambda job: job["state"] == "completed")
+    result_key = served_jobs.celery_app.backend.get_key_for_task(completed)
+    retention, lifetime = RETENTION.total_seconds(), RECORD_LIFETIME.total_seconds()
+    assert jobs.records.ttl(record_key(queued)) == -1
+    assert retention < served_jobs.records.ttl(record_key(completed)) <= lifetime
+    assert retention < served_jobs.records.ttl(result_key) <= lifetime
+
+
+@pytest.mark.parametrize(
+    ("age", "status_code"),
+    [(RETENTION - timedelta(minutes=1), 200), (RETENTION + timedelta(seconds=1), 404)],
+    ids=["within-retention", "after-retention"],
+)
+def test_finished_job_and_its_package_expire_after_the_retention(
+    served_client: TestClient, served_jobs: Jobs, age: timedelta, status_code: int
+) -> None:
+    job_id = submit(served_client, SMOKE)
+    wait_until(served_client, job_id, lambda job: job["state"] == "completed")
+    # Moves the recorded finish time back instead of waiting 30 days.
+    served_jobs.records.hset(record_key(job_id), "finished_at", (datetime.now(UTC) - age).isoformat())
+    polled = served_client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    downloaded = served_client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert (polled.status_code, downloaded.status_code) == (status_code, status_code)
+```
+
+In `apps/engine/dtcc_engine/jobs.py`, add after `RETENTION`, so that the tests import:
+
+```python
+# A day beyond the retention, so a job's records outlast its package even if hosts' clocks differ slightly.
+RECORD_LIFETIME = RETENTION + timedelta(days=1)
+```
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reason**
+
+Run: `pnpm engine:check`
+Expected: FAIL. The new token case, the download test, and `within-retention` get `404` from the missing route; `test_package_of_an_unknown_or_unfinished_job_is_refused` gets `(404, 404)`; `after-retention` gets `200` for the status; `test_job_records_outlast_the_package_retention` finds no expiry on the completed job's record and Celery's one-day default on its result. The 56 earlier tests pass.
+
+- [ ] **Step 3: Implement delivery and expiry**
+
+In `Jobs.__init__`, add `result_expires=RECORD_LIFETIME` to the Celery app's settings. In `status`, return `None` once the retention has passed, after computing `finished_at`:
+
+```python
+        if finished_at is not None and datetime.now(UTC) >= finished_at + RETENTION:
+            return None
+```
+
+In `run`, replace the `finally` block's last line with a transaction that also starts the record's expiry:
+
+```python
+            with self.records.pipeline() as pipeline:
+                pipeline.hset(key, "finished_at", datetime.now(UTC).isoformat())
+                pipeline.expire(key, RECORD_LIFETIME)
+                pipeline.execute()
+```
+
+In `apps/engine/dtcc_engine/api.py`, add `FileResponse` to the `fastapi.responses` import, and add after the `job_status` route:
+
+```python
+    @app.get("/api/v1/jobs/{job_id}/package", dependencies=[Depends(require_token)])
+    def download_package(job_id: str) -> FileResponse:
+        job = find_job(job_id)
+        if job["package"] is None or not job["package"]["available"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Job '{job_id}' has no package to download; its state is '{job['state']}'",
+            )
+        return FileResponse(jobs.package_path(job_id), media_type="application/zip", filename=f"{job_id}.dtccpkg")
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 62 passed.
+
+- [ ] **Step 5: Stop for review**
+
+Leave changes uncommitted. Report Steps 2 and 4.
+
+### Task 13: Worker service, documentation, and end-to-end checks
+
+**Files:**
+
+- Create: `apps/engine/dtcc_engine/worker.py`
+- Modify: `compose.yaml` (add `engine-worker`)
+- Modify: `package.json` (`dev:engine`)
+- Modify: `README.md` (engine paragraph)
+- Modify: `apps/engine/PLAN.md` (Increment 2a status)
+
+**Interfaces:**
+
+- Consumes: `jobs_from_environment()` and the `dtcc_engine.run_dataset` task from Tasks 10 to 12; the Celery command, which finds the `Celery` instance in the module that `--app` names.
+- Produces: `celery --app dtcc_engine.worker worker` runs the jobs of the host's target; `pnpm dev:engine` starts Redis, the API, and a worker that runs one job at a time.
+
+- [ ] **Step 1: Add the worker**
+
+Create `apps/engine/dtcc_engine/worker.py`:
+
+```python
+"""Entry point of the Celery worker that runs this host's Dataset jobs: `celery --app dtcc_engine.worker worker`."""
+
+from dtcc_engine.jobs import jobs_from_environment
+
+celery_app = jobs_from_environment().celery_app
+```
+
+In `compose.yaml`, add after `engine-redis`:
+
+```yaml
+engine-worker:
+  # Runs the Engine's jobs. Celery does not reload code: restart it after changing the engine.
+  profiles: [engine]
+  platform: linux/amd64
+  build:
+    context: apps/engine
+    target: dev
+  command: ["celery", "--app", "dtcc_engine.worker", "worker", "--concurrency", "1", "--loglevel", "INFO"]
+  environment:
+    ENGINE_REDIS_URL: redis://engine-redis:6379/0
+    ENGINE_TARGET: local
+    ENGINE_PACKAGE_DIR: /var/lib/dtcc-engine/packages
+  volumes:
+    - ./apps/engine:/app
+    - engine-packages:/var/lib/dtcc-engine/packages
+  depends_on:
+    engine-redis:
+      condition: service_healthy
+```
+
+In `package.json`, change `dev:engine` to `docker compose --profile engine up --build engine engine-worker`.
+
+- [ ] **Step 2: Run a Core job through the worker container**
+
+Start `pnpm dev:engine` in another terminal and wait for the API's health check, then run:
+
+```sh
+AUTH="Authorization: Bearer local-dev-engine-token"
+JOB=$(curl -fsS -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"dataset": "smoke", "parameters": {"bounds": [319891, 6399790, 320091, 6399990]}}' \
+  http://127.0.0.1:8000/api/v1/jobs | python3 -c 'import json, sys; print(json.load(sys.stdin)["job_id"])')
+curl -fsS -H "$AUTH" http://127.0.0.1:8000/api/v1/jobs/$JOB
+curl -fsS -H "$AUTH" -o /tmp/smoke.dtccpkg http://127.0.0.1:8000/api/v1/jobs/$JOB/package
+docker compose --profile engine exec -T engine python -c "from dtcc_core.datasets import load_model_package; m = load_model_package('/var/lib/dtcc-engine/packages/$JOB.dtccpkg'); print(type(m).__name__, m.dataset_context.request.dataset_name)"
+shasum -a 256 /tmp/smoke.dtccpkg
+docker compose --profile engine exec -T engine sha256sum /var/lib/dtcc-engine/packages/$JOB.dtccpkg
+docker compose --profile engine logs engine-worker | grep "$JOB"
+```
+
+Repeat the status request until the state is `completed` before downloading.
+Expected: the job goes from `queued` or `running` to `completed`; Core reads the package as a `VolumeMesh` from `smoke`; both SHA-256 digests match; the worker's log shows the task received and succeeded.
+
+- [ ] **Step 3: Run a representative Sim job by hand**
+
+Repeat Step 2 with `"dataset": "traffic_simulation"`, and record the result, the job's duration, and the package size. It downloads roads from OpenStreetMap and zones from Statistics Sweden: if either is unreachable or rate-limits, the job fails with the provider's error type, and that outcome is recorded rather than retried automatically.
+Expected, when the providers respond: `completed`, with a `RoadNetwork` package that Core reads.
+
+- [ ] **Step 4: Verify the tests leave development jobs alone**
+
+With `pnpm dev:engine` still running, run `pnpm engine:check`, then `docker compose --profile engine exec -T engine-redis redis-cli -n 0 keys 'dtcc-engine:job:*'`.
+Expected: the tests pass; the development database still lists exactly the jobs from Steps 2 and 3; the API and the worker keep running. Stop `pnpm dev:engine`.
+
+- [ ] **Step 5: Update the README**
+
+After the engine paragraph, add:
+
+```markdown
+`pnpm dev:engine` also starts the engine's Redis and a Celery worker. Submit a job with `POST /api/v1/jobs` and a body such as `{"dataset": "smoke", "parameters": {"bounds": [319891, 6399790, 320091, 6399990]}}`, poll `GET /api/v1/jobs/<job id>`, and download a completed job's package from `GET /api/v1/jobs/<job id>/package`. The worker does not reload code: after changing the engine, run `docker compose --profile engine restart engine-worker`. `pnpm engine:check` starts the engine's Redis if it is not running and leaves it running.
+```
+
+Run: `npx --yes prettier@3.9.6 --write README.md compose.yaml package.json && npx --yes prettier@3.9.6 --check README.md compose.yaml package.json apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 6: Validate**
+
+Run: `pnpm engine:check`, `pnpm engine:check:prod`, `docker compose config --services`, and `pnpm check`.
+Expected: 62 passed; the production checks pass with `engine-redis` in their own Compose project; the services without a profile are only `postgres`; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately, including Step 3's outcome.
+
+- [ ] **Step 7: Stop for review**
+
+Set Increment 2a's status to executed with the date, leave changes uncommitted, and report Steps 2 to 4 and 6.
 
 ## Increment 2b: Simulation execution (to be expanded)
 
