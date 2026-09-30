@@ -725,7 +725,7 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ## Increment 2a: Local execution and packaging
 
-Status: expanded 2026-09-30 into Tasks 10 to 13. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`, and is committed in `bb881a0`. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. Task 11 was executed 2026-09-30; its changes are left uncommitted for team review. Its results: before the implementation, with the worker fixture running, `engine:check` gave 6 failed, each on an assertion, and 50 passed: the 4 execution tests because every job completed at once without a package, the status test with `completed` and no finish time, and the sharing test because another Celery app had the task; after it, 56 passed in 5.5 s, and `pnpm check` passed.
+Status: expanded 2026-09-30 into Tasks 10 to 13. Task 10 was executed 2026-09-30, after a probe in the development image confirmed that a Dataset's `ProgressTracker(total=100)` update reaches the thread-local callback as `(50.0, 'halfway')` and that a bare triangle `Mesh` survives canonical export and `load_model_package`, and is committed in `bb881a0`. Its results: before the implementation, `engine:check` gave 12 failed, each on a status code or the default `Not Found` detail, and 38 passed; after it, 50 passed, and `pnpm check` passed. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. Task 11 was executed 2026-09-30 and is committed in `cf115d5`. Its results: before the implementation, with the worker fixture running, `engine:check` gave 6 failed, each on an assertion, and 50 passed: the 4 execution tests because every job completed at once without a package, the status test with `completed` and no finish time, and the sharing test because another Celery app had the task; after it, 56 passed in 5.5 s, and `pnpm check` passed. Task 12 was executed 2026-09-30; its changes are left uncommitted for team review. Its results: before the implementation, `engine:check` gave 6 failed and 56 passed: the new token case, the download test, and `within-retention` got `404` from the missing route, the unknown-or-unfinished test got `(404, 404)`, `after-retention` got `200` for the status, and the completed job's record had no expiry while its Celery result had the one-day default; after it, 62 passed in 6.6 s, and `pnpm check` passed.
 
 **Scope:** Redis and a Celery worker from the same image; job submission (`POST`) with request-envelope and target validation, status polling with upstream progress, and `.dtccpkg` download for Datasets executed on the local target; a completed package is refused once 30 periods of 24 hours have passed since its job completed. Every registered Dataset can be submitted; one whose result Core cannot package canonically produces a failed job with Core's error, because the spec forbids a curated Dataset list and makes required packaging failures fail delivery. Pre-execution cancellation moves to increment 4.
 
@@ -1727,7 +1727,7 @@ Leave changes uncommitted. Report Steps 2 and 4.
   - Engine's record and Celery's result expire 31 days after the job finishes; a job's record does not expire while it is queued or running.
   - `RETENTION` and `RECORD_LIFETIME` in `dtcc_engine.jobs`.
 
-- [ ] **Step 1: Write the delivery and expiry tests**
+- [x] **Step 1: Write the delivery and expiry tests**
 
 In `apps/engine/tests/test_jobs.py`, add `("GET", "/api/v1/jobs/some-job/package")` to `test_job_routes_reject_missing_tokens`'s cases, add `timedelta` to the `datetime` import and `RECORD_LIFETIME, RETENTION` to the `dtcc_engine.jobs` import, and add:
 
@@ -1786,12 +1786,12 @@ In `apps/engine/dtcc_engine/jobs.py`, add after `RETENTION`, so that the tests i
 RECORD_LIFETIME = RETENTION + timedelta(days=1)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail for the right reason**
+- [x] **Step 2: Run the tests to verify they fail for the right reason**
 
 Run: `pnpm engine:check`
 Expected: FAIL. The new token case, the download test, and `within-retention` get `404` from the missing route; `test_package_of_an_unknown_or_unfinished_job_is_refused` gets `(404, 404)`; `after-retention` gets `200` for the status; `test_job_records_outlast_the_package_retention` finds no expiry on the completed job's record and Celery's one-day default on its result. The 56 earlier tests pass.
 
-- [ ] **Step 3: Implement delivery and expiry**
+- [x] **Step 3: Implement delivery and expiry**
 
 In `Jobs.__init__`, add `result_expires=RECORD_LIFETIME` to the Celery app's settings. In `status`, return `None` once the retention has passed, after computing `finished_at`:
 
@@ -1823,12 +1823,12 @@ In `apps/engine/dtcc_engine/api.py`, add `FileResponse` to the `fastapi.response
         return FileResponse(jobs.package_path(job_id), media_type="application/zip", filename=f"{job_id}.dtccpkg")
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `pnpm engine:check`
 Expected: 62 passed.
 
-- [ ] **Step 5: Stop for review**
+- [x] **Step 5: Stop for review**
 
 Leave changes uncommitted. Report Steps 2 and 4.
 

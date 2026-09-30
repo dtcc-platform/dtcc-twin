@@ -17,7 +17,7 @@ import dtcc_core.datasets as datasets
 import dtcc_sim  # noqa: F401  Importing Sim registers its Dataset Definitions with Core.
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, ValidationError
 from redis import RedisError
@@ -185,6 +185,16 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
     @app.get("/api/v1/jobs/{job_id}", dependencies=[Depends(require_token)])
     def job_status(job_id: str) -> dict[str, Any]:
         return find_job(job_id)
+
+    @app.get("/api/v1/jobs/{job_id}/package", dependencies=[Depends(require_token)])
+    def download_package(job_id: str) -> FileResponse:
+        job = find_job(job_id)
+        if job["package"] is None or not job["package"]["available"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Job '{job_id}' has no package to download; its state is '{job['state']}'",
+            )
+        return FileResponse(jobs.package_path(job_id), media_type="application/zip", filename=f"{job_id}.dtccpkg")
 
     return app
 

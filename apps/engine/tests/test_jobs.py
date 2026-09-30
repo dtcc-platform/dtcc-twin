@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +22,7 @@ from kombu.exceptions import OperationalError
 from pydantic import field_validator
 
 from dtcc_engine.api import create_app
-from dtcc_engine.jobs import RUN_DATASET, Jobs, record_key
+from dtcc_engine.jobs import RECORD_LIFETIME, RETENTION, RUN_DATASET, Jobs, record_key
 
 TOKEN = "test-token"
 AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
@@ -142,7 +142,10 @@ def failing_dataset() -> Iterator[str]:
         unregister("engine_failing_probe")
 
 
-@pytest.mark.parametrize(("method", "path"), [("POST", "/api/v1/jobs"), ("GET", "/api/v1/jobs/some-job")])
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("POST", "/api/v1/jobs"), ("GET", "/api/v1/jobs/some-job"), ("GET", "/api/v1/jobs/some-job/package")],
+)
 def test_job_routes_reject_missing_tokens(client: TestClient, method: str, path: str) -> None:
     assert client.request(method, path, json=SMOKE).status_code == 401
 
@@ -320,3 +323,50 @@ def test_job_task_is_not_shared_with_other_celery_apps(jobs: Jobs) -> None:
     other = Celery("other", set_as_current=False)
     assert RUN_DATASET in jobs.celery_app.tasks
     assert RUN_DATASET not in other.tasks
+
+
+def test_completed_package_downloads_unchanged(served_client: TestClient, served_jobs: Jobs) -> None:
+    job_id = submit(served_client, SMOKE)
+    wait_until(served_client, job_id, lambda job: job["state"] == "completed")
+    response = served_client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert response.headers["content-disposition"] == f'attachment; filename="{job_id}.dtccpkg"'
+    assert response.content == served_jobs.package_path(job_id).read_bytes()
+
+
+def test_package_of_an_unknown_or_unfinished_job_is_refused(client: TestClient) -> None:
+    queued = submit(client, SMOKE)
+    unknown = client.get(f"/api/v1/jobs/{uuid.uuid4()}/package", headers=AUTHORIZED)
+    unfinished = client.get(f"/api/v1/jobs/{queued}/package", headers=AUTHORIZED)
+    assert (unknown.status_code, unfinished.status_code) == (404, 409)
+
+
+def test_job_records_outlast_the_package_retention(
+    client: TestClient, jobs: Jobs, served_client: TestClient, served_jobs: Jobs
+) -> None:
+    queued = submit(client, SMOKE)
+    completed = submit(served_client, SMOKE)
+    wait_until(served_client, completed, lambda job: job["state"] == "completed")
+    result_key = served_jobs.celery_app.backend.get_key_for_task(completed)
+    retention, lifetime = RETENTION.total_seconds(), RECORD_LIFETIME.total_seconds()
+    assert jobs.records.ttl(record_key(queued)) == -1
+    assert retention < served_jobs.records.ttl(record_key(completed)) <= lifetime
+    assert retention < served_jobs.records.ttl(result_key) <= lifetime
+
+
+@pytest.mark.parametrize(
+    ("age", "status_code"),
+    [(RETENTION - timedelta(minutes=1), 200), (RETENTION + timedelta(seconds=1), 404)],
+    ids=["within-retention", "after-retention"],
+)
+def test_finished_job_and_its_package_expire_after_the_retention(
+    served_client: TestClient, served_jobs: Jobs, age: timedelta, status_code: int
+) -> None:
+    job_id = submit(served_client, SMOKE)
+    wait_until(served_client, job_id, lambda job: job["state"] == "completed")
+    # Moves the recorded finish time back instead of waiting 30 days.
+    served_jobs.records.hset(record_key(job_id), "finished_at", (datetime.now(UTC) - age).isoformat())
+    polled = served_client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    downloaded = served_client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert (polled.status_code, downloaded.status_code) == (status_code, status_code)

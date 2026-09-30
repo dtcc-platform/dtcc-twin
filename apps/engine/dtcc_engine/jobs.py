@@ -20,6 +20,8 @@ from dtcc_core.common.progress import get_progress_callback, set_progress_callba
 from kombu.exceptions import OperationalError
 
 RETENTION = timedelta(days=30)
+# A day beyond the retention, so a job's records outlast its package even if hosts' clocks differ slightly.
+RECORD_LIFETIME = RETENTION + timedelta(days=1)
 RUN_DATASET = "dtcc_engine.run_dataset"
 STATES = {
     "PENDING": "queued",
@@ -71,7 +73,7 @@ class Jobs:
         self.package_dir = package_dir
         self.records = redis.Redis.from_url(redis_url, decode_responses=True)
         self.celery_app = Celery("dtcc_engine", broker=redis_url, backend=redis_url)
-        self.celery_app.conf.update(task_default_queue=target, task_track_started=True)
+        self.celery_app.conf.update(task_default_queue=target, task_track_started=True, result_expires=RECORD_LIFETIME)
         # With a result backend, send_task subscribes this process to the job's result channel,
         # which an API that never waits for results would accumulate.
         self.sender = Celery("dtcc_engine", broker=redis_url, set_as_current=False)
@@ -120,6 +122,8 @@ class Jobs:
         if state == "queued" and "queued_at" not in record:
             state = "unconfirmed"
         finished_at = datetime.fromisoformat(record["finished_at"]) if "finished_at" in record else None
+        if finished_at is not None and datetime.now(UTC) >= finished_at + RETENTION:
+            return None
         return {
             "job_id": job_id,
             "dataset": record["dataset"],
@@ -159,7 +163,10 @@ class Jobs:
             raise
         finally:
             set_progress_callback(previous_callback)
-            self.records.hset(key, "finished_at", datetime.now(UTC).isoformat())
+            with self.records.pipeline() as pipeline:
+                pipeline.hset(key, "finished_at", datetime.now(UTC).isoformat())
+                pipeline.expire(key, RECORD_LIFETIME)
+                pipeline.execute()
 
 
 def jobs_from_environment() -> Jobs:
