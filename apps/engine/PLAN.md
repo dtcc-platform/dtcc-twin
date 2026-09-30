@@ -16,6 +16,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 
 - **Increments 0 and 1** are written as executable tasks with complete code.
 - **Increments 2 to 6** are specified by scope, upstream interfaces, checks, and blockers. Each is expanded into executable tasks, in this file, when its prerequisites are verified. Expanding an increment is a plan change and is reviewed like one.
+- **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins; 2b, execution of FEniCSx simulations, waits for upstream Sim changes. Cancellation moves to increment 4, because Celery's revocation needs its race handling (see increment 4).
 - **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part and the Linux deployment, stays an outline until increments 2 to 4 provide what it verifies.
 
 ## Global Constraints
@@ -39,6 +40,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 5. A frontend or backend developer runs the README's `docker compose up -d --wait`: only Postgres starts. Pinned in Task 4, Step 5.
 6. The `prod` image is built: it contains exactly the runtime lock's conda packages, with their dependencies still consistent, so no C++ compiler, CMake, Ninja, or Git, and FEniCSx still compiles a form, as the non-root user, into an empty cache. Pinned in Task 6, Step 1 (`test_conda_packages_match_the_runtime_lock`, `test_conda_dependencies_are_consistent`, `test_build_only_tools_are_removed`, `test_fenicsx_compiles_a_form_into_an_empty_cache`).
 7. A developer runs `pnpm engine:check:prod` while `pnpm dev:engine` and Postgres are running: both keep running, because the check uses its own Compose project and publishes no port. Pinned in Task 7, Step 5.
+8. A developer on Apple silicon builds the Engine image: it is built for `linux/amd64`, and Core builds a volume mesh of a small city, which fails on Linux arm64. Pinned in Task 9, Step 1 (`test_core_builds_a_volume_mesh_of_a_small_city`).
 
 ---
 
@@ -716,25 +718,54 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ---
 
-## Increment 2: Local execution and packaging (to be expanded)
+## Increment 2a: Local execution and packaging (to be expanded)
 
-**Scope:** Redis and a Celery worker from the same image; job submission (`POST`) with request-envelope and target validation, status polling, pre-execution cancellation, and `.dtccpkg` download for Datasets executed on the local target; 30-day retention of completed packages.
+**Scope:** Redis and a Celery worker from the same image; job submission (`POST`) with request-envelope and target validation, status polling with upstream progress, and `.dtccpkg` download for Datasets executed on the local target; a completed package is refused once 30 periods of 24 hours have passed since its job completed. Every registered Dataset can be submitted; one whose result Core cannot package canonically produces a failed job with Core's error, because the spec forbids a curated Dataset list and makes required packaging failures fail delivery. Pre-execution cancellation moves to increment 4.
 
-**Upstream interfaces:** `DatasetDescriptor.validate()` for argument validation (Core's contract; Engine keeps no copies of argument models) and Dataset invocation; the resulting realization's `export(path, canonical=True)`, which delegates to `dtcc_core/datasets/package.py:export_model_package` and writes a canonical v3 package; `dtcc_core.datasets.load_model_package` to read and integrity-check the package before it is offered for download; Core's progress callback as bridged by Sim's `service/progress.py`. `DatasetDescriptor.export()` is not used: it rebuilds the Dataset, which would repeat the computation.
+**Upstream interfaces**, verified 2026-09-30 at Core `5ca2ca4` and Sim `2422bba` through GitHub, and by running the development image:
 
-**Migration from Sim's mini-service:** move and adapt `service/tasks.py` (Celery task invoking a Dataset) and `service/progress.py` (progress bridge), with their tests from `tests/test_service_routes.py` (submission validation and status snapshot cases). Do not carry over `service/results.py` shared-volume delivery or the server-sent-events stream; the spec requires polling and `.dtccpkg` over HTTP.
+- `DatasetDescriptor.validate(kwargs)` is `ArgsModel(**kwargs)` and raises pydantic's `ValidationError`; `DatasetBaseArgs` forbids unknown fields and checks the bounds' length and order. Engine keeps no copies of argument models.
+- Calling a Dataset validates, builds, and attaches a `DatasetContext`, but only to a `dtcc_core.model.Model` result. With a non-null `format`, several builds return serialized bytes without a context (`city_volume_mesh`, `buildings`, `calibration_grid`), which cannot be packaged.
+- The realization's `export(path, canonical=True)` delegates to `dtcc_core/datasets/package.py:export_model_package`. It encodes before touching the target, stages the package in a temporary `.dtcc-package-*` directory beside it, and moves it into place with `os.replace`. Limits: 256 MiB for the archive and for its artifacts, 4 MiB for the manifest, 9999 artifacts; Core `develop` removes the 256 MiB limit (`c65323d`). `DatasetDescriptor.export()` is not used: it rebuilds the Dataset, which would repeat the computation.
+- `dtcc_core.datasets.load_model_package(path)` accepts only a v3 package with exactly one canonical artifact, checks every artifact's size and sha256, decodes the model, cross-checks its metadata, and restores its context.
+- Canonical exchange does not support `FootprintCollection`, `CalibrationGrid`, `BuildingCollection`, or `TreeCollection` results (the last two confirmed on Core `develop`, where their Datasets build).
+- Sim's `service/progress.py` sets Core's thread-local progress callback and reports it as a `PROGRESS` state. At the pinned commit, Core's callback always supplies `percent` (`dtcc_core/common/progress.py`, `_get_state_dict`), along with a message, phase, and ETA, so the bridge's fallback of 0 is not reached; Engine keeps the percentage Core reports, including zero, and reports none when none is supplied.
+- Celery 5.6.3, the latest stable release (2026-03-26); kombu 5.6.2's `redis` extra caps redis-py below 6.5. A task ID with no stored result reads as `PENDING` (`celery/backends/base.py`, `_get_task_meta_for`), so Engine must record accepted jobs itself. `task_track_started` defaults to false. The Redis result backend stores each state with `SETEX` and `result_expires`, so a key's lifetime restarts on each effective write (`celery/backends/redis.py`, `_set`); a write is skipped once the stored state is `SUCCESS` (`celery/backends/base.py`, `BaseKeyValueStoreBackend._store_result`). `result_expires` defaults to one day. Runtime behavior is not yet verified.
 
-**Checks:** invalid parameters and bounds fail before execution with Core's validation errors (Validation row); a deterministic Core Dataset runs through the real broker and worker and produces a canonical package that `load_model_package` reads back (Local execution and Package correctness rows); a representative Sim Dataset runs with its real numerical dependencies and its package preserves model fields and provenance (Simulation execution row); queued and running states are distinguishable; missing progress is not fabricated; unknown job IDs are not reported as queued; retention expiry is measured from completion time.
+**Round-trip evidence** (development image, 200 m box in Gothenburg, EPSG:3006): at Core `5ca2ca4`, 15 of 28 registered Datasets pass canonical export and `load_model_package` with an identical model encoding and context: `air_quality`, `weather`, `hydrology`, `ocean`, `buses`, `ferries`, `metros`, `trains`, `trams`, `transit_vehicles`, `deso`, `roads`, `space_syntax`, `smoke`, and Sim's `traffic_simulation`. The vehicle and sensor results may be empty (no API keys, and `strict_live` defaults to false), so they show that the format works, not that content is complete. Point-cloud-based Datasets fail at the pin on a Core bug that `develop` fixes (increment 2b).
 
-**Verification prerequisite:** for each Dataset exposed for execution, confirm at the pinned commits that its actual result type round-trips through canonical export and `load_model_package` (DESIGN.md upstream item 2).
+**Proposed decisions**, to settle when the increment is expanded:
 
-**Blockers:** any Dataset result type that fails that round trip needs upstream resolution in Core or Sim before its package delivery can be claimed compliant; Engine must not write its own package format or fall back to the legacy v2 layout.
+- A request whose parameters set `format` is rejected with an explanation; supplementary artifacts through `export(..., format=...)` are later work.
+- `celery[redis]==5.6.3` goes in `pyproject.toml` `dependencies`, so the builder installs it while Git is present; `task_track_started=True`, so running jobs are distinguishable from queued ones.
+- Development Redis is the `redis:8.2` series with `maxmemory-policy noeviction`; Sim's Compose file used `allkeys-lru`, which can evict queued tasks and results. Redis 8 is licensed AGPL-3.0, RSALv2, or SSPL; Valkey (BSD) is the alternative.
+- Job metadata stays available until 30 periods of 24 hours after completion (DESIGN.md, "Package creation, delivery, and retention"): `result_expires` is set to 30 days, and Engine writes an acceptance record per job (Dataset, target, submission time) that does not expire while the job is queued or running and, at completion, is given the same 30 days. Unknown and expired jobs are then distinguishable from queued ones. How the record of a job lost before completion ends is settled with increment 4's restart behavior.
+- Packages are stored as `<job id>.dtccpkg` in `ENGINE_PACKAGE_DIR`, a volume shared by a host's API and worker containers and writable by uid 10001. Expiry is enforced from the job's UTC completion time, not from the Redis key's lifetime.
+- The checks use `smoke` (Core; deterministic and offline) and `traffic_simulation` (Sim).
+
+**Migration from Sim's mini-service:** adapt `service/tasks.py` (Celery task invoking a Dataset inside the progress bridge) as one generic task taking the Dataset name and parameters, and `service/progress.py`, passing Core's reported values through without a fallback percentage, with the submission-validation and status-snapshot cases of `tests/test_service_routes.py`. Do not carry over the module-prefix filter, default `format` injection, reporting `PENDING` as pending, `str(result)` failure messages, `terminate=True` cancellation, `service/results.py` shared-volume delivery, or the server-sent-events stream; the spec requires polling and `.dtccpkg` over HTTP.
+
+**Checks:** invalid parameters and bounds fail before execution with Core's validation errors (Validation row); a deterministic Core Dataset runs through the real broker and worker and produces a canonical package that `load_model_package` reads back (Local execution and Package correctness rows); a Dataset whose result Core cannot package produces a failed job and no downloadable package; queued and running states are distinguishable; missing progress is not fabricated; unknown job IDs are not reported as queued; a job that spends nonzero time queued and running keeps its status and package for 30 days after completion, and both are refused after that, measured from completion time.
+
+**Blockers:** none known; `smoke` and `traffic_simulation` round-trip at the current pins.
+
+## Increment 2b: Simulation execution (to be expanded)
+
+**Scope:** the Simulation execution row of the acceptance table: representative FEniCSx Sim Datasets run through the worker with their numerical dependencies, and their packages preserve model fields and provenance.
+
+**Evidence** (2026-09-30, an experiment outside the repository): with Core `develop` (`b375f47`) installed directly and Sim `2422bba` installed without its Core pin, on `linux/amd64`, `urban_heat_simulation` and `city_volume_mesh` ran and round-tripped on three Gothenburg boxes (packages from 68 KB to 1.3 MB), and Sim's own suite gave the same result as at the current pins (89 passed, 8 errors).
+
+**Blockers:**
+
+- Sim pins Core `5ca2ca4`, a commit that no Core branch contains since `develop` was rewritten, so it can be garbage-collected. At that commit, point clouds carry float classifications and every terrain-based Dataset fails; `develop` fixes it (`c4d0293`). Sim must move its pin to a `develop` commit (an upstream Sim change); then `DTCC_SIM_COMMIT` changes and this increment's interfaces are re-verified (DESIGN.md upstream item 3). Engine does not pin Core separately.
+- `urban_wind_simulation` calls `dolfinx.fem.petsc.assemble_matrix_mat`, which dolfinx 0.11.0 lacks (`dtcc_sim/urban_wind.py`), and Sim's 8 test errors come from it. It needs a Sim fix.
+- `air_quality_field` has not run: it needs a box that contains a measuring station.
 
 ## Increment 3: Remote targets and delivery (to be expanded)
 
 **Scope:** configured remote targets, automatic local-first routing, explicit targets, per-host job limits, all-hosts-busy queueing, the compute-targets operation (target identifiers, versions, local capabilities, observed availability), aggregated discovery at the entry service that reports target availability and includes remote-only capabilities without executing them locally, and package transfer from a remote Engine HTTP service to the entry service without a shared filesystem. Remote discovery and delivery use the shared token.
 
-**Upstream interfaces:** Celery queue routing and worker concurrency; the same Engine discovery and delivery routes on each host. Packages are validated with `load_model_package` on the executing host before they become downloadable (increment 2); the entry service streams a remote package through without validating or storing it, because `load_model_package` reads only local files and the spec requires no second stored copy at the entry host.
+**Upstream interfaces:** Celery queue routing and worker concurrency; the same Engine discovery and delivery routes on each host. Packages are validated with `load_model_package` on the executing host before they become downloadable (increment 2a); the entry service streams a remote package through without validating or storing it, because `load_model_package` reads only local files and the spec requires no second stored copy at the entry host.
 
 **Checks:** the Routing, Concurrency, and Remote execution rows of the acceptance table, with real Redis and at least two workers; the Generic discovery row across hosts, including a capability available only on a remote host because of its runtime conditions (for example credentials or data present only there), with every host running the same image digest; the Authentication row for remote discovery and delivery; host-local discovery does not query other hosts; downloading a remote package through the entry service leaves no copy of the archive on the entry host.
 
@@ -742,17 +773,17 @@ Leave changes uncommitted. Report Steps 1, 3, 4, and 5.
 
 ## Increment 4: Lifecycle behavior (to be expanded)
 
-**Scope:** failure reporting, the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages.
+**Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages.
 
-**Upstream interfaces:** Celery task states, revocation, and result expiry for the Celery version selected in increment 2 (revocation and termination limits, unknown-task `PENDING` state, and `result_expires`, as linked in DESIGN.md's supporting references); Core's `DatasetUpstreamError` (defined in `dtcc_core.datasets.dataset`; not re-exported from `dtcc_core.datasets` at the pinned commit) and `DatasetDescriptor.serialize_upstream_error`, which converts it into JSON-safe metadata (Dataset, operation, target, failure class, status code, message, transience). Engine still decides which of that metadata a consumer sees, so that no error response exposes the API token or provider credentials.
+**Upstream interfaces:** Celery 5.6.3's task states, revocation, and result expiry (increment 2a), read in its source at `v5.6.3`. `control.revoke` without termination makes each worker that receives the broadcast add the ID to an in-memory revoked set (by default at most 50,000 IDs, oldest evicted first when full, entries older than 10,800 seconds purged lazily; kept across restarts only with `--statedb`) and immediately attempt to write `REVOKED` to the result backend for the ID, whatever its state (`celery/worker/control.py`, `_revoke`). The write is skipped when the stored state is `SUCCESS` (`celery/backends/base.py`, `BaseKeyValueStoreBackend._store_result`); a queued message is discarded when a worker receives it (`celery/worker/request.py`, `Request.revoked`). So `REVOKED` does not confirm cancellation: a running task keeps running and its result overwrites it; revoking a failed job overwrites `FAILURE` and restarts its expiry, while a succeeded job keeps `SUCCESS`; revoking an unknown ID creates a record; a revoke sent while no worker runs is lost. The worker's `task_revoked` signal marks an actual discard. Core's `DatasetUpstreamError` (defined in `dtcc_core.datasets.dataset`; not re-exported from `dtcc_core.datasets` at the pinned commit) and `DatasetDescriptor.serialize_upstream_error`, which converts it into JSON-safe metadata (Dataset, operation, target, failure class, status code, message, transience). Engine still decides which of that metadata a consumer sees, so that no error response exposes the API token or provider credentials.
 
 **Checks:** the Failure reporting, Cancellation, Retention, and Restart behavior rows of the acceptance table, each restart exercised separately, against the selected Celery version (upstream item 5).
 
-**Blockers:** the Celery version and its cancellation semantics are unverified until increment 2 selects them; queued-task revocation races must be verified against that version before the cancellation contract is claimed.
+**Blockers:** the revocation behavior above comes from source only; it and the queued-task races must be verified with real Redis and workers before the cancellation contract is claimed.
 
 ## Increment 5a: Production image for the HTTP service
 
-Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are committed in `8d934a8`; Task 8's changes are left uncommitted for team review. Image sizes on `linux-aarch64`: `dev` 4.08 GB and `prod` 4.07 GB, against 4.91 GB for the previous development image. Not run: the `linux-64` image build and checks, and the Container deployment acceptance row (5b).
+Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are committed in `8d934a8` and Task 8 in `9d32bd3`. Image sizes on `linux-aarch64`: `dev` 4.08 GB and `prod` 4.07 GB, against 4.91 GB for the previous development image. Not run: the `linux-64` image build and checks, and the Container deployment acceptance row (5b). Task 9, added 2026-09-30 when `linux/amd64` was chosen as the only architecture, is not yet executed.
 
 **Scope:** a `prod` target in `apps/engine/Dockerfile` that shares the conda, TetGen, Core, and Sim layers with `dev`: the Engine package installed without its test extra or test files, no source mounts or reloading, a non-root user, a `HEALTHCHECK` against `/api/v1/health`, and only a C compiler kept from the build tools. Both targets' conda environment is resolved from a lock file for `linux-64` and `linux-aarch64`. 5a lays the image's foundation; increment 2 still adds Celery and the worker to it.
 
@@ -770,7 +801,7 @@ Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are 
 **Recorded limits:**
 
 - Pip dependencies of Core and Sim that conda does not provide stay unlocked; the spec requires only the conda lock. A rebuild can resolve different pip versions, so a deployment runs the exact image digest it tested (5b).
-- Only the build host's architecture is built and tested in 5a (`linux-aarch64` on Apple silicon). The `linux-64` lock is resolved but not built or tested.
+- Only the build host's architecture is built and tested in Tasks 5 to 8 (`linux-aarch64` on Apple silicon). The `linux-64` lock is resolved but not built or tested. Task 9 moves the image to `linux/amd64`.
 - The production checks run with the pytest that Core depends on. If Core drops it upstream, `pnpm engine:check:prod` needs another runner.
 
 **Checks:** the environment tests pass in `dev` and, as the production user, in `prod`; `prod` runs as a non-root user; it contains no Engine source checkout (`/app`, `/src`), its installed Engine distribution contains no tests and is not editable; the test extra's current package `httpx` is absent; the build-only tools are absent, including conda's target-prefixed compilers; the installed conda packages equal the runtime lock and `conda doctor` reports them consistent; `pip check` passes; FEniCSx compiles a form into an empty cache; the container reports healthy; the Dataset routes reject a missing token and accept the configured one. The Container deployment acceptance row stays not run until 5b.
@@ -1252,15 +1283,137 @@ Expected: all pass. Report passed, failed, skipped, and not-run checks separatel
 
 Set Increment 5a's status to executed with the date, leave changes uncommitted, and report.
 
+### Task 9: Build and check the image on `linux/amd64`
+
+Added 2026-09-30. On Linux arm64, GCC contracts floating-point multiply-adds by default, and Core's volume and flat meshing then fail: the same five of Core's own meshing tests fail in this image and in Core's locked uv environment on Ubuntu 24.04 arm64, and all pass when Core, `dtcc-mesher`, and the TetGen wrapper are compiled with `-ffp-contract=off` or for `linux/amd64`. Core's CI covers x86_64 Linux, macOS, and Windows, not Linux arm64. The image therefore targets `linux/amd64` only, in development and in production (DESIGN.md, "Engine image"), and Apple silicon runs it under Docker's emulation. Engine does not carry the compiler flag: it would work around an upstream bug for an architecture that is not deployed.
+
+**Files:**
+
+- Modify: `apps/engine/tests/test_environment.py` (add a volume-mesh test)
+- Modify: `compose.yaml` (`platform` for `engine` and `engine-prod`)
+- Modify: `README.md` (engine paragraph)
+
+**Interfaces:**
+
+- Consumes: DESIGN.md's `linux/amd64` rule; the `linux-64` lock files from Task 5, which the Dockerfile already selects when `TARGETARCH` is `amd64`; Core's `build_city_volume_mesh` and the model classes `City`, `Building`, `Surface`, `Terrain`, `Raster`, `Bounds`, and `GeometryType`, public at `5ca2ca4` and used the same way by Core's `test_build_city_volume_mesh_smoke`.
+- Produces: `pnpm engine:check`, `pnpm dev:engine`, and `pnpm engine:check:prod` build and run the `linux/amd64` image on any host. The `linux-aarch64` lock files stay: removing that platform from `lock.sh` re-solves the lock, so it waits for the next relock.
+
+- [ ] **Step 1: Write the failing test**
+
+In `apps/engine/tests/test_environment.py`, add the imports:
+
+```python
+from dtcc_core.builder import build_city_volume_mesh
+from dtcc_core.model import Bounds, Building, City, GeometryType, Raster, Surface, Terrain
+from shapely.geometry import box
+```
+
+Add after the fixtures:
+
+```python
+def flat_city(buildings: list[tuple[tuple[float, float, float, float], float]]) -> City:
+    """A city on flat 80 m by 80 m terrain with LOD0 buildings, given as (footprint box, height) pairs."""
+    raster = Raster()
+    raster.data = np.zeros((8, 8))
+    raster.set_bounds(Bounds(0.0, 0.0, 80.0, 80.0))
+    terrain = Terrain()
+    terrain.add_geometry(raster, GeometryType.RASTER)
+    city = City()
+    city.add_terrain(terrain)
+    city_buildings = []
+    for footprint, height in buildings:
+        surface = Surface()
+        surface.from_polygon(box(*footprint), height)
+        building = Building()
+        building.add_geometry(surface, GeometryType.LOD0)
+        building.attributes["estimated_height"] = height
+        building.attributes["ground_height"] = 0.0
+        city_buildings.append(building)
+    city.add_buildings(city_buildings)
+    return city
+```
+
+Add after `test_tetgen_tetrahedralizes_the_unit_cube`:
+
+```python
+def test_core_builds_a_volume_mesh_of_a_small_city() -> None:
+    # Core's own smoke case. On Linux arm64, GCC's floating-point contraction makes TetGen reject its surface.
+    city = flat_city([((10, 10, 18, 18), 10.0), ((24, 10, 32, 18), 12.0)])
+    volume_mesh = build_city_volume_mesh(
+        city,
+        lod=GeometryType.LOD0,
+        domain_height=40.0,
+        max_mesh_size=8.0,
+        min_mesh_angle=20.0,
+        merge_buildings=True,
+        min_building_detail=0.0,
+        min_building_area=1.0,
+        merge_tolerance=0.0,
+        smoothing=0,
+        boundary_face_markers=False,
+        report_mesh_quality=False,
+    )
+    assert volume_mesh.cells.shape[0] > 0
+```
+
+- [ ] **Step 2: Confirm it fails on the current `linux/arm64` image**
+
+Run on Apple silicon: `pnpm engine:check`
+Expected: `1 failed, 37 passed`; the new test fails with `RuntimeError: TetGen failed (code 2): internal error (report bug)`, as it did in the 2026-09-30 experiment. An import or collection error means the test is wrong, not the architecture.
+
+- [ ] **Step 3: Target `linux/amd64`**
+
+In `compose.yaml`, add to the `engine` service, after `profiles`:
+
+```yaml
+# The image supports linux/amd64 only (apps/engine/DESIGN.md); Apple silicon emulates it.
+platform: linux/amd64
+```
+
+Add `platform: linux/amd64` to the `engine-prod` service, after `profiles`. `engine-lock` stays native: conda-lock solves both platforms from any host.
+
+- [ ] **Step 4: Verify the development image**
+
+Run: `pnpm engine:check`, then `docker compose --profile engine run --rm -T engine uname -m`
+Expected: `38 passed`; `x86_64`. The build log shows `conda create` installing from `conda-build-linux-64.lock`. Record the build and test durations as observations; this is the first build from the `linux-64` lock.
+
+- [ ] **Step 5: Verify the production image**
+
+Run: `pnpm engine:check:prod`
+Expected: all environment tests and production checks pass, including `test_conda_packages_match_the_runtime_lock` against `conda-linux-64.lock`; the container reports healthy; the script prints `prod API: healthy, rejects a missing token, accepts the configured token`. If the health check does not pass within its 60-second start period under emulation, stop and report the startup time rather than changing the health check.
+
+- [ ] **Step 6: Verify the development server**
+
+Run `pnpm dev:engine`, then:
+
+```sh
+curl -fsS http://127.0.0.1:8000/api/v1/health
+curl -fsS -H "Authorization: Bearer local-dev-engine-token" http://127.0.0.1:8000/api/v1/datasets | head -c 200
+```
+
+Expected: `{"status":"ok"}`; a listing that starts with `catalog_revision`. Stop the server.
+
+- [ ] **Step 7: Update the README**
+
+Append to the README's engine paragraph: "The engine image is built for `linux/amd64`; on Apple silicon, Docker emulates it, so its builds and tests are slower."
+
+Run: `npx --yes prettier@3.9.6 --write README.md compose.yaml && npx --yes prettier@3.9.6 --check README.md compose.yaml apps/engine/DESIGN.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 8: Validate and stop for review**
+
+Run: `pnpm check`
+Expected: passes. Set Task 9's status in 5a's status line, leave changes uncommitted, and report Steps 2, 4, 5, and 6 with passed, failed, skipped, and not-run checks. Native x86_64 execution stays not run until 5b.
+
 ## Increment 5b: Worker image and Linux deployment (to be expanded)
 
-**Depends on:** increment 2 for the worker, Redis, and packages; increment 3 for remote delivery measurements and comparing image digests across hosts; increment 4 for restart behavior.
+**Depends on:** increments 2a and 2b for the worker, Redis, packages, and simulation jobs; increment 3 for remote delivery measurements and comparing image digests across hosts; increment 4 for restart behavior.
 
-**Scope:** the worker containers' Celery-specific health-check override; the documented production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); choosing the deployment's single CPU architecture and building and validating the image on it; deploying the API and worker on a Linux host of that architecture, running representative Core and Sim jobs, and recording the baseline measurements the spec lists, with hardware, image digest, and software versions. The deployment runs the exact image digest it tested.
+**Scope:** the worker containers' Celery-specific health-check override; the documented production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); building and validating the `linux/amd64` image on a native x86_64 Linux host (Task 9 ran it only under emulation); deploying the API and worker on that host, running representative Core and Sim jobs, and recording the baseline measurements the spec lists, with hardware, image digest, and software versions. The deployment runs the exact image digest it tested.
 
-**Upstream interfaces:** Celery's worker inspection for the health check, in the version increment 2 selects; the same `prod` image and `dtcc-engine` entry points as 5a.
+**Upstream interfaces:** Celery's worker inspection for the health check, Celery 5.6.3 (increment 2a); the same `prod` image and `dtcc-engine` entry points as 5a.
 
-**Checks:** the Container deployment row of the acceptance table on a Linux host, including canonical package validation for a representative Sim job; both the API and worker containers report healthy; a restart keeps the FEniCSx cache and completed packages; the 5a checks pass on the chosen architecture.
+**Checks:** the Container deployment row of the acceptance table on a Linux host, including canonical package validation for a representative Sim job; both the API and worker containers report healthy; a restart keeps the FEniCSx cache and completed packages; the 5a checks pass on the native x86_64 host.
 
 **Blockers:** the AGPL-3.0 license review for TetGen must be completed before the image is pushed to any registry, including a private one.
 

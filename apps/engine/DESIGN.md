@@ -424,8 +424,8 @@ containers from the same production image. A production deployment provides:
 - An external Redis service.
 
 The image digest identifies the complete environment: Engine, Core, Sim,
-Celery, Python, and the numerical stack. In v1, every host in a deployment uses
-the same CPU architecture, and hosts are compatible when they run the same
+Celery, Python, and the numerical stack. In v1, every host in a deployment runs
+the `linux/amd64` image, and hosts are compatible when they run the same
 platform-specific image digest (not a multi-platform index, whose per-platform
 images have different digests). The deployment supplies each host's digest to
 its configuration so that discovery can report it. Image compatibility is
@@ -468,11 +468,13 @@ Both targets follow these rules:
   under AGPL-3.0. Review that license before pushing the image to any registry,
   including a private one; the review is a prerequisite for production
   deployment.
-- The image builds for the host architecture, including `linux/arm64` on Apple
-  silicon and AWS Graviton, because emulated numerical execution is slow.
-  A production deployment chooses one architecture, and its image is built and
-  validated on that architecture; supporting a second architecture requires its
-  own production validation.
+- The image targets `linux/amd64` only, in development and in production, so
+  every check runs on the deployed architecture; Apple silicon runs it under
+  Docker's emulation, which is slower. On Linux arm64, GCC contracts
+  floating-point multiply-adds by default and Core's meshing then fails, and
+  Core's continuous integration does not cover that platform. Supporting
+  `linux/arm64`, such as AWS Graviton, requires that upstream fix and its own
+  production validation.
 
 For local development, the root `compose.yaml` places Engine services behind
 the `engine` profile, so developers who work only on the frontend or backend
@@ -482,9 +484,10 @@ publishes its HTTP port on the loopback interface only.
 Engine's test suite runs in the `dev` target through `pnpm engine:check`. It is
 not part of the repository-wide `pnpm check`, which does not build the image.
 Its environment tests check that Core, Sim, FEniCSx, and the TetGen wrapper are
-installed; that TetGen tetrahedralizes a unit cube; that FEniCSx assembles its
-volume and solves a small problem through PETSc; and that the mesh round-trips
-through an HDF5 file read back by h5py.
+installed; that TetGen tetrahedralizes a unit cube; that FEniCSx assembles the
+unit cube's volume and solves a small problem through PETSc; that the unit-cube
+mesh round-trips through an HDF5 file read back by h5py; and that Core builds a
+volume mesh of a small city.
 
 The frontend does not call Engine directly. The shared Engine token must not be
 exposed to browsers, so the Twin backend holds the token and forwards the Engine
