@@ -1,7 +1,7 @@
 import { Marker } from "react-map-gl/maplibre";
 import { cn } from "@/lib/utils";
-import { areaSizeProblem, areaSizeProblemText, areaSquareMetres, formatSquareMetres } from "./area";
-import { useAreaStore } from "./area-store";
+import { areaSizeProblem, areaSizeProblemText, areaSquareMetres, formatSquareMetres } from "@/features/area/area";
+import { useAreaStore } from "@/features/area/area-store";
 
 /** The size of the box being drawn, moved or resized, at its north-east corner. */
 export function AreaSizeLabel() {

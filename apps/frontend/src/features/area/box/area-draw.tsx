@@ -9,8 +9,8 @@ import {
   type TerraDrawEventListeners,
 } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
-import { areaSizeProblem, areaSquareMetres, type Area } from "./area";
-import { AreaStoreContext, type AreaStore } from "./area-store";
+import { areaSizeProblem, areaSquareMetres, type Area } from "@/features/area/area";
+import { AreaStoreContext, type AreaStore } from "@/features/area/area-store";
 
 const dtccOrange = "#e35a1d";
 const white = "#ffffff";

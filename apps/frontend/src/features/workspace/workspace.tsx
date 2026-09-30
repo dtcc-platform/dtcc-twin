@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useStore } from "zustand";
-import { FloatingCard } from "@/components/floating-card";
-import { AreaDraw } from "@/features/area/area-draw";
-import { AreaSizeLabel } from "@/features/area/area-size-label";
+import { FloatingCard } from "@/components/common/floating-card";
+import { AreaDraw } from "@/features/area/box/area-draw";
+import { AreaSizeLabel } from "@/features/area/box/area-size-label";
 import { AreaStoreContext, createAreaStore } from "@/features/area/area-store";
-import { BoundsInspector } from "@/features/area/bounds-inspector";
+import { BoundsInspector } from "@/features/area/bounds-inspector/bounds-inspector";
 import { HintBar } from "@/features/workspace/hint-bar/hint-bar";
 import { MapView } from "@/features/workspace/map/map-view";
 import { Toolbar } from "@/features/workspace/toolbar/toolbar";

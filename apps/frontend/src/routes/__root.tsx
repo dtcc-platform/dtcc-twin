@@ -4,7 +4,7 @@ import { Outlet, createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useApplyTheme } from "@/features/theme/use-theme";
+import { useApplyTheme } from "@/hooks/use-theme";
 
 type RouterContext = {
   queryClient: QueryClient;

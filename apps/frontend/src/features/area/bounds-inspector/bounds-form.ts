@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { areaSizeProblem, areaSizeProblemText, areaSquareMetres, type Area } from "./area";
+import { areaSizeProblem, areaSizeProblemText, areaSquareMetres, type Area } from "@/features/area/area";
 
 const decimalDegrees = z
   .string()

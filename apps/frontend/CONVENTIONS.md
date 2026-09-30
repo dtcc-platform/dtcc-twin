@@ -28,6 +28,8 @@
 
 ### Code
 
+- A feature's folders follow what you see on screen. Its root holds its top component, if it has one, and the state and logic its parts share; each part you can see gets a folder named after it, holding its component and everything shown inside it or used only by it, nested the same way.
+- Code used by several features goes outside them: components in `src/components/common/`, hooks in `src/hooks/`, the rest in `src/lib/`.
 - Import through `@/` from outside the current feature folder; relative imports only for files next to each other.
 - Style with Tailwind utilities; merge a `className` prop with `cn()` from `@/lib/utils`.
 

@@ -1,11 +1,11 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { FloatingCard } from "@/components/floating-card";
+import { FloatingCard } from "@/components/common/floating-card";
 import { Button } from "@/components/ui/button";
 import { FieldError, FieldGroup } from "@/components/ui/field";
-import { TextField } from "@/features/auth/text-field";
-import { areaSquareMetres, formatSquareMetres, type Area } from "./area";
-import { useAreaStore } from "./area-store";
+import { TextField } from "@/components/common/text-field";
+import { areaSquareMetres, formatSquareMetres, type Area } from "@/features/area/area";
+import { useAreaStore } from "@/features/area/area-store";
 import { boundsSchema, toBoundsFields } from "./bounds-form";
 
 /** The area's bounds in degrees, to read or type. */
