@@ -2174,7 +2174,7 @@ Ruling (2026-09-30, increment review): the review of the whole increment gave th
 
 ## Increment 2b: Simulation execution
 
-Status: expanded into Tasks 15 and 16 on 2026-10-01; not yet executed.
+Status: expanded into Tasks 15 and 16 on 2026-10-01. Task 15 was executed 2026-10-01; its changes are left uncommitted for team review. Its results: with the commit check added and the installation unchanged, the build failed at the check with `dtcc-core and dtcc-sim are ['afe1c28b71e545750b890d8db58113c74188475e', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339'], not ['2289d11f85049e13d5042e5cb3e5627c6568765f', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339']`, because pip resolved Sim's Core requirement to the head of Core's `develop`, `afe1c28`, both when installing Sim and again when installing the Engine's dependencies. With Core installed at its pin and Sim without its dependencies, the check passed, `engine:check` gave 64 passed in 12.3 s, and the development image's `direct_url.json` files recorded Core `2289d11f85049e13d5042e5cb3e5627c6568765f` and Sim `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, `pip check` among them, and its token checks passed; the production image recorded the same two commits. `pnpm check` passed. Task 16 is not yet executed.
 
 **Scope:** the Simulation execution row of the acceptance table: representative FEniCSx Sim Datasets run through the worker with their numerical dependencies, and their packages preserve model fields and provenance. The pins move to Sim `0c9d1c4`, which fixes the wind solver and follows Core's `develop`, and to the Core commit that Sim's lock file records for it; the image enforces that pair.
 
@@ -2235,7 +2235,7 @@ Status: expanded into Tasks 15 and 16 on 2026-10-01; not yet executed.
 - Consumes: the Dockerfile's builder stage from Tasks 5 to 9; `project.dependencies` in `pyproject.toml`.
 - Produces: the build arguments `DTCC_CORE_COMMIT` and `DTCC_SIM_COMMIT`, with full commit IDs as defaults; a builder stage that fails unless the installed `dtcc-core` and `dtcc-sim` are those commits. No API change.
 
-- [ ] **Step 1: Make the build check the pins**
+- [x] **Step 1: Make the build check the pins**
 
 In `apps/engine/Dockerfile`, replace
 
@@ -2264,12 +2264,12 @@ sys.exit(None if installed == sys.argv[1:] else f'dtcc-core and dtcc-sim are {in
 
 Leave the installation steps unchanged, so the build installs Sim with its dependencies, as it does now.
 
-- [ ] **Step 2: Build to verify the check fails for the right reason**
+- [x] **Step 2: Build to verify the check fails for the right reason**
 
 Run: `docker compose --profile engine build engine`
 Expected: the build fails at the new check with `dtcc-core and dtcc-sim are ['<commit>', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339'], not ['2289d11f85049e13d5042e5cb3e5627c6568765f', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339']`, where `<commit>` is the head of Core's `develop` at build time (`bb95f2f…` on 2026-10-01), because pip resolved Sim's requirement on `develop`. If the build fails anywhere else, or passes, stop and report. Building Core from Git takes several minutes under emulation.
 
-- [ ] **Step 3: Install Core at its pin and Sim without its dependencies**
+- [x] **Step 3: Install Core at its pin and Sim without its dependencies**
 
 In `apps/engine/Dockerfile`, replace
 
@@ -2304,13 +2304,13 @@ if d not in ('dtcc-core', 'dtcc-sim')], sep='\n')" \
     && pip install --no-cache-dir -r /engine/requirements.txt
 ```
 
-- [ ] **Step 4: Build and run the tests**
+- [x] **Step 4: Build and run the tests**
 
 Run: `pnpm engine:check`
 Expected: the build passes the commit check, and 64 passed. Then run `docker compose --profile engine run --rm --no-deps engine python -c "from importlib.metadata import distribution; print([distribution(n).read_text('direct_url.json') for n in ('dtcc-core', 'dtcc-sim')])"`.
 Expected: Core's `commit_id` is `2289d11f85049e13d5042e5cb3e5627c6568765f` and Sim's is `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339`.
 
-- [ ] **Step 5: Amend the spec**
+- [x] **Step 5: Amend the spec**
 
 In `apps/engine/DESIGN.md`, under "Engine image", replace the bullet
 
@@ -2359,12 +2359,12 @@ and replace item 3 of "Required upstream and integration work" with
 Run: `npx --yes prettier@3.9.6 --write apps/engine/DESIGN.md && npx --yes prettier@3.9.6 --check apps/engine/DESIGN.md apps/engine/PLAN.md`
 Expected: all files use Prettier code style.
 
-- [ ] **Step 6: Validate**
+- [x] **Step 6: Validate**
 
 Run: `pnpm engine:check:prod`, then `docker compose --project-name dtcc-twin-engine-prod --profile engine-prod run --rm --no-deps engine-prod python -c "from importlib.metadata import distribution; print([distribution(n).read_text('direct_url.json') for n in ('dtcc-core', 'dtcc-sim')])"`, then `pnpm check`.
 Expected: the production checks pass with `engine-redis` in their own Compose project, `pip check` among them, and the token checks pass; the production image has the same two commit IDs as Step 4; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
 
-- [ ] **Step 7: Stop for review**
+- [x] **Step 7: Stop for review**
 
 Record Task 15's results in Increment 2b's status, leave the changes uncommitted, and report Steps 2, 4, and 6.
 

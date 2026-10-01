@@ -16,17 +16,29 @@ ARG TETGEN_WRAPPER_COMMIT=22ab9ff2ee1dd03f82ce24dd0f378f00da7e487c
 RUN pip install --no-cache-dir \
     "dtcc-tetgen-wrapper @ git+https://github.com/dtcc-platform/dtcc-tetgen-wrapper.git@${TETGEN_WRAPPER_COMMIT}"
 
-# Sim pins the Core commit it is tested with, so Core is not pinned separately.
-ARG DTCC_SIM_COMMIT=2422bbafac6ef07466ca1bcd6905bbd99a8c2ecf
+# Core is the commit in Sim's uv.lock at DTCC_SIM_COMMIT; Sim's package metadata asks for Core's moving develop branch.
+ARG DTCC_CORE_COMMIT=2289d11f85049e13d5042e5cb3e5627c6568765f
+ARG DTCC_SIM_COMMIT=0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339
+# Sim's only dependency is Core, installed first at its pin.
 RUN pip install --no-cache-dir \
-    "dtcc-sim @ git+https://github.com/dtcc-platform/dtcc-sim.git@${DTCC_SIM_COMMIT}"
+        "dtcc-core @ git+https://github.com/dtcc-platform/dtcc-core.git@${DTCC_CORE_COMMIT}" \
+    && pip install --no-cache-dir --no-deps \
+        "dtcc-sim @ git+https://github.com/dtcc-platform/dtcc-sim.git@${DTCC_SIM_COMMIT}"
 
-# Resolving Sim's dependencies fetches Core from Git again, so the Engine's dependencies are installed while Git is
-# present; later stages install the Engine with --no-deps.
+# Later stages install the Engine with --no-deps, so its other dependencies are installed here; leaving out Core and
+# Sim keeps pip from resolving Sim's Core requirement again.
 COPY pyproject.toml /engine/
-RUN python -c "import tomllib; print(*tomllib.load(open('/engine/pyproject.toml', 'rb'))['project']['dependencies'], sep='\n')" \
+RUN python -c "import tomllib; \
+print(*[d for d in tomllib.load(open('/engine/pyproject.toml', 'rb'))['project']['dependencies'] \
+if d not in ('dtcc-core', 'dtcc-sim')], sep='\n')" \
         > /engine/requirements.txt \
     && pip install --no-cache-dir -r /engine/requirements.txt
+
+# Fails the build unless every install above left Core and Sim at their pinned commits.
+RUN python -c "import json, sys; from importlib.metadata import distribution; \
+installed = [json.loads(distribution(name).read_text('direct_url.json'))['vcs_info']['commit_id'] for name in ('dtcc-core', 'dtcc-sim')]; \
+sys.exit(None if installed == sys.argv[1:] else f'dtcc-core and dtcc-sim are {installed}, not {sys.argv[1:]}')" \
+    "$DTCC_CORE_COMMIT" "$DTCC_SIM_COMMIT"
 
 # Removes the packages that only the build lock has; no runtime package depends on them.
 SHELL ["/bin/bash", "-c"]

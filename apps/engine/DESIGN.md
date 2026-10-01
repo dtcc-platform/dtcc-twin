@@ -462,10 +462,14 @@ Both targets follow these rules:
 
 - One image serves both the Engine HTTP service and the Celery worker, matching
   the single installed package described in the runtime architecture.
-- The image installs pinned commits of Sim and the TetGen wrapper, supplied as
-  build arguments. Core is installed at the commit that Sim pins, so Core and
-  Sim remain a compatible pair. The build does not read the reference
-  checkouts under `temp/`.
+- The image installs pinned commits of Core, Sim, and the TetGen wrapper,
+  supplied as build arguments. Core's commit is the one that Sim's `uv.lock`
+  records at Sim's pinned commit. Sim's package metadata asks for Core's
+  `develop` branch, which pip would resolve to its head at build time, so the
+  build installs Sim without its dependencies and fails unless the installed
+  Core and Sim are the pinned commits. Taking Core's commit from Sim's lock
+  file does not establish that the pair works; the checks run after a pin
+  changes do. The build does not read the reference checkouts under `temp/`.
 - The image includes TetGen because Core uses it to generate the volume meshes
   that Sim's FEniCSx simulations require. The wrapper and TetGen are licensed
   under AGPL-3.0. Review that license before pushing the image to any registry,
@@ -507,11 +511,11 @@ The following observations come from the revisions installed in the development
 image, inspected through GitHub at those commits. They are source observations,
 not claims of passing runtime tests or a verified release combination.
 
-| Reference                  | Inspected revision                         |
-| -------------------------- | ------------------------------------------ |
-| `dtcc-core`, pinned by Sim | `5ca2ca410f24763591dc62c7b61f870cef13f717` |
-| `dtcc-sim`                 | `2422bbafac6ef07466ca1bcd6905bbd99a8c2ecf` |
-| `dtcc-tetgen-wrapper`      | `22ab9ff2ee1dd03f82ce24dd0f378f00da7e487c` |
+| Reference                         | Inspected revision                         |
+| --------------------------------- | ------------------------------------------ |
+| `dtcc-core`, from Sim's `uv.lock` | `2289d11f85049e13d5042e5cb3e5627c6568765f` |
+| `dtcc-sim`                        | `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339` |
+| `dtcc-tetgen-wrapper`             | `22ab9ff2ee1dd03f82ce24dd0f378f00da7e487c` |
 
 ### Reusable interfaces
 
@@ -552,9 +556,15 @@ not claims of passing runtime tests or a verified release combination.
    returns them, and whether they round-trip, is part of that verification.
    Missing semantics or codecs require upstream resolution in Core or Sim.
 3. **Dependency alignment is established for the development image.** The
-   image installs Sim at a pinned commit and Core at the commit that Sim pins,
-   so the two form the tested pair. Re-verify this pair, and the interfaces each
-   increment relies on, whenever a pin changes.
+   image installs Sim at a pinned commit and Core at the commit that Sim's
+   `uv.lock` records for it. To move the pins, choose a Sim commit; read the
+   Core commit from its `uv.lock`; confirm that Sim's package metadata still
+   declares no dependency other than Core, because Sim is installed without
+   its dependencies; confirm that the Core commit is reachable from Core's
+   `develop`, which shows only that it is reachable today; set both build
+   arguments to full commit IDs; and re-verify the interfaces each increment
+   relies on, running `pnpm engine:check`, `pnpm engine:check:prod`, and Sim's
+   representative Datasets through the worker.
 4. **Remote delivery needs an Engine integration boundary.** Core's existing
    `RemoteDatasetDescriptor` waits for completion and reads serialized results
    from a shared filesystem. Sim's result handler writes individual formats or
