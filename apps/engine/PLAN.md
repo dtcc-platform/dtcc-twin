@@ -16,7 +16,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 
 - **Increments 0 and 1** are written as executable tasks with complete code.
 - **Increments 2 to 6** are specified by scope, upstream interfaces, checks, and blockers. Each is expanded into executable tasks, in this file, when its prerequisites are verified. Expanding an increment is a plan change and is reviewed like one.
-- **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins and is expanded into Tasks 10 to 14; 2b, execution of FEniCSx simulations, waits for upstream Sim changes. Cancellation moves to increment 4, because Celery's revocation needs its race handling (see increment 4).
+- **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins and is expanded into Tasks 10 to 14; 2b, execution of FEniCSx simulations, moves the pins to the Sim commit that fixes them and is expanded into Tasks 15 and 16. Cancellation moves to increment 4, because Celery's revocation needs its race handling (see increment 4).
 - **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part and the Linux deployment, stays an outline until increments 2 to 4 provide what it verifies.
 
 ## Global Constraints
@@ -47,6 +47,8 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 12. A package is requested a minute before and a second after 30 days from its job's finish: the first is served, the second is `404` with its status, although the file and Celery's result still exist. Pinned in Task 12 (`test_finished_job_and_its_package_expire_after_the_retention`).
 13. A consumer sends a provider credential where Engine or the Dataset rejects it, as a value or by mistake as a field name: the `422` gives each error's type and location without repeating it. Pinned in Task 10 (`test_validation_errors_repeat_no_submitted_names_or_values`).
 14. Jobs are submitted while a long job runs on a one-process worker: each waiting job runs once, and the broker does not deliver it again after its visibility timeout. Pinned in Task 14 (`test_job_waiting_behind_a_running_job_runs_once`).
+15. The image is built after Core's `develop` has moved, or a later install step resolves Sim's dependencies again: the build fails, rather than producing an image whose Core is not the pinned commit. Pinned in Task 15, Steps 1 and 2 (the build's commit check).
+16. A simulation job runs on the worker service, whose main process initialized PETSc before forking the pool process that runs it: the job completes, and its package loads with its fields. Pinned in Task 16, Step 1 (`test_fenicsx_solve_runs_in_a_prefork_pool_process`), and checked with Sim's Datasets in Step 3.
 
 ---
 
@@ -2170,19 +2172,364 @@ Ruling (2026-09-30, increment review): the review of the whole increment gave th
 - `docker compose --dry-run down -v`, run without a profile as `pnpm db:reset` runs it, targets only `postgres-data`, not `engine-packages`. With an Engine profile active, its behavior is not verified.
 - Increments 2b and 5b gain the checks the review raised.
 
-## Increment 2b: Simulation execution (to be expanded)
+## Increment 2b: Simulation execution
 
-**Scope:** the Simulation execution row of the acceptance table: representative FEniCSx Sim Datasets run through the worker with their numerical dependencies, and their packages preserve model fields and provenance.
+Status: expanded into Tasks 15 and 16 on 2026-10-01; not yet executed.
 
-**Evidence** (2026-09-30, an experiment outside the repository): with Core `develop` (`b375f47`) installed directly and Sim `2422bba` installed without its Core pin, on `linux/amd64`, `urban_heat_simulation` and `city_volume_mesh` ran and round-tripped on three Gothenburg boxes (packages from 68 KB to 1.3 MB), and Sim's own suite gave the same result as at the current pins (89 passed, 8 errors).
+**Scope:** the Simulation execution row of the acceptance table: representative FEniCSx Sim Datasets run through the worker with their numerical dependencies, and their packages preserve model fields and provenance. The pins move to Sim `0c9d1c4`, which fixes the wind solver and follows Core's `develop`, and to the Core commit that Sim's lock file records for it; the image enforces that pair.
 
-**Blockers:**
+**Evidence** (2026-10-01, outside the repository): an image built from `apps/engine/Dockerfile` with Core installed first at `2289d11` and Sim `0c9d1c4` installed without its dependencies, on `linux/amd64` under emulation, gave the following.
 
-- Sim pins Core `5ca2ca4`, a commit that no Core branch contains since `develop` was rewritten, so it can be garbage-collected. At that commit, point clouds carry float classifications and every terrain-based Dataset fails; `develop` fixes it (`c4d0293`). Sim must move its pin to a `develop` commit (an upstream Sim change); then `DTCC_SIM_COMMIT` changes and this increment's interfaces are re-verified (DESIGN.md upstream item 3). Engine does not pin Core separately.
-- `urban_wind_simulation` calls `dolfinx.fem.petsc.assemble_matrix_mat`, which dolfinx 0.11.0 lacks (`dtcc_sim/urban_wind.py`), and Sim's 8 test errors come from it. It needs a Sim fix.
-- `air_quality_field` has not run: it needs a box that contains a measuring station.
+- Sim's suite at `0c9d1c4`: 97 passed. At `2422bba` it gave 89 passed and 8 errors, all from `assemble_matrix_mat`.
+- Engine's suite: 64 passed; `pip check` reports no broken requirements.
+- On the three boxes of 2026-09-30, `[319891, 6399790, 320091, 6399990]`, `[319995.96, 6399009.72, 320195.96, 6399209.72]`, and `[319500, 6399300, 319900, 6399700]`, canonical export and `load_model_package` returned the same type, model encoding, and context:
+  - `city_volume_mesh` and `urban_heat_simulation` on all three, with the package sizes of 2026-09-30.
+  - `urban_wind_simulation` on the first in 680 s and on the second in 1,386 s; on the third it had not finished after 1,500 s, the probe's limit.
+- `air_quality_field`: Core's `air_quality` returns stations with `z = 0`. On `[319450, 6400200, 319650, 6400400]`, which holds two NO2 stations, no station lies inside the volume mesh, whose height there runs from 0.13 m to 80.13 m, and the build fails with "no point observations were located inside the mesh". With `z_offset` set 10 m above the mesh's lowest point, 10.13, the NO2 field in µg/m3 builds and round-trips; 2 m above it is not enough. Of the stations around Gothenburg, many report stale values, some from 2013, and the provider returned some 500 errors.
+- All 28 registered Datasets on the first box: 22 round-trip, against 15 at `5ca2ca4`. The point-cloud-based ones now pass. `building_footprints`, `buildings`, `calibration_grid`, and `trees` fail on canonical export ([dtcc-core#135](https://github.com/dtcc-platform/dtcc-core/issues/135)); `air_quality_field` finds no station in the box; `roads` failed because every Overpass endpoint failed at the time, while `traffic_simulation`, which also fetches roads, passed in the same run.
+- A FEniCSx solve in a one-process prefork pool, through `Jobs` and Redis, completed and its package loaded with its field: Task 16's test, run from outside the repository in 6 s.
+- Not yet run: Sim's Datasets through the worker service.
 
-**Checks:** besides the Simulation execution row, each representative FEniCSx Dataset runs through the worker service's prefork pool, not only in a process that imports Sim. The worker's main process imports Sim, which initializes PETSc, before it forks the pool process that runs the job. FEniCSx after such a fork is unverified, although `smoke` and `traffic_simulation` ran this way in Task 13. If it fails, other pools, such as `solo`, are evaluated rather than assumed, because they change concurrency and how the worker responds while a job runs.
+**Upstream interfaces**, re-verified 2026-10-01 at Core `2289d11` and Sim `0c9d1c4`, in the sources at both commits and by the evidence above:
+
+- Every Core claim under 2a's "Upstream interfaces" and "Interfaces verified for the tasks" holds, with these differences:
+  - Core no longer limits an archive or an artifact to 256 MiB. Protobuf's 2 GiB per message is the limit, and the 4 MiB manifest and 9999-artifact limits remain. `load_model_package` gains `max_bytes=None`, with no limit by default. The worker reads back only the package it has just written, and increment 3's entry service streams a remote package without reading it, so Engine is unchanged.
+  - `buildings`, `city_flat_mesh`, `city_surface_mesh`, and `terrain_surface_mesh` gain an optional `center_on_origin` argument, so the catalog revision changes; `describe()` keeps its keys.
+  - Core's runtime dependencies drop `pybind11`. No package that bundles GDAL, PROJ, or HDF5 is added, and no conda package is needed.
+- `5ca2ca4` is not an ancestor of `2289d11`, because Core's `develop` was rewritten; `2289d11` is reachable from `develop`, whose head was `bb95f2f` on 2026-10-01.
+- Sim at `0c9d1c4` declares one dependency, `dtcc-core @ git+https://github.com/dtcc-platform/dtcc-core.git@develop` (`pyproject.toml`), and its `uv.lock` records Core `2289d11f85049e13d5042e5cb3e5627c6568765f`. pip does not read `uv.lock`. The wind solver uses `assemble_matrix(A, a, bcs=...)` (`dtcc_sim/urban_wind.py`), and Sim requires DOLFINx 0.11.0, as Engine's lock does.
+- Sim's fields: `urban_wind_simulation` attaches `velocity` (dimension 3, `m/s`), `pressure` (`m^2/s^2`), and `speed` (`m/s`); `urban_heat_simulation`, `temperature` (`degC`); `air_quality_field`, the phenomenon's name with the stations' unit. Each is associated with the mesh's vertices.
+- Sim's continuous integration has a workflow that tests Sim against a supplied Core commit. None of its recent runs used Sim `0c9d1c4`; that commit's push build passed, and which Core it used is not checked.
+
+**Decisions**, settled 2026-10-01:
+
+- Engine pins both Core and Sim to full commit IDs. Core's is the commit in Sim's `uv.lock` at the pinned Sim commit. Sim deliberately follows Core's `develop` ("Track Core develop and verify current Sim integration", `66769e2`); an exact Core pin in Sim would bind every consumer of Sim to it, and pip refuses two different Git commits of one package. Choosing Core from Sim's lock does not establish that the pair works; this increment's checks do, so the pair is a candidate until Tasks 15 and 16 pass.
+- The build installs Core at its pin, then Sim without its dependencies, because Sim's only one is Core. Engine's own dependencies are installed without exactly `dtcc-core` and `dtcc-sim`, so that pip does not resolve Sim's Core requirement again. One check after all installs fails the build unless Core and Sim are the pinned commits.
+- `air_quality_field` fails with its default `z_offset` wherever its stations lie below the mesh. This is Sim's to fix; an issue is to be filed. Engine passes `z_offset` through like any other parameter and supplies no default (Global Constraints).
+- The wind solver's emulated duration, 11 to 23 minutes on a 200 m box, says nothing about a deployment; increment 5b measures it on a native host. A long job is not delivered again: a pool process acknowledges a job when it starts it, and the worker receives a job only when a pool process is free (Task 14).
+- Automated checks stay offline, as in 2a. A test-defined Dataset that solves a small FEniCSx problem checks the prefork pool; Sim's Datasets, which download city data, run once by hand, and the results are recorded.
+
+**Checks:** the Simulation execution row in the development image: `city_volume_mesh`, `urban_heat_simulation`, `urban_wind_simulation`, and `air_quality_field` (with `z_offset`) run as jobs of the worker service, and their downloaded packages load with their fields and the Dataset that made them; a FEniCSx solve in a prefork pool process, whose parent initialized PETSc, completes (automated); the worker answers `inspect ping` while a simulation runs; the development and production images contain the pinned Core and Sim. Production acceptance on a Linux host is increment 5b's.
+
+**Blockers:** none for Engine. Upstream: `air_quality_field`'s default `z_offset` (Sim, to be filed); the four result types canonical export does not support ([dtcc-core#135](https://github.com/dtcc-platform/dtcc-core/issues/135)).
+
+**Design:** Engine's code does not change. Its one job task runs any registered Dataset, Sim's included, and the worker service already uses the prefork pool. The increment changes the image, the spec's pinning rule, and the tests.
+
+**Interfaces verified for the tasks** (2026-10-01):
+
+- pip: a requirement's direct URL, including its resolved `commit_id`, is recorded in the distribution's `direct_url.json`, which `importlib.metadata.distribution(name).read_text("direct_url.json")` returns; `pip install --no-deps` installs a distribution without resolving its requirements; `pip check` accepts Sim's URL requirement on Core when Core is installed from another commit (the evidence above).
+- Docker: build arguments declared in a stage are set as environment variables in that stage's later `RUN` steps.
+- DOLFINx 0.11.0: `mesh.create_unit_cube(comm, nx, ny, nz)`, `fem.functionspace(domain, ("Lagrange", 1))`, `space.tabulate_dof_coordinates()` (shape `(N, 3)`), `space.dofmap.list` (shape `(cells, 4)` for first-order tetrahedra), and `LinearProblem(a, L, petsc_options_prefix=..., petsc_options=...)` with `solve()` returning a function whose `x.array` holds its values (`tests/test_environment.py` and the prefork test above).
+- Core at `2289d11`: `VolumeMesh(vertices=..., cells=..., fields=[...])` and `Field(name=..., values=..., association="vertex")`, both from `dtcc_core.model`; `Field` values must have shape `(N,)` for dimension 1 (`dtcc_core/model/values/field.py`); a loaded model's `dataset_context.request.dataset_name` names its Dataset.
+
+### Task 15: Install Core and Sim as the pair Sim locks
+
+**Files:**
+
+- Modify: `apps/engine/Dockerfile` (Core and Sim installation, Engine dependencies, commit check)
+- Modify: `apps/engine/DESIGN.md` (image rules, inspected revisions, upstream item 3)
+- Modify: `apps/engine/PLAN.md` (Increment 2b status)
+
+**Interfaces:**
+
+- Consumes: the Dockerfile's builder stage from Tasks 5 to 9; `project.dependencies` in `pyproject.toml`.
+- Produces: the build arguments `DTCC_CORE_COMMIT` and `DTCC_SIM_COMMIT`, with full commit IDs as defaults; a builder stage that fails unless the installed `dtcc-core` and `dtcc-sim` are those commits. No API change.
+
+- [ ] **Step 1: Make the build check the pins**
+
+In `apps/engine/Dockerfile`, replace
+
+```dockerfile
+# Sim pins the Core commit it is tested with, so Core is not pinned separately.
+ARG DTCC_SIM_COMMIT=2422bbafac6ef07466ca1bcd6905bbd99a8c2ecf
+```
+
+with
+
+```dockerfile
+# Core is the commit in Sim's uv.lock at DTCC_SIM_COMMIT; Sim's package metadata asks for Core's moving develop branch.
+ARG DTCC_CORE_COMMIT=2289d11f85049e13d5042e5cb3e5627c6568765f
+ARG DTCC_SIM_COMMIT=0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339
+```
+
+and, directly after the `RUN` step that installs the Engine's dependencies from `/engine/requirements.txt`, add
+
+```dockerfile
+# Fails the build unless every install above left Core and Sim at their pinned commits.
+RUN python -c "import json, sys; from importlib.metadata import distribution; \
+installed = [json.loads(distribution(name).read_text('direct_url.json'))['vcs_info']['commit_id'] for name in ('dtcc-core', 'dtcc-sim')]; \
+sys.exit(None if installed == sys.argv[1:] else f'dtcc-core and dtcc-sim are {installed}, not {sys.argv[1:]}')" \
+    "$DTCC_CORE_COMMIT" "$DTCC_SIM_COMMIT"
+```
+
+Leave the installation steps unchanged, so the build installs Sim with its dependencies, as it does now.
+
+- [ ] **Step 2: Build to verify the check fails for the right reason**
+
+Run: `docker compose --profile engine build engine`
+Expected: the build fails at the new check with `dtcc-core and dtcc-sim are ['<commit>', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339'], not ['2289d11f85049e13d5042e5cb3e5627c6568765f', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339']`, where `<commit>` is the head of Core's `develop` at build time (`bb95f2f…` on 2026-10-01), because pip resolved Sim's requirement on `develop`. If the build fails anywhere else, or passes, stop and report. Building Core from Git takes several minutes under emulation.
+
+- [ ] **Step 3: Install Core at its pin and Sim without its dependencies**
+
+In `apps/engine/Dockerfile`, replace
+
+```dockerfile
+RUN pip install --no-cache-dir \
+    "dtcc-sim @ git+https://github.com/dtcc-platform/dtcc-sim.git@${DTCC_SIM_COMMIT}"
+
+# Resolving Sim's dependencies fetches Core from Git again, so the Engine's dependencies are installed while Git is
+# present; later stages install the Engine with --no-deps.
+COPY pyproject.toml /engine/
+RUN python -c "import tomllib; print(*tomllib.load(open('/engine/pyproject.toml', 'rb'))['project']['dependencies'], sep='\n')" \
+        > /engine/requirements.txt \
+    && pip install --no-cache-dir -r /engine/requirements.txt
+```
+
+with
+
+```dockerfile
+# Sim's only dependency is Core, installed first at its pin.
+RUN pip install --no-cache-dir \
+        "dtcc-core @ git+https://github.com/dtcc-platform/dtcc-core.git@${DTCC_CORE_COMMIT}" \
+    && pip install --no-cache-dir --no-deps \
+        "dtcc-sim @ git+https://github.com/dtcc-platform/dtcc-sim.git@${DTCC_SIM_COMMIT}"
+
+# Later stages install the Engine with --no-deps, so its other dependencies are installed here; leaving out Core and
+# Sim keeps pip from resolving Sim's Core requirement again.
+COPY pyproject.toml /engine/
+RUN python -c "import tomllib; \
+print(*[d for d in tomllib.load(open('/engine/pyproject.toml', 'rb'))['project']['dependencies'] \
+if d not in ('dtcc-core', 'dtcc-sim')], sep='\n')" \
+        > /engine/requirements.txt \
+    && pip install --no-cache-dir -r /engine/requirements.txt
+```
+
+- [ ] **Step 4: Build and run the tests**
+
+Run: `pnpm engine:check`
+Expected: the build passes the commit check, and 64 passed. Then run `docker compose --profile engine run --rm --no-deps engine python -c "from importlib.metadata import distribution; print([distribution(n).read_text('direct_url.json') for n in ('dtcc-core', 'dtcc-sim')])"`.
+Expected: Core's `commit_id` is `2289d11f85049e13d5042e5cb3e5627c6568765f` and Sim's is `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339`.
+
+- [ ] **Step 5: Amend the spec**
+
+In `apps/engine/DESIGN.md`, under "Engine image", replace the bullet
+
+```markdown
+- The image installs pinned commits of Sim and the TetGen wrapper, supplied as
+  build arguments. Core is installed at the commit that Sim pins, so Core and
+  Sim remain a compatible pair. The build does not read the reference
+  checkouts under `temp/`.
+```
+
+with
+
+```markdown
+- The image installs pinned commits of Core, Sim, and the TetGen wrapper,
+  supplied as build arguments. Core's commit is the one that Sim's `uv.lock`
+  records at Sim's pinned commit. Sim's package metadata asks for Core's
+  `develop` branch, which pip would resolve to its head at build time, so the
+  build installs Sim without its dependencies and fails unless the installed
+  Core and Sim are the pinned commits. Taking Core's commit from Sim's lock
+  file does not establish that the pair works; the checks run after a pin
+  changes do. The build does not read the reference checkouts under `temp/`.
+```
+
+Under "Upstream inspection and implementation prerequisites", replace the first two rows of the revision table with
+
+```markdown
+| `dtcc-core`, from Sim's `uv.lock` | `2289d11f85049e13d5042e5cb3e5627c6568765f` |
+| `dtcc-sim` | `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339` |
+```
+
+and replace item 3 of "Required upstream and integration work" with
+
+```markdown
+3. **Dependency alignment is established for the development image.** The
+   image installs Sim at a pinned commit and Core at the commit that Sim's
+   `uv.lock` records for it. To move the pins, choose a Sim commit; read the
+   Core commit from its `uv.lock`; confirm that Sim's package metadata still
+   declares no dependency other than Core, because Sim is installed without
+   its dependencies; confirm that the Core commit is reachable from Core's
+   `develop`, which shows only that it is reachable today; set both build
+   arguments to full commit IDs; and re-verify the interfaces each increment
+   relies on, running `pnpm engine:check`, `pnpm engine:check:prod`, and Sim's
+   representative Datasets through the worker.
+```
+
+Run: `npx --yes prettier@3.9.6 --write apps/engine/DESIGN.md && npx --yes prettier@3.9.6 --check apps/engine/DESIGN.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 6: Validate**
+
+Run: `pnpm engine:check:prod`, then `docker compose --project-name dtcc-twin-engine-prod --profile engine-prod run --rm --no-deps engine-prod python -c "from importlib.metadata import distribution; print([distribution(n).read_text('direct_url.json') for n in ('dtcc-core', 'dtcc-sim')])"`, then `pnpm check`.
+Expected: the production checks pass with `engine-redis` in their own Compose project, `pip check` among them, and the token checks pass; the production image has the same two commit IDs as Step 4; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
+
+- [ ] **Step 7: Stop for review**
+
+Record Task 15's results in Increment 2b's status, leave the changes uncommitted, and report Steps 2, 4, and 6.
+
+### Task 16: Run Sim's simulations through the worker
+
+**Files:**
+
+- Create: `apps/engine/tests/test_simulation.py`
+- Modify: `apps/engine/PLAN.md` (Increment 2b status)
+
+**Interfaces:**
+
+- Consumes:
+  - From Task 15: an image with Core `2289d11` and Sim `0c9d1c4`.
+  - From Tasks 10 to 14: `Jobs(redis_url, target, package_dir)`, `Jobs.submit`, `Jobs.status`, `Jobs.package_path`, `Jobs.celery_app`; the `redis_url` fixture in `conftest.py`; the API's job routes; the `engine-worker` service.
+  - From Celery: `start_worker(app, pool="prefork", concurrency=1)`.
+  - The DOLFINx and Core interfaces listed above.
+- Produces: an automated check that a FEniCSx solve runs as a job in a prefork pool process; recorded runs of Sim's representative Datasets through the worker service. No API change.
+
+- [ ] **Step 1: Write the prefork test**
+
+Create `apps/engine/tests/test_simulation.py`:
+
+```python
+"""Tests that a FEniCSx solve runs in the worker's prefork pool.
+
+The worker service imports Sim, which initializes PETSc, before it forks its pool processes, and Sim's simulations run
+in those forked processes. The Dataset here solves a small problem offline, so the test needs no downloaded city data.
+The test has its own module so that no other test's worker thread is running in this process when the pool forks.
+"""
+
+import time
+from collections.abc import Callable, Iterator
+from pathlib import Path
+
+import numpy as np
+import pytest
+import ufl
+from celery.contrib.testing.worker import start_worker
+from dolfinx import fem, mesh
+from dolfinx.fem.petsc import LinearProblem
+from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, load_model_package, unregister
+from dtcc_core.model import Field, VolumeMesh
+from mpi4py import MPI
+
+from dtcc_engine.jobs import Jobs
+
+BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
+
+
+def wait_for(condition: Callable[[], bool], timeout: float = 300.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline
+        time.sleep(0.5)
+
+
+@pytest.fixture
+def fenicsx_dataset() -> Iterator[str]:
+    """Register a Dataset that solves u - div(grad(u)) = 1 on the unit cube, whose exact solution is u = 1."""
+
+    class FenicsxProbeArgs(DatasetBaseArgs):
+        pass
+
+    class FenicsxProbeDataset(DatasetDescriptor):
+        name = "engine_fenicsx_probe"
+        description = "Dataset defined by an Engine test that solves a small FEniCSx problem"
+        ArgsModel = FenicsxProbeArgs
+
+        def build(self, args):
+            domain = mesh.create_unit_cube(MPI.COMM_WORLD, 2, 2, 2)
+            space = fem.functionspace(domain, ("Lagrange", 1))
+            trial, test = ufl.TrialFunction(space), ufl.TestFunction(space)
+            problem = LinearProblem(
+                (trial * test + ufl.inner(ufl.grad(trial), ufl.grad(test))) * ufl.dx,
+                fem.Constant(domain, 1.0) * test * ufl.dx,
+                petsc_options_prefix="engine_fenicsx_probe_",
+                petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
+            )
+            solution = problem.solve()
+            # A first-order space has one degree of freedom per vertex, so its numbering serves as the mesh's.
+            return VolumeMesh(
+                vertices=space.tabulate_dof_coordinates(),
+                cells=np.asarray(space.dofmap.list),
+                fields=[Field(name="u", values=solution.x.array.copy(), association="vertex")],
+            )
+
+    try:
+        yield "engine_fenicsx_probe"
+    finally:
+        unregister("engine_fenicsx_probe")
+
+
+@pytest.fixture
+def prefork_jobs(redis_url: str, tmp_path: Path, fenicsx_dataset: str) -> Iterator[Jobs]:
+    """Jobs served by a one-process prefork worker."""
+    jobs = Jobs(redis_url, "prefork-fenicsx", tmp_path)
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        yield jobs
+
+
+def test_fenicsx_solve_runs_in_a_prefork_pool_process(prefork_jobs: Jobs, fenicsx_dataset: str) -> None:
+    job_id = prefork_jobs.submit(fenicsx_dataset, {"bounds": BOUNDS})
+    wait_for(lambda: prefork_jobs.status(job_id)["state"] in ("completed", "failed"))
+    assert prefork_jobs.status(job_id)["state"] == "completed", prefork_jobs.status(job_id)
+    [field] = load_model_package(prefork_jobs.package_path(job_id)).fields
+    assert field.name == "u" and np.allclose(field.values, 1.0)
+```
+
+The test runs the solve in a pool process forked from a process that imported Sim and DOLFINx, as the worker service's pool processes are. The five-minute limit allows for compiling the forms into an empty cache under emulation; the run of 2026-10-01 took 6 s.
+
+- [ ] **Step 2: Run the test**
+
+Run: `pnpm engine:check tests/test_simulation.py`
+Expected: 1 passed. The test checks behavior that Engine already has, so it is expected to pass at once, as it did from outside the repository on 2026-10-01; it guards the fork that the worker service depends on. If it fails or times out, stop and report. Don't change the pool: other pools, such as `solo`, change concurrency and how the worker answers while a job runs, so they are evaluated in review rather than assumed.
+
+- [ ] **Step 3: Run Sim's Datasets through the worker service**
+
+Start `pnpm dev:engine` in another terminal and wait for the API's health check and the worker's `ready` line, then run:
+
+```sh
+AUTH="Authorization: Bearer local-dev-engine-token"
+submit() {
+  curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -d "$1" http://127.0.0.1:8000/api/v1/jobs \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["job_id"])'
+}
+BOX='[319891, 6399790, 320091, 6399990]'
+MESH=$(submit "{\"dataset\": \"city_volume_mesh\", \"parameters\": {\"bounds\": $BOX}}")
+HEAT=$(submit "{\"dataset\": \"urban_heat_simulation\", \"parameters\": {\"bounds\": $BOX}}")
+WIND=$(submit "{\"dataset\": \"urban_wind_simulation\", \"parameters\": {\"bounds\": $BOX}}")
+AIR=$(submit '{"dataset": "air_quality_field", "parameters": {"bounds": [319450, 6400200, 319650, 6400400], "z_offset": 10.13}}')
+for JOB in $MESH $HEAT $WIND $AIR; do curl -fsS -H "$AUTH" http://127.0.0.1:8000/api/v1/jobs/$JOB; echo; done
+```
+
+Repeat the status loop until every job is `completed` or `failed`; the worker runs them one at a time, and the wind job takes about 11 minutes under emulation. While the wind job is `running`, run `docker compose --profile engine exec -T engine-worker /opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect ping --timeout 10`. When all have finished, run:
+
+```sh
+for JOB in $MESH $HEAT $WIND $AIR; do
+  curl -fsS -H "$AUTH" -o /tmp/$JOB.dtccpkg http://127.0.0.1:8000/api/v1/jobs/$JOB/package
+  shasum -a 256 /tmp/$JOB.dtccpkg
+  docker compose --profile engine exec -T engine sha256sum /var/lib/dtcc-engine/packages/$JOB.dtccpkg
+  docker compose --profile engine exec -T engine /opt/conda/envs/engine/bin/python -c "
+from dtcc_core.datasets import load_model_package
+m = load_model_package('/var/lib/dtcc-engine/packages/$JOB.dtccpkg')
+print(type(m).__name__, m.dataset_context.request.dataset_name, len(m.vertices),
+      [(f.name, f.unit, f.dim, len(f.values)) for f in m.fields], m.dataset_context.request.parameters)"
+done
+```
+
+Expected:
+
+- `inspect ping` gets a `pong` from the worker while the wind job runs.
+- Every job is `completed`, and each pair of SHA-256 digests matches.
+- Each package loads as a `VolumeMesh` from the Dataset it was submitted to, and every field has one value per vertex: `city_volume_mesh` with no fields; `urban_heat_simulation` with `temperature` (`degC`, 1); `urban_wind_simulation` with `velocity` (`m/s`, 3), `pressure` (`m^2/s^2`, 1), and `speed` (`m/s`, 1); `air_quality_field` with `NO2` (`µg/m3`, 1), and `z_offset` 10.13 among its request parameters.
+
+Record each job's duration, package size, and printed line. A job that fails because a data provider is unreachable or rate-limits is recorded with its error type, not retried. A simulation that fails here but succeeded in the evidence above, which ran it outside the pool, stops the task for review.
+
+- [ ] **Step 4: Validate**
+
+Stop `pnpm dev:engine`. Run `pnpm engine:check`, `pnpm engine:check:prod`, and `pnpm check`.
+Expected: 65 passed, the 64 earlier tests plus the new one; the production checks pass with `engine-redis` in their own Compose project, and the token checks pass; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately, including Step 3's outcomes.
+
+- [ ] **Step 5: Stop for review**
+
+Record Task 16's results in Increment 2b's status, set the status to executed with the date, leave the changes uncommitted, and report Steps 2 to 4.
 
 ## Increment 3: Remote targets and delivery (to be expanded)
 
