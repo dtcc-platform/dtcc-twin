@@ -2174,7 +2174,7 @@ Ruling (2026-09-30, increment review): the review of the whole increment gave th
 
 ## Increment 2b: Simulation execution
 
-Status: expanded into Tasks 15 and 16 on 2026-10-01. Task 15 was executed 2026-10-01; its changes are left uncommitted for team review. Its results: with the commit check added and the installation unchanged, the build failed at the check with `dtcc-core and dtcc-sim are ['afe1c28b71e545750b890d8db58113c74188475e', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339'], not ['2289d11f85049e13d5042e5cb3e5627c6568765f', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339']`, because pip resolved Sim's Core requirement to the head of Core's `develop`, `afe1c28`, both when installing Sim and again when installing the Engine's dependencies. With Core installed at its pin and Sim without its dependencies, the check passed, `engine:check` gave 64 passed in 12.3 s, and the development image's `direct_url.json` files recorded Core `2289d11f85049e13d5042e5cb3e5627c6568765f` and Sim `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, `pip check` among them, and its token checks passed; the production image recorded the same two commits. `pnpm check` passed. Task 16 is not yet executed.
+Status: executed 2026-10-01, in Tasks 15 and 16, expanded the same day. Task 15 is committed in `9e1607a`. Its results: with the commit check added and the installation unchanged, the build failed at the check with `dtcc-core and dtcc-sim are ['afe1c28b71e545750b890d8db58113c74188475e', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339'], not ['2289d11f85049e13d5042e5cb3e5627c6568765f', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339']`, because pip resolved Sim's Core requirement to the head of Core's `develop`, `afe1c28`, both when installing Sim and again when installing the Engine's dependencies. With Core installed at its pin and Sim without its dependencies, the check passed, `engine:check` gave 64 passed in 12.3 s, and the development image's `direct_url.json` files recorded Core `2289d11f85049e13d5042e5cb3e5627c6568765f` and Sim `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, `pip check` among them, and its token checks passed; the production image recorded the same two commits. `pnpm check` passed. Task 16's changes are left uncommitted for team review. Its results: `engine:check tests/test_simulation.py` gave 1 passed in 6.0 s. With `pnpm dev:engine` running the API and the worker, the four jobs, submitted together, completed one at a time: `city_volume_mesh` 13.5 s after submission, `urban_heat_simulation` 18.7 s, `urban_wind_simulation` 755 s, of which the worker ran it for 737 s, and `air_quality_field` 785 s, of which 30 s, while the air quality provider returned two 500 errors. Each downloaded package had the stored file's SHA-256, and Core read each as a `VolumeMesh` from the Dataset it was submitted to, with one value per vertex in every field: `city_volume_mesh`, 68.5 KB, 1,645 vertices and no fields; `urban_heat_simulation`, 79.4 KB, `temperature` (`degC`, 1); `urban_wind_simulation`, 131.9 KB, `velocity` (`m/s`, 3), `pressure` (`m^2/s^2`, 1), and `speed` (`m/s`, 1); and `air_quality_field`, 129.9 KB, 2,599 vertices, `NO2` (`µg/m3`, 1) from 3 observations, with `z_offset` 10.13 among its request parameters. While the wind job ran, `inspect ping` got a `pong` from the worker 4 s and 6.4 minutes after the job started. The wind solve did not converge: it stopped at its `max_steps`, 2000, with a relative change of 1.0 and a CFL number of 60,132, its velocity solves reported `KSP_DIVERGED_NANORINF` from step 132, and its fields, all finite, give speeds up to 85,630 m/s for a 5 m/s inlet. The same Dataset, run on the same box in a new process in the `engine` container, outside any pool, diverged the same way in 733 s, from step 305, with speeds up to 276,600 m/s, so the divergence does not come from the pool; the job is `completed` because Sim returns a result. Stopped while idle, the worker logged a warm shutdown and exited with 0. `engine:check` then gave 65 passed in 14.5 s; in the full run, billiard warns that the test process is multi-threaded when the new test's pool forks, which it does not when the test runs alone. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed.
 
 **Scope:** the Simulation execution row of the acceptance table: representative FEniCSx Sim Datasets run through the worker with their numerical dependencies, and their packages preserve model fields and provenance. The pins move to Sim `0c9d1c4`, which fixes the wind solver and follows Core's `develop`, and to the Core commit that Sim's lock file records for it; the image enforces that pair.
 
@@ -2384,7 +2384,7 @@ Record Task 15's results in Increment 2b's status, leave the changes uncommitted
   - The DOLFINx and Core interfaces listed above.
 - Produces: an automated check that a FEniCSx solve runs as a job in a prefork pool process; recorded runs of Sim's representative Datasets through the worker service. No API change.
 
-- [ ] **Step 1: Write the prefork test**
+- [x] **Step 1: Write the prefork test**
 
 Create `apps/engine/tests/test_simulation.py`:
 
@@ -2476,12 +2476,12 @@ def test_fenicsx_solve_runs_in_a_prefork_pool_process(prefork_jobs: Jobs, fenics
 
 The test runs the solve in a pool process forked from a process that imported Sim and DOLFINx, as the worker service's pool processes are. The five-minute limit allows for compiling the forms into an empty cache under emulation; the run of 2026-10-01 took 6 s.
 
-- [ ] **Step 2: Run the test**
+- [x] **Step 2: Run the test**
 
 Run: `pnpm engine:check tests/test_simulation.py`
 Expected: 1 passed. The test checks behavior that Engine already has, so it is expected to pass at once, as it did from outside the repository on 2026-10-01; it guards the fork that the worker service depends on. If it fails or times out, stop and report. Don't change the pool: other pools, such as `solo`, change concurrency and how the worker answers while a job runs, so they are evaluated in review rather than assumed.
 
-- [ ] **Step 3: Run Sim's Datasets through the worker service**
+- [x] **Step 3: Run Sim's Datasets through the worker service**
 
 Start `pnpm dev:engine` in another terminal and wait for the API's health check and the worker's `ready` line, then run:
 
@@ -2522,12 +2522,12 @@ Expected:
 
 Record each job's duration, package size, and printed line. A job that fails because a data provider is unreachable or rate-limits is recorded with its error type, not retried. A simulation that fails here but succeeded in the evidence above, which ran it outside the pool, stops the task for review.
 
-- [ ] **Step 4: Validate**
+- [x] **Step 4: Validate**
 
 Stop `pnpm dev:engine`. Run `pnpm engine:check`, `pnpm engine:check:prod`, and `pnpm check`.
 Expected: 65 passed, the 64 earlier tests plus the new one; the production checks pass with `engine-redis` in their own Compose project, and the token checks pass; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately, including Step 3's outcomes.
 
-- [ ] **Step 5: Stop for review**
+- [x] **Step 5: Stop for review**
 
 Record Task 16's results in Increment 2b's status, set the status to executed with the date, leave the changes uncommitted, and report Steps 2 to 4.
 
