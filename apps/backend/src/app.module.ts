@@ -7,6 +7,7 @@ import { AuthModule } from "./modules/auth/auth.module.js";
 import { DatasetsModule } from "./modules/datasets/datasets.module.js";
 import { HealthModule } from "./modules/health/health.module.js";
 import { ItemsModule } from "./modules/items/items.module.js";
+import { JobsModule } from "./modules/jobs/jobs.module.js";
 import { SettingsModule } from "./modules/settings/settings.module.js";
 import { UsersModule } from "./modules/users/users.module.js";
 
@@ -20,6 +21,7 @@ import { UsersModule } from "./modules/users/users.module.js";
     SettingsModule,
     ItemsModule,
     DatasetsModule,
+    JobsModule,
   ],
 })
 export class AppModule {}
