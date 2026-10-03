@@ -36,6 +36,18 @@ describe("Without a configured engine (e2e)", () => {
     expect(errorResponseSchema.parse(response.body).error.code).toBe("SERVICE_UNAVAILABLE");
   });
 
+  it("answers a job submission with SERVICE_UNAVAILABLE", async () => {
+    vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+
+    const response = await request(app.getHttpServer())
+      .post("/api/jobs")
+      .set(await authHeader("user"))
+      .send({ dataset: "smoke", parameters: {} })
+      .expect(503);
+
+    expect(errorResponseSchema.parse(response.body).error.code).toBe("SERVICE_UNAVAILABLE");
+  });
+
   it("still reports ready, since the engine is optional", async () => {
     await request(app.getHttpServer()).get("/api/health/ready").expect(200);
   });

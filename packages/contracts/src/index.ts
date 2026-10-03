@@ -40,6 +40,18 @@ export {
   type UpdateItemBody,
 } from "./items/items.js";
 export {
+  createJobBodySchema,
+  jobPageSchema,
+  jobProgressSchema,
+  jobSchema,
+  jobStateSchema,
+  type CreateJobBody,
+  type Job,
+  type JobPage,
+  type JobProgress,
+  type JobState,
+} from "./jobs/jobs.js";
+export {
   settingsSchema,
   themeSchema,
   updateSettingsBodySchema,
