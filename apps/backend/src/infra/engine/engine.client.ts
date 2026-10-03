@@ -20,6 +20,7 @@ export class EngineClient {
   constructor(config: ConfigService<Env, true>) {
     this.baseUrl = config.get("ENGINE_URL", { infer: true })?.replace(/\/+$/, "");
     this.token = config.get("ENGINE_API_TOKEN", { infer: true });
+    if (!this.baseUrl) this.logger.warn("DTCC Engine is not configured: ENGINE_URL is empty, so its routes answer 503");
   }
 
   async listDatasets(): Promise<Dataset[]> {
