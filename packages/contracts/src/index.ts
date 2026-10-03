@@ -20,6 +20,14 @@ export {
   type ErrorBody,
   type ValidationIssue,
 } from "./common/error-response.js";
+export {
+  datasetListSchema,
+  datasetNameParamsSchema,
+  datasetSchema,
+  type Dataset,
+  type DatasetList,
+  type DatasetNameParams,
+} from "./datasets/datasets.js";
 export { healthStatusSchema, type HealthStatus } from "./health/health.js";
 export {
   createItemBodySchema,

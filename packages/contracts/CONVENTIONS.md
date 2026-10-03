@@ -8,6 +8,7 @@
 - No transform (`trim`, `toLowerCase`) on a format schema such as `z.email()`: it hides the format from the OpenAPI document.
 - Timestamps are `z.iso.datetime()` strings.
 - Lists respond with `offsetPage(itemSchema)` and take `offsetPaginationQuerySchema`; single-resource routes take `idParamsSchema`.
+- A small, bounded list that clients need whole, such as a user's sessions or DTCC Engine's Datasets, responds with `z.object({ items: z.array(itemSchema) })` and takes no pagination.
 - `src/index.ts` is the public API and exports name by name. Field rules shared between contracts (`emailSchema`, `passwordSchema`) are imported file to file and stay out of it.
 - `ErrorCode` grows only when a client must tell apart two failures with the same status.
 - Rules that could regress (trimming, stripping, limits) get a test in a `*.spec.ts` next to the file.

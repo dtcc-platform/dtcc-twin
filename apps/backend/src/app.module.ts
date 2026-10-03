@@ -4,6 +4,7 @@ import { DrizzleModule } from "@nestjs/drizzle";
 import { configModuleOptions } from "./config/config.module.js";
 import { databaseModuleOptions } from "./infra/database/database.js";
 import { AuthModule } from "./modules/auth/auth.module.js";
+import { DatasetsModule } from "./modules/datasets/datasets.module.js";
 import { HealthModule } from "./modules/health/health.module.js";
 import { ItemsModule } from "./modules/items/items.module.js";
 import { SettingsModule } from "./modules/settings/settings.module.js";
@@ -18,6 +19,7 @@ import { UsersModule } from "./modules/users/users.module.js";
     AuthModule,
     SettingsModule,
     ItemsModule,
+    DatasetsModule,
   ],
 })
 export class AppModule {}
