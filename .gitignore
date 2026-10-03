@@ -21,6 +21,7 @@ __pycache__/
 .DS_Store
 .tmp/
 .temp/
+.data/
 .playwright*
 
 temp/

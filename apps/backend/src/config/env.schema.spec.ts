@@ -7,14 +7,19 @@ const JWT_SECRET = "a-test-secret-that-is-32-chars-long";
 const required = { DATABASE_URL, JWT_SECRET };
 
 describe("envSchema", () => {
-  it("fills in the defaults for everything but the secrets", () => {
-    expect(envSchema.parse(required)).toStrictEqual({
+  it("fills in the defaults for everything but the secrets, and leaves the engine unconfigured", () => {
+    const { ENGINE_URL, ENGINE_API_TOKEN, ...rest } = envSchema.parse(required);
+
+    expect(rest).toStrictEqual({
       NODE_ENV: "development",
       PORT: 3030,
       CORS_ORIGINS: [],
       DATABASE_URL,
       JWT_SECRET,
+      PACKAGE_STORAGE_DIR: ".data/packages",
     });
+    expect(ENGINE_URL).toBeUndefined();
+    expect(ENGINE_API_TOKEN).toBeUndefined();
   });
 
   it("requires DATABASE_URL, since a default would carry credentials", () => {
@@ -55,6 +60,27 @@ describe("envSchema", () => {
 
   it("rejects a NODE_ENV outside the known environments", () => {
     expect(() => envSchema.parse({ NODE_ENV: "staging", ...required })).toThrow(/NODE_ENV/);
+  });
+
+  it("treats empty engine variables as unset, since .env.example leaves them empty", () => {
+    const env = envSchema.parse({ ENGINE_URL: "", ENGINE_API_TOKEN: "", ...required });
+
+    expect(env.ENGINE_URL).toBeUndefined();
+    expect(env.ENGINE_API_TOKEN).toBeUndefined();
+  });
+
+  it("accepts only an http(s) ENGINE_URL", () => {
+    expect(envSchema.parse({ ENGINE_URL: "https://engine.example.com", ...required }).ENGINE_URL).toBe(
+      "https://engine.example.com",
+    );
+    expect(() => envSchema.parse({ ENGINE_URL: "ftp://engine.example.com", ...required })).toThrow(/ENGINE_URL/);
+    expect(() => envSchema.parse({ ENGINE_URL: "localhost:8000", ...required })).toThrow(/ENGINE_URL/);
+  });
+
+  it("accepts only an ENGINE_API_TOKEN the engine accepts", () => {
+    expect(envSchema.parse({ ENGINE_API_TOKEN: "a1-._~+/==", ...required }).ENGINE_API_TOKEN).toBe("a1-._~+/==");
+    expect(() => envSchema.parse({ ENGINE_API_TOKEN: "has space", ...required })).toThrow(/ENGINE_API_TOKEN/);
+    expect(() => envSchema.parse({ ENGINE_API_TOKEN: "a=b", ...required })).toThrow(/ENGINE_API_TOKEN/);
   });
 
   it("drops the unrelated variables that process.env always carries", () => {
