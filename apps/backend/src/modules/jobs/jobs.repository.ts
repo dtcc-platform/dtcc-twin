@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { InjectDrizzle } from "@nestjs/drizzle";
 import type { CreateJobBody, Job } from "@repo/contracts";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "../../infra/database/database.js";
 import { jobs } from "./jobs.table.js";
 
@@ -37,6 +37,15 @@ export class JobsRepository {
       .returning();
     if (!row) throw new Error("INSERT … RETURNING returned no row");
     return toStoredJob(row);
+  }
+
+  async complete(userId: string, id: string): Promise<StoredJob | undefined> {
+    const [row] = await this.db
+      .update(jobs)
+      .set({ state: "completed", progress: null, error: null, completedAt: sql`now()` })
+      .where(and(eq(jobs.userId, userId), eq(jobs.id, id)))
+      .returning();
+    return row && toStoredJob(row);
   }
 
   async update(userId: string, id: string, changes: JobChanges): Promise<StoredJob | undefined> {

@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Dataset, JobProgress, JobState } from "@repo/contracts";
@@ -16,7 +18,11 @@ import {
   type EngineRejection,
 } from "./engine.schemas.js";
 
-const timeoutMs = 10_000;
+const jsonTimeoutMs = 10_000;
+// For the whole download, not only its start.
+const downloadTimeoutMs = 60_000;
+
+type SendOptions = { body?: unknown; timeoutMs?: number };
 
 /**
  * DTCC Engine's HTTP API, the only code that knows its routes, token and response shapes. Every failure to get an
@@ -62,7 +68,7 @@ export class EngineClient {
    * `ValidationException` naming them, or a `BadRequestException` with the engine's message.
    */
   async submitJob(dataset: string, parameters: Record<string, unknown>): Promise<string> {
-    const response = await this.send("/jobs", { dataset, parameters });
+    const response = await this.send("/jobs", { body: { dataset, parameters } });
     const body: unknown = await response.json().catch(() => undefined);
 
     if (response.status === 202) {
@@ -95,8 +101,17 @@ export class EngineClient {
     return toEngineJob(job.data);
   }
 
+  /** The completed job's package; the stream errors if the engine stops sending it. */
+  async downloadPackage(engineJobId: string): Promise<Readable> {
+    const response = await this.send(`/jobs/${encodeURIComponent(engineJobId)}/package`, {
+      timeoutMs: downloadTimeoutMs,
+    });
+    if (response.status !== 200 || !response.body) throw this.fail(response, `answered ${String(response.status)}`);
+    return Readable.fromWeb(response.body as WebReadableStream<Uint8Array>);
+  }
+
   /** Calls the engine with its token, POSTing `body` as JSON if given; throws if it isn't configured or can't be reached. */
-  private async send(path: string, body?: unknown): Promise<Response> {
+  private async send(path: string, { body, timeoutMs = jsonTimeoutMs }: SendOptions = {}): Promise<Response> {
     if (!this.baseUrl) throw new EngineUnavailableError();
     const url = `${this.baseUrl}/api/v1${path}`;
     try {

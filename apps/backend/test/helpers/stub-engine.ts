@@ -198,8 +198,15 @@ export async function startStubEngine(token = "stub-engine-token") {
       update(jobId, { state, progress, finished_at: null, error: null, package: null });
     },
 
-    /** Completes a job; `available: false` reports its package as missing, as the engine does when the file is gone. */
-    completeJob(jobId: string, packageBytes: Uint8Array, { available = true } = {}): void {
+    /**
+     * Completes a job. `available: false` reports its package as missing, as the engine does when the file is gone;
+     * `served: false` reports it available but answers its download with 409, as when the file goes in between.
+     */
+    completeJob(
+      jobId: string,
+      packageBytes: Uint8Array,
+      { available = true, served = available }: { available?: boolean; served?: boolean } = {},
+    ): void {
       const { finishedAt, expiresAt } = finished();
       update(
         jobId,
@@ -210,7 +217,7 @@ export async function startStubEngine(token = "stub-engine-token") {
           error: null,
           package: { available, expires_at: expiresAt },
         },
-        available ? packageBytes : null,
+        served ? packageBytes : null,
       );
     },
 

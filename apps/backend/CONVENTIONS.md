@@ -9,7 +9,7 @@
 
 ### Routes
 
-- Every handler declares `@Serialize(schema)` for its response, or `@HttpCode(HttpStatus.NO_CONTENT)` and no body. Every `@Body`, `@Query` and `@Param` takes `{ schema }` from `@repo/contracts`. `test/e2e/contract-coverage.e2e-spec.ts` enforces both.
+- Every handler declares `@Serialize(schema)` for its response, `@FileResponse(mediaType)` when it returns a `StreamableFile`, or `@HttpCode(HttpStatus.NO_CONTENT)` and no body. Every `@Body`, `@Query` and `@Param` takes `{ schema }` from `@repo/contracts`. `test/e2e/contract-coverage.e2e-spec.ts` enforces both.
 - Routes about the caller use `me` or no id at all (`PATCH /users/me`, `/settings`) and take the user from `@CurrentUser()`, never from the URL. Declare static segments such as `me` before `:id`.
 
 ### Data

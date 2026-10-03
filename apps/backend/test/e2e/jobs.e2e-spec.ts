@@ -1,14 +1,20 @@
+import { randomBytes } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Logger, type INestApplication } from "@nestjs/common";
 import { errorResponseSchema, jobPageSchema, jobSchema, type Job } from "@repo/contracts";
-import request, { type Agent } from "supertest";
+import request, { type Agent, type Response } from "supertest";
 import type { App } from "supertest/types.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startStubEngine } from "../helpers/stub-engine.js";
 
 // ConfigModule reads the environment when app.module.ts is imported, so the stub must be listening before that.
 const engine = await startStubEngine();
+const packageDir = await mkdtemp(join(tmpdir(), "packages-"));
 vi.stubEnv("ENGINE_URL", engine.url);
 vi.stubEnv("ENGINE_API_TOKEN", engine.token);
+vi.stubEnv("PACKAGE_STORAGE_DIR", packageDir);
 const { createTestApp } = await import("../helpers/create-test-app.js");
 const { authHeader } = await import("../helpers/auth.js");
 const { truncateAllTables } = await import("../helpers/database.js");
@@ -31,6 +37,7 @@ describe("Jobs (e2e)", () => {
   afterAll(async () => {
     await app.close();
     await engine.close();
+    await rm(packageDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
   });
 
@@ -65,6 +72,15 @@ describe("Jobs (e2e)", () => {
 
   async function total(agent: Agent): Promise<number> {
     return jobPageSchema.parse((await agent.get("/api/jobs").expect(200)).body).total;
+  }
+
+  // Supertest buffers only text and JSON by default; a package is compared as bytes.
+  function binary(response: Response, done: (error: Error | null, body: Buffer) => void): void {
+    const chunks: Buffer[] = [];
+    response.on("data", (chunk: Buffer) => chunks.push(chunk));
+    response.on("end", () => {
+      done(null, Buffer.concat(chunks));
+    });
   }
 
   it("needs a logged-in user", async () => {
@@ -251,6 +267,82 @@ describe("Jobs (e2e)", () => {
       const list = jobPageSchema.parse((await ada.get("/api/jobs").expect(200)).body);
 
       expect(list.items).toEqual([expect.objectContaining({ id: job.id, state: "running" })]);
+    });
+  });
+
+  describe("GET /api/jobs/:id/package", () => {
+    const packageBytes = randomBytes(4096);
+
+    it("completes a job once its package is stored, and serves that package", async () => {
+      const job = await submit(ada);
+      engine.completeJob(lastEngineJobId(), packageBytes);
+
+      const completed = await read(ada, job.id);
+      expect(completed).toMatchObject({ state: "completed", progress: null, error: null });
+      expect(completed.completedAt).not.toBeNull();
+
+      const response = await ada.get(`/api/jobs/${job.id}/package`).buffer(true).parse(binary).expect(200);
+      expect(response.headers["content-type"]).toBe("application/zip");
+      expect(response.headers["content-disposition"]).toBe(`attachment; filename="smoke-${job.id}.dtccpkg"`);
+      expect(response.body).toEqual(packageBytes);
+    });
+
+    it("serves a completed job's package from its own storage, without the engine", async () => {
+      const job = await submit(ada);
+      engine.completeJob(lastEngineJobId(), packageBytes);
+      const completed = await read(ada, job.id);
+
+      engine.setReachable(false);
+
+      expect(await read(ada, job.id)).toEqual(completed);
+      const response = await ada.get(`/api/jobs/${job.id}/package`).buffer(true).parse(binary).expect(200);
+      expect(response.body).toEqual(packageBytes);
+    });
+
+    it("keeps a job's state while its package can't be downloaded, and completes it once it can", async () => {
+      const job = await submit(ada);
+      engine.completeJob(lastEngineJobId(), packageBytes, { served: false });
+
+      expect(await read(ada, job.id)).toMatchObject({ state: "queued", completedAt: null });
+      await ada.get(`/api/jobs/${job.id}/package`).expect(409);
+
+      engine.completeJob(lastEngineJobId(), packageBytes);
+      expect((await read(ada, job.id)).state).toBe("completed");
+    });
+
+    it("marks a job the engine completed without a package as failed", async () => {
+      const job = await submit(ada);
+      engine.completeJob(lastEngineJobId(), packageBytes, { available: false });
+
+      expect(await read(ada, job.id)).toMatchObject({
+        state: "failed",
+        error: "The engine has no package for this job",
+        completedAt: null,
+      });
+    });
+
+    it("answers CONFLICT for a job that hasn't completed", async () => {
+      const queued = await submit(ada);
+      const running = await submit(ada);
+      engine.setJob(lastEngineJobId(), "running");
+      const failed = await submit(ada);
+      engine.failJob(lastEngineJobId(), "RuntimeError");
+
+      for (const job of [queued, running, failed]) {
+        const response = await ada.get(`/api/jobs/${job.id}/package`).expect(409);
+        expect(errorResponseSchema.parse(response.body).error.code).toBe("CONFLICT");
+      }
+    });
+
+    it("answers NOT_FOUND for another user's job, as for one that does not exist", async () => {
+      const graces = await submit(grace);
+      engine.completeJob(lastEngineJobId(), packageBytes);
+
+      const other = await ada.get(`/api/jobs/${graces.id}/package`).expect(404);
+      const missing = await ada.get(`/api/jobs/${missingId}/package`).expect(404);
+
+      expect(errorResponseSchema.parse(other.body).error.code).toBe("NOT_FOUND");
+      expect(errorResponseSchema.parse(missing.body).error.code).toBe("NOT_FOUND");
     });
   });
 });
