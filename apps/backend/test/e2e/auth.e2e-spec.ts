@@ -160,7 +160,12 @@ describe("Auth (e2e)", () => {
         .send({ email: ada.email, password: ada.password })
         .expect(403);
 
-      expect(errorResponseSchema.parse(response.body).error).toMatchObject({ status: 403, code: "ACCOUNT_DISABLED" });
+      // The login form shows the message as it is.
+      expect(errorResponseSchema.parse(response.body).error).toMatchObject({
+        status: 403,
+        code: "ACCOUNT_DISABLED",
+        message: "This account has been disabled.",
+      });
       expect(setCookies(response)).toEqual({});
     });
 

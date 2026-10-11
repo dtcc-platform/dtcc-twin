@@ -4,7 +4,6 @@ import { offsetPage, offsetPaginationQuerySchema } from "../common/pagination.js
 export const roleSchema = z.enum(["user", "admin"]);
 export type Role = z.infer<typeof roleSchema>;
 
-// Whether an admin has let the user in. Only active users can get gateway keys.
 export const userStatusSchema = z.enum(["pending", "active", "disabled"]);
 export type UserStatus = z.infer<typeof userStatusSchema>;
 
@@ -55,7 +54,6 @@ export const updateUserBodySchema = z.strictObject({
 });
 export type UpdateUserBody = z.infer<typeof updateUserBodySchema>;
 
-// Approve, reject, disable and enable. Nothing goes back to pending.
 export const setUserStatusBodySchema = z.strictObject({
   status: userStatusSchema.exclude(["pending"]),
 });

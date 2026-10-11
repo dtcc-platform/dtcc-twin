@@ -18,7 +18,6 @@ export const seedData = [
     { email: "admin@example.com", name: "Admin", passwordHash, role: "admin", status: "active" },
     { id: ada, email: "ada@example.com", name: "Ada Lovelace", passwordHash, status: "active", tier: "elevated" },
     { id: alan, email: "alan@example.com", name: "Alan Turing", passwordHash, status: "active" },
-    // Waiting for approval, and one an admin turned away.
     { email: "katherine@example.com", name: "Katherine Johnson", passwordHash },
     { email: "charles@example.com", name: "Charles Babbage", passwordHash, status: "disabled" },
   ]),

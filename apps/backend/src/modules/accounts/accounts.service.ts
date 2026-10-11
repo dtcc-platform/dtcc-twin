@@ -11,10 +11,6 @@ import type {
 import { AuthService } from "../auth/auth.service.js";
 import { UsersService } from "../users/users.service.js";
 
-/**
- * Every action on a user's account, whoever calls it. The only place a status, tier or deletion changes,
- * because those reach past the users table: sessions now, the gateway's consumer and keys next.
- */
 @Injectable()
 export class AccountsService {
   constructor(

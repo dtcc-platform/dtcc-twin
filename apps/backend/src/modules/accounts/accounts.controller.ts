@@ -21,7 +21,6 @@ import { CurrentUser, Roles, type AuthUser } from "../../common/decorators/auth.
 import { Serialize } from "../../common/decorators/serialize.decorator.js";
 import { AccountsService } from "./accounts.service.js";
 
-// The caller's own account. Admins act on other users through AccountsAdminController.
 @Controller("users")
 @Roles("user")
 export class AccountsController {
@@ -34,7 +33,7 @@ export class AccountsController {
   }
 }
 
-// Admins managing other users. Admin-only, the guard's default.
+// Admin-only: the guard's default, since no handler declares @Roles.
 @Controller("admin/users")
 export class AccountsAdminController {
   constructor(private readonly accounts: AccountsService) {}

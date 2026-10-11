@@ -36,7 +36,8 @@ export class AuthService {
     // One message for both mistakes, so the answer does not reveal which emails have an account.
     if (!user) throw new UnauthorizedException("Invalid email or password");
     // Only after the password matched, so the answer tells a stranger nothing.
-    if (user.status === "disabled") throw new ForbiddenException("Account disabled", withErrorCode("ACCOUNT_DISABLED"));
+    if (user.status === "disabled")
+      throw new ForbiddenException("This account has been disabled.", withErrorCode("ACCOUNT_DISABLED"));
 
     const tokens = await this.issue(user, userAgent);
     return { user, tokens };
