@@ -13,6 +13,7 @@ src/
   features/<name>/       components, hooks and stores of one feature
   components/ui/         shadcn components
   components/layout/     anything related to layout
+  components/common/     shared components that aren't shadcn's (DataTable, ConfirmButton)
   components/fallbacks/  the pages the router falls back to (not found, route error)
   hooks/, lib/           shared hooks and utilities
 ```

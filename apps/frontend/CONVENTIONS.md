@@ -20,6 +20,7 @@
 - Pages that need a login go under `src/routes/_authenticated/`.
 - Redirect in `beforeLoad`, never by rendering `<Navigate>`. A page for one role checks `context.user.role` there.
 - Pages for development, not for users, go under `src/routes/_authenticated/dev/`, admin-only.
+- Admin pages go under `src/routes/_authenticated/admin/`; `admin.tsx` checks the role for all of them.
 - State that should survive a reload or the back button (page, filters) goes in the URL through `validateSearch`.
 - The router's `defaultNotFoundComponent` and `defaultErrorComponent` in `main.tsx` cover every route; a route with something better to say sets its own `notFoundComponent` or `errorComponent`.
 
@@ -46,6 +47,12 @@
 1. Add a query or mutation factory to `src/api/<module>.ts`, creating the file after `src/api/items.ts` for a new module.
 2. Key it under the module's `all` key; make its mutation invalidate `all`.
 3. Use it in a component with `useQuery` or `useMutation`.
+
+### Add a server-paginated table
+
+1. At module scope: `const features = tableFeatures({ rowPaginationFeature })`, `const columnHelper = createColumnHelper<typeof features, Row>()` and the columns built with it. `DataTable` accepts only a table with exactly that feature.
+2. In the page: `useState<PaginationState>` for the page, the list query from its `pageSize` and `pageIndex`, and `useTable` with `features`, `state: { pagination }`, `onPaginationChange` and `manualPagination: true`.
+3. Render `<DataTable table={table} query={query} />`. `src/routes/_authenticated/admin/users.tsx` shows the whole pattern.
 
 ### Add a form
 
