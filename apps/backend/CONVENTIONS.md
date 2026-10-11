@@ -15,7 +15,7 @@
 - Every handler declares `@Serialize(schema)` for its response, `@FileResponse(mediaType)` when it returns a `StreamableFile`, or `@HttpCode(HttpStatus.NO_CONTENT)` and no body. Every `@Body`, `@Query` and `@Param` takes `{ schema }` from `@repo/contracts`. `test/e2e/contract-coverage.e2e-spec.ts` enforces both.
 - Routes about the caller use `me` or no id at all (`PATCH /users/me`, `/settings`) and take the user from `@CurrentUser()`, never from the URL. Declare static segments such as `me` before `:id`.
 - A route lives in the module that owns the last noun in its path: `/admin/users/:id/status` in `accounts`, `/auth/sessions` in `auth`.
-- A module's routes for the caller and its admin routes on other users' data are separate controllers: `<Name>Controller`, and `<Name>AdminController` on `admin/<resource>`. A module gets an admin controller only when admins need routes of their own.
+- A module's routes for the caller and its admin routes on other users' data are separate controllers in `<name>.controller.ts`: `<Name>Controller`, and `<Name>AdminController` on `admin/<resource>`. A module gets an admin controller only when admins need routes of their own.
 
 ### Data
 
