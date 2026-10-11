@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { DrizzleModule } from "@nestjs/drizzle";
 import { configModuleOptions } from "./config/config.module.js";
 import { databaseModuleOptions } from "./infra/database/database.js";
+import { AccountsModule } from "./modules/accounts/accounts.module.js";
 import { AuthModule } from "./modules/auth/auth.module.js";
 import { DatasetsModule } from "./modules/datasets/datasets.module.js";
 import { HealthModule } from "./modules/health/health.module.js";
@@ -18,6 +19,7 @@ import { UsersModule } from "./modules/users/users.module.js";
     HealthModule,
     UsersModule,
     AuthModule,
+    AccountsModule,
     SettingsModule,
     ItemsModule,
     DatasetsModule,

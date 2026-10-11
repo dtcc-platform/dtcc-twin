@@ -1,16 +1,16 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import {
   createUserBodySchema,
   idParamsSchema,
-  offsetPaginationQuerySchema,
   updateUserBodySchema,
+  userListQuerySchema,
   userPageSchema,
   userSchema,
   type CreateUserBody,
   type IdParams,
-  type OffsetPaginationQuery,
   type UpdateUserBody,
   type User,
+  type UserListQuery,
   type UserPage,
 } from "@repo/contracts";
 import { CurrentUser, Roles, type AuthUser } from "../../common/decorators/auth.decorators.js";
@@ -24,7 +24,7 @@ export class UsersController {
 
   @Get()
   @Serialize(userPageSchema)
-  list(@Query({ schema: offsetPaginationQuerySchema }) query: OffsetPaginationQuery): Promise<UserPage> {
+  list(@Query({ schema: userListQuerySchema }) query: UserListQuery): Promise<UserPage> {
     return this.users.list(query);
   }
 
@@ -55,11 +55,5 @@ export class UsersController {
     @Body({ schema: updateUserBodySchema }) body: UpdateUserBody,
   ): Promise<User> {
     return this.users.update(id, body);
-  }
-
-  @Delete(":id")
-  @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param({ schema: idParamsSchema }) { id }: IdParams): Promise<void> {
-    return this.users.remove(id);
   }
 }

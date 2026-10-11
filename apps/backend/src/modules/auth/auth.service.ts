@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import type { LoginBody, RegisterBody, Session, User } from "@repo/contracts";
 import { createHash, randomBytes } from "node:crypto";
 import type { AuthUser } from "../../common/decorators/auth.decorators.js";
+import { withErrorCode } from "../../common/errors/with-error-code.js";
 import { UsersService } from "../users/users.service.js";
 import { SessionsRepository } from "./sessions.repository.js";
 import { AccessTokens } from "./tokens/access-tokens.js";
@@ -25,7 +26,7 @@ export class AuthService {
   ) {}
 
   async register(body: RegisterBody, userAgent?: string): Promise<LoggedIn> {
-    const user = await this.users.create(body);
+    const user = await this.users.register(body);
     const tokens = await this.issue(user, userAgent);
     return { user, tokens };
   }
@@ -34,6 +35,8 @@ export class AuthService {
     const user = await this.users.verifyCredentials(email, password);
     // One message for both mistakes, so the answer does not reveal which emails have an account.
     if (!user) throw new UnauthorizedException("Invalid email or password");
+    // Only after the password matched, so the answer tells a stranger nothing.
+    if (user.status === "disabled") throw new ForbiddenException("Account disabled", withErrorCode("ACCOUNT_DISABLED"));
 
     const tokens = await this.issue(user, userAgent);
     return { user, tokens };
@@ -61,6 +64,12 @@ export class AuthService {
 
     // Read fresh rather than carried over, so a role change reaches the user at their next refresh.
     const user = await this.users.get(session.userId);
+    // Disabling ends sessions already; this catches a refresh that raced it.
+    if (user.status === "disabled") {
+      await this.sessions.delete(user.id, session.id);
+      return undefined;
+    }
+
     const accessToken = await this.accessTokens.sign({ userId: user.id, sessionId: session.id, role: user.role });
     return { accessToken, refreshToken };
   }

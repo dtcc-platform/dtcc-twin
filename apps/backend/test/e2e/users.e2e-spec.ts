@@ -45,6 +45,12 @@ describe("Users (e2e)", () => {
       expect(user.updatedAt).toBe(user.createdAt);
     });
 
+    it("creates an active user on the default tier, since an admin made them", async () => {
+      const user = await createUser({ email: "ada@example.com", name: "Ada" });
+
+      expect(user).toMatchObject({ status: "active", tier: "default" });
+    });
+
     it("creates a user with the role the admin gives", async () => {
       const user = await createUser({ email: "grace@example.com", name: "Grace", role: "admin" });
 
@@ -104,6 +110,25 @@ describe("Users (e2e)", () => {
       expect(second).toMatchObject({ limit: 1, offset: 1, total: 2 });
       expect(second.items.map((user) => user.name)).toEqual(["Grace"]);
     });
+
+    it("lists only the users with the given status, counting only them", async () => {
+      await createUser({ email: "ada@example.com", name: "Ada" });
+      await request(app.getHttpServer())
+        .post("/api/auth/register")
+        .send({ email: "grace@example.com", name: "Grace", password: "correct horse" })
+        .expect(201);
+
+      const pending = userPageSchema.parse((await admin.get("/api/users?status=pending").expect(200)).body);
+
+      expect(pending.total).toBe(1);
+      expect(pending.items.map((user) => user.name)).toEqual(["Grace"]);
+    });
+
+    it("rejects an unknown status filter", async () => {
+      const response = await admin.get("/api/users?status=banned").expect(400);
+
+      expect(errorResponseSchema.parse(response.body).error.errors?.map((issue) => issue.path)).toEqual(["status"]);
+    });
   });
 
   describe("GET /api/users/:id", () => {
@@ -162,6 +187,16 @@ describe("Users (e2e)", () => {
 
       expect(errorResponseSchema.parse(response.body).error.code).toBe("NOT_FOUND");
     });
+
+    it("leaves status and tier to their own routes", async () => {
+      const created = await createUser({ email: "ada@example.com", name: "Ada" });
+
+      const status = await admin.patch(`/api/users/${created.id}`).send({ status: "disabled" }).expect(400);
+      const tier = await admin.patch(`/api/users/${created.id}`).send({ tier: "elevated" }).expect(400);
+
+      expect(errorResponseSchema.parse(status.body).error.code).toBe("VALIDATION_FAILED");
+      expect(errorResponseSchema.parse(tier.body).error.code).toBe("VALIDATION_FAILED");
+    });
   });
 
   describe("DELETE /api/users/:id", () => {
@@ -185,6 +220,25 @@ describe("Users (e2e)", () => {
       const response = await admin.delete(`/api/users/${missingId}`).expect(404);
 
       expect(errorResponseSchema.parse(response.body).error.code).toBe("NOT_FOUND");
+    });
+
+    it("refuses to let an admin delete themselves", async () => {
+      const me = await createUser({ email: "root@example.com", name: "Root", role: "admin" });
+      await createUser({ email: "other-admin@example.com", name: "Other", role: "admin" });
+      const self = request.agent(app.getHttpServer()).set(await authHeader("admin", { userId: me.id }));
+
+      const response = await self.delete(`/api/users/${me.id}`).expect(409);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("CONFLICT");
+    });
+
+    it("refuses to delete the last active admin", async () => {
+      const onlyAdmin = await createUser({ email: "root@example.com", name: "Root", role: "admin" });
+
+      const response = await admin.delete(`/api/users/${onlyAdmin.id}`).expect(409);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("CONFLICT");
+      await admin.get(`/api/users/${onlyAdmin.id}`).expect(200);
     });
   });
 

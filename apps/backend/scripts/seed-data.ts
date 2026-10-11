@@ -15,9 +15,12 @@ const alan = "00000000-0000-7000-8000-000000000002";
 /** Inserted in order, so a table comes after the tables it references. Also what seeding counts and wipes. */
 export const seedData = [
   rows(users, [
-    { email: "admin@example.com", name: "Admin", passwordHash, role: "admin" },
-    { id: ada, email: "ada@example.com", name: "Ada Lovelace", passwordHash },
-    { id: alan, email: "alan@example.com", name: "Alan Turing", passwordHash },
+    { email: "admin@example.com", name: "Admin", passwordHash, role: "admin", status: "active" },
+    { id: ada, email: "ada@example.com", name: "Ada Lovelace", passwordHash, status: "active", tier: "elevated" },
+    { id: alan, email: "alan@example.com", name: "Alan Turing", passwordHash, status: "active" },
+    // Waiting for approval, and one an admin turned away.
+    { email: "katherine@example.com", name: "Katherine Johnson", passwordHash },
+    { email: "charles@example.com", name: "Charles Babbage", passwordHash, status: "disabled" },
   ]),
   // Alan has no row, so he gets the defaults.
   rows(settings, [{ userId: ada, theme: "dark", notificationsEnabled: false }]),

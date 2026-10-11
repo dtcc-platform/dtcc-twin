@@ -12,5 +12,6 @@ import { AuthCookies } from "./tokens/auth-cookies.js";
   imports: [UsersModule],
   controllers: [AuthController],
   providers: [AuthService, SessionsRepository, AccessTokens, AuthCookies, { provide: APP_GUARD, useClass: AuthGuard }],
+  exports: [AuthService],
 })
 export class AuthModule {}
