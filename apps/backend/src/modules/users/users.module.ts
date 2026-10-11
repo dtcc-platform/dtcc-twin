@@ -1,10 +1,9 @@
 import { Module } from "@nestjs/common";
-import { UsersController } from "./users.controller.js";
 import { UsersRepository } from "./users.repository.js";
 import { UsersService } from "./users.service.js";
 
+// The user record, which other modules read. No routes: those are in AccountsModule.
 @Module({
-  controllers: [UsersController],
   providers: [UsersService, UsersRepository],
   exports: [UsersService],
 })

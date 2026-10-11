@@ -57,13 +57,14 @@ export class UsersService {
     return this.apply(id, changes);
   }
 
-  /** Only the column. Disabling also ends sessions, which AccountsService does. */
+  /** Writes the column only. Call it through AccountsService, which also ends sessions on disable. */
   async setStatus(id: string, status: UserStatus): Promise<User> {
     const user = await this.get(id);
     if (user.status === status) return user;
     return this.apply(id, { status });
   }
 
+  /** Writes the column only. Call it through AccountsService. */
   async setTier(id: string, tier: Tier): Promise<User> {
     const user = await this.get(id);
     if (user.tier === tier) return user;
@@ -78,6 +79,7 @@ export class UsersService {
     }
   }
 
+  /** Deletes the row only. Call it through AccountsService, which checks who may be deleted. */
   async remove(id: string): Promise<void> {
     // Settings and items go with the user: their foreign keys cascade.
     const deleted = await this.repository.delete(id);

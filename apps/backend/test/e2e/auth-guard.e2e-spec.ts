@@ -99,7 +99,7 @@ describe("AuthGuard (e2e)", () => {
   });
 
   it("protects the app's own routes and leaves health public", async () => {
-    await request(app.getHttpServer()).get("/api/users").expect(401);
+    await request(app.getHttpServer()).get("/api/admin/users").expect(401);
     await request(app.getHttpServer()).get("/api/health/live").expect(200);
   });
 });

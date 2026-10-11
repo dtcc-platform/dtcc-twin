@@ -37,7 +37,7 @@ function PlaygroundPage() {
 
       <h2 className={heading}>Valid calls</h2>
       <div className={calls}>
-        <Call title="List users" request="GET /api/users?limit=5" outcome={list}>
+        <Call title="List users" request="GET /api/admin/users?limit=5" outcome={list}>
           {list.data?.items.length ? (
             <div className={picker}>
               Act on:
@@ -58,7 +58,7 @@ function PlaygroundPage() {
 
         <Call
           title="Create a user"
-          request="POST /api/users"
+          request="POST /api/admin/users"
           outcome={create}
           action={
             <RunButton
@@ -106,10 +106,10 @@ function SelectedUser({ id }: { id: string }) {
 
   return (
     <>
-      <Call title="Get the selected user" request={`GET /api/users/${id}`} outcome={detail} />
+      <Call title="Get the selected user" request={`GET /api/admin/users/${id}`} outcome={detail} />
       <Call
         title="Rename them"
-        request={`PATCH /api/users/${id}`}
+        request={`PATCH /api/admin/users/${id}`}
         outcome={rename}
         action={
           <RunButton
@@ -167,7 +167,7 @@ function SelectedUser({ id }: { id: string }) {
       {selectedItemId ? <SelectedItem key={selectedItemId} id={selectedItemId} /> : null}
       <Call
         title="Delete the user, with their settings and items"
-        request={`DELETE /api/users/${id}`}
+        request={`DELETE /api/admin/users/${id}`}
         outcome={remove}
         action={<RunButton pending={remove.isPending} onRun={() => remove.mutate(id)} />}
       />
@@ -216,14 +216,14 @@ const invalidCalls: InvalidCallProps[] = [
   {
     title: "Invalid body",
     expected: "400 VALIDATION_FAILED with errors for email, name and password",
-    config: { method: "POST", url: "/users", data: { email: "not-an-email", name: 42 } },
+    config: { method: "POST", url: "/admin/users", data: { email: "not-an-email", name: 42 } },
   },
   {
     title: "Unknown key",
     expected: "400 VALIDATION_FAILED naming the key (and the missing name)",
     config: {
       method: "POST",
-      url: "/users",
+      url: "/admin/users",
       data: { email: "ada@example.com", nmae: "Ada", password: "password" },
     },
   },
@@ -233,7 +233,7 @@ const invalidCalls: InvalidCallProps[] = [
     // Sent as is: axios would otherwise turn the invalid JSON text into a valid JSON string.
     config: {
       method: "POST",
-      url: "/users",
+      url: "/admin/users",
       data: '{"name":',
       headers: { "Content-Type": "application/json" },
       transformRequest: (data: unknown) => data,
@@ -242,7 +242,7 @@ const invalidCalls: InvalidCallProps[] = [
   {
     title: "Id that is not a UUID",
     expected: "400 VALIDATION_FAILED with an error for id",
-    config: { method: "GET", url: "/users/not-a-uuid" },
+    config: { method: "GET", url: "/admin/users/not-a-uuid" },
   },
   {
     title: "Limit above 100",
@@ -257,7 +257,7 @@ const invalidCalls: InvalidCallProps[] = [
   {
     title: "Missing user",
     expected: "404 NOT_FOUND",
-    config: { method: "GET", url: `/users/${missingId}` },
+    config: { method: "GET", url: `/admin/users/${missingId}` },
   },
   {
     title: "Item with an owner",

@@ -36,10 +36,18 @@ test/                     e2e specs and their helpers
 - The guard reads `Authorization: Bearer` first, then the cookie, and never touches the database.
 - Every route is admin-only unless it declares `@Roles("user")`, for any logged-in user, or `@Public()`, for anyone. Admins pass every role check.
 
+## Accounts
+
+- `users` is the user record, which other modules read; it has no routes. `accounts` holds every route on a user: `AccountsController` for the caller (`PATCH /users/me`) and `AccountsAdminController` for admins (`/admin/users`). `AccountsService` is the only place a user's status, tier or existence changes.
+- Each user has a status, `pending`, `active` or `disabled`, and a tier, `default` or `elevated`. Signing up makes a `pending` user, logged in at once; a user an admin creates starts `active`.
+- Admins change them with `PUT /admin/users/:id/status` (approve, reject, disable, enable; nothing goes back to `pending`) and `PUT /admin/users/:id/tier`. The tier survives disable and enable. `PATCH /admin/users/:id` edits only name and email.
+- Disabling ends the user's sessions, and login answers 403 `ACCOUNT_DISABLED` once the password matches. An access token already issued keeps working until it expires, up to 15 minutes.
+- Admins can't change their own status or delete themselves, and the last active admin can't be disabled or deleted.
+
 ## Database
 
 - `compose.yaml` runs Postgres 18. `pnpm db:push` syncs the `*.table.ts` files into it; there are no migrations until the first deploy with data worth keeping.
-- `pnpm db:seed` adds `admin@example.com`, `ada@example.com` and `alan@example.com`, all with the password `password`.
+- `pnpm db:seed` adds the active `admin@example.com`, `ada@example.com` (elevated tier) and `alan@example.com`, the pending `katherine@example.com` and the disabled `charles@example.com`, all with the password `password`.
 - The app boots without a reachable database; `/api/health/ready` answers 503 until it is up.
 
 ## DTCC Engine

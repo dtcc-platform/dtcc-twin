@@ -1,45 +1,18 @@
-import { Body, Controller, Delete, HttpCode, HttpStatus, Param, Put } from "@nestjs/common";
-import {
-  idParamsSchema,
-  setUserStatusBodySchema,
-  setUserTierBodySchema,
-  userSchema,
-  type IdParams,
-  type SetUserStatusBody,
-  type SetUserTierBody,
-  type User,
-} from "@repo/contracts";
-import { CurrentUser, type AuthUser } from "../../common/decorators/auth.decorators.js";
+import { Body, Controller, Patch } from "@nestjs/common";
+import { updateUserBodySchema, userSchema, type UpdateUserBody, type User } from "@repo/contracts";
+import { CurrentUser, Roles, type AuthUser } from "../../common/decorators/auth.decorators.js";
 import { Serialize } from "../../common/decorators/serialize.decorator.js";
 import { AccountsService } from "./accounts.service.js";
 
-// Admin-only. Under /users beside UsersController, which keeps the plain reads and profile edits.
+// The caller's own account. Admins act on other users through AccountsAdminController.
 @Controller("users")
+@Roles("user")
 export class AccountsController {
   constructor(private readonly accounts: AccountsService) {}
 
-  @Put(":id/status")
+  @Patch("me")
   @Serialize(userSchema)
-  setStatus(
-    @CurrentUser() caller: AuthUser,
-    @Param({ schema: idParamsSchema }) { id }: IdParams,
-    @Body({ schema: setUserStatusBodySchema }) { status }: SetUserStatusBody,
-  ): Promise<User> {
-    return this.accounts.setStatus(id, status, caller.userId);
-  }
-
-  @Put(":id/tier")
-  @Serialize(userSchema)
-  setTier(
-    @Param({ schema: idParamsSchema }) { id }: IdParams,
-    @Body({ schema: setUserTierBodySchema }) { tier }: SetUserTierBody,
-  ): Promise<User> {
-    return this.accounts.setTier(id, tier);
-  }
-
-  @Delete(":id")
-  @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@CurrentUser() caller: AuthUser, @Param({ schema: idParamsSchema }) { id }: IdParams): Promise<void> {
-    return this.accounts.remove(id, caller.userId);
+  updateMe(@CurrentUser() user: AuthUser, @Body({ schema: updateUserBodySchema }) body: UpdateUserBody): Promise<User> {
+    return this.accounts.update(user.userId, body);
   }
 }

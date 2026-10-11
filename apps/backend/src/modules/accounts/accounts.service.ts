@@ -1,15 +1,42 @@
 import { ConflictException, Injectable } from "@nestjs/common";
-import type { SetUserStatusBody, Tier, User } from "@repo/contracts";
+import type {
+  CreateUserBody,
+  SetUserStatusBody,
+  Tier,
+  UpdateUserBody,
+  User,
+  UserListQuery,
+  UserPage,
+} from "@repo/contracts";
 import { AuthService } from "../auth/auth.service.js";
 import { UsersService } from "../users/users.service.js";
 
-/** Status, tier and deletion, which reach beyond the users table: sessions now, the gateway's consumers next. */
+/**
+ * Every action on a user's account, whoever calls it. The only place a status, tier or deletion changes,
+ * because those reach past the users table: sessions now, the gateway's consumer and keys next.
+ */
 @Injectable()
 export class AccountsService {
   constructor(
     private readonly users: UsersService,
     private readonly auth: AuthService,
   ) {}
+
+  list(query: UserListQuery): Promise<UserPage> {
+    return this.users.list(query);
+  }
+
+  get(id: string): Promise<User> {
+    return this.users.get(id);
+  }
+
+  create(body: CreateUserBody): Promise<User> {
+    return this.users.create(body);
+  }
+
+  update(id: string, changes: UpdateUserBody): Promise<User> {
+    return this.users.update(id, changes);
+  }
 
   async setStatus(id: string, status: SetUserStatusBody["status"], callerId: string): Promise<User> {
     if (id === callerId) throw new ConflictException("Admins cannot change their own status");
