@@ -1,15 +1,24 @@
-import type { CreateUserBody, OffsetPaginationQuery, UpdateUserBody, User, UserPage } from "@repo/contracts";
-import { mutationOptions, queryOptions } from "@tanstack/react-query";
+import type {
+  CreateUserBody,
+  SetUserStatusBody,
+  SetUserTierBody,
+  UpdateUserBody,
+  User,
+  UserListQuery,
+  UserPage,
+} from "@repo/contracts";
+import { keepPreviousData, mutationOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "./client/api-client.ts";
 
 const all = ["accounts"] as const;
 
 export const accountQueries = {
   all,
-  list: (query: Partial<OffsetPaginationQuery> = {}) =>
+  list: (query: Partial<UserListQuery> = {}) =>
     queryOptions({
       queryKey: [...all, "list", query],
       queryFn: async ({ signal }) => (await api.get<UserPage>("/admin/users", { params: query, signal })).data,
+      placeholderData: keepPreviousData,
     }),
   detail: (id: string) =>
     queryOptions({
@@ -28,6 +37,18 @@ export const accountMutations = {
     mutationOptions({
       mutationFn: async ({ id, body }: { id: string; body: UpdateUserBody }) =>
         (await api.patch<User>(`/admin/users/${id}`, body)).data,
+      onSuccess: (_user, _variables, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: all }),
+    }),
+  setStatus: () =>
+    mutationOptions({
+      mutationFn: async ({ id, ...body }: { id: string } & SetUserStatusBody) =>
+        (await api.put<User>(`/admin/users/${id}/status`, body)).data,
+      onSuccess: (_user, _variables, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: all }),
+    }),
+  setTier: () =>
+    mutationOptions({
+      mutationFn: async ({ id, ...body }: { id: string } & SetUserTierBody) =>
+        (await api.put<User>(`/admin/users/${id}/tier`, body)).data,
       onSuccess: (_user, _variables, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: all }),
     }),
   delete: () =>

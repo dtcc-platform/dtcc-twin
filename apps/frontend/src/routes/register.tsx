@@ -24,7 +24,9 @@ function RegisterPage() {
       <Card>
         <CardHeader>
           <CardTitle>Create an account</CardTitle>
-          <CardDescription>You are logged in straight away.</CardDescription>
+          <CardDescription>
+            You are logged in straight away. An admin approves new accounts before they can create API keys.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <RegisterForm onRegistered={() => void navigate({ href: safeRedirect(search.redirect), replace: true })} />

@@ -26,9 +26,14 @@ export function SiteHeader() {
             <Link to="/items" className={link}>
               Items
             </Link>
-            <Link to="/profile" className={link}>
-              Profile
+            <Link to="/account" className={link}>
+              Account
             </Link>
+            {me.data.role === "admin" && (
+              <Link to="/admin" className={link}>
+                Admin
+              </Link>
+            )}
             <span className="ml-auto text-muted-foreground">Logged in as {me.data.name}</span>
             <Button variant="outline" size="sm" disabled={logout.isPending} onClick={logOut}>
               Log out

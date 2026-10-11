@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,18 +14,26 @@ import { Button } from "@/components/ui/button";
 
 type ConfirmButtonProps = {
   label: string;
+  variant?: ComponentProps<typeof Button>["variant"];
   title: string;
   description: string;
   disabled?: boolean;
   onConfirm: () => void;
 };
 
-export function ConfirmButton({ label, title, description, disabled, onConfirm }: ConfirmButtonProps) {
+export function ConfirmButton({
+  label,
+  variant = "destructive",
+  title,
+  description,
+  disabled,
+  onConfirm,
+}: ConfirmButtonProps) {
   const [open, setOpen] = useState(false);
 
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
-      <AlertDialogTrigger render={<Button variant="destructive" size="sm" disabled={disabled} />}>
+      <AlertDialogTrigger render={<Button variant={variant} size="sm" disabled={disabled} />}>
         {label}
       </AlertDialogTrigger>
       <AlertDialogContent>

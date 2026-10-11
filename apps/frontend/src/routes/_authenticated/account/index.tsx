@@ -1,4 +1,4 @@
-import { themeSchema } from "@repo/contracts";
+import { themeSchema, type UserStatus } from "@repo/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { authMutations, authQueries } from "@/api/auth";
@@ -10,22 +10,42 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { AccountStatusBadge } from "@/features/accounts/account-status-badge";
 
-export const Route = createFileRoute("/_authenticated/profile")({ component: ProfilePage });
+export const Route = createFileRoute("/_authenticated/account/")({ component: ProfilePage });
 
 function ProfilePage() {
-  // The route guard (_authenticated.tsx) only lets this page load once `me` holds the user.
-  const me = useQuery(authQueries.me());
-
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-6 p-8">
-      <div>
-        <h1 className="text-4xl font-semibold tracking-tight">{me.data?.name}</h1>
-        <p className="text-muted-foreground">{me.data?.email}</p>
-      </div>
+    <>
+      <StatusCard />
       <SettingsCard />
       <SessionsCard />
-    </main>
+    </>
+  );
+}
+
+const statusDescriptions: Record<UserStatus, string> = {
+  pending: "An admin has to approve your account before you can create API keys.",
+  active: "You can create API keys to use DTCC Core with our data services.",
+  disabled: "An admin has disabled your account.",
+};
+
+function StatusCard() {
+  const me = useQuery(authQueries.me());
+  if (!me.data) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          Account <AccountStatusBadge status={me.data.status} />
+        </CardTitle>
+        <CardDescription>{statusDescriptions[me.data.status]}</CardDescription>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">
+        Tier: <span className="text-foreground">{me.data.tier}</span>
+      </CardContent>
+    </Card>
   );
 }
 
