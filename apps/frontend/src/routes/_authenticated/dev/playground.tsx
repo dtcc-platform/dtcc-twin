@@ -6,7 +6,7 @@ import { api } from "@/api/client/api-client";
 import { ApiError } from "@/api/client/api-error";
 import { itemMutations, itemQueries } from "@/api/items";
 import { settingsMutations, settingsQueries } from "@/api/settings";
-import { userMutations, userQueries } from "@/api/users";
+import { accountMutations, accountQueries } from "@/api/accounts";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -20,8 +20,8 @@ export const Route = createFileRoute("/_authenticated/dev/playground")({
 // Exercises the API with valid and invalid calls; admin-only because most of them are.
 function PlaygroundPage() {
   const [selectedId, setSelectedId] = useState<string>();
-  const list = useQuery(userQueries.list({ limit: 5 }));
-  const create = useMutation(userMutations.create());
+  const list = useQuery(accountQueries.list({ limit: 5 }));
+  const create = useMutation(accountMutations.create());
 
   return (
     <main className="mx-auto max-w-6xl p-8">
@@ -30,9 +30,9 @@ function PlaygroundPage() {
       </Link>
       <h1 className="my-4 text-4xl font-semibold tracking-tight">Users, settings and items API</h1>
       <p className="text-muted-foreground">
-        Valid calls go through <code className={code}>src/api/users.ts</code>, <code className={code}>settings.ts</code>{" "}
-        and <code className={code}>items.ts</code>; invalid ones use the raw <code className={code}>api</code> client to
-        send what the typed options would not allow.
+        Valid calls go through <code className={code}>src/api/accounts.ts</code>,{" "}
+        <code className={code}>settings.ts</code> and <code className={code}>items.ts</code>; invalid ones use the raw{" "}
+        <code className={code}>api</code> client to send what the typed options would not allow.
       </p>
 
       <h2 className={heading}>Valid calls</h2>
@@ -96,13 +96,13 @@ function PlaygroundPage() {
 
 function SelectedUser({ id }: { id: string }) {
   const [selectedItemId, setSelectedItemId] = useState<string>();
-  const detail = useQuery(userQueries.detail(id));
-  const rename = useMutation(userMutations.update());
+  const detail = useQuery(accountQueries.detail(id));
+  const rename = useMutation(accountMutations.update());
   const settings = useQuery(settingsQueries.detail());
   const updateSettings = useMutation(settingsMutations.update());
   const items = useQuery(itemQueries.list({ limit: 5 }));
   const createItem = useMutation(itemMutations.create());
-  const remove = useMutation(userMutations.delete());
+  const remove = useMutation(accountMutations.delete());
 
   return (
     <>

@@ -2,9 +2,9 @@ import type { CreateUserBody, OffsetPaginationQuery, UpdateUserBody, User, UserP
 import { mutationOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "./client/api-client.ts";
 
-const all = ["users"] as const;
+const all = ["accounts"] as const;
 
-export const userQueries = {
+export const accountQueries = {
   all,
   list: (query: Partial<OffsetPaginationQuery> = {}) =>
     queryOptions({
@@ -18,7 +18,7 @@ export const userQueries = {
     }),
 };
 
-export const userMutations = {
+export const accountMutations = {
   create: () =>
     mutationOptions({
       mutationFn: async (body: CreateUserBody) => (await api.post<User>("/admin/users", body)).data,

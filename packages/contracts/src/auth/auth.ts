@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { emailSchema, userNameSchema, passwordSchema } from "../users/users.js";
+import { emailSchema, userNameSchema, passwordSchema } from "../accounts/accounts.js";
 
 export const registerBodySchema = z.strictObject({
   email: emailSchema,

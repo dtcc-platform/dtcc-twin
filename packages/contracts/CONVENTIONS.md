@@ -2,7 +2,7 @@
 
 ## Rules
 
-- One folder per API module (`src/users/users.ts`). Each schema sits next to its inferred type: `userSchema`, `type User`.
+- One folder per API module, named after the backend module: `src/accounts/accounts.ts`. Schemas are named after the resource they describe, each next to its inferred type: `userSchema`, `type User`.
 - **Response schemas** use `z.object`. Unknown keys are stripped, so the schema is also the allowlist of what leaves the API: a `passwordHash` on the row never reaches the wire. Input rules (trimming, lengths) stay off them.
 - **Request bodies** use `z.strictObject`: an unknown key, such as a typo like `nmae`, is a 400 instead of being dropped. Update bodies make every field optional.
 - No transform (`trim`, `toLowerCase`) on a format schema such as `z.email()`: it hides the format from the OpenAPI document.

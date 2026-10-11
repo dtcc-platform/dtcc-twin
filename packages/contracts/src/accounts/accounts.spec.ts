@@ -6,7 +6,7 @@ import {
   updateUserBodySchema,
   userListQuerySchema,
   userSchema,
-} from "./users.js";
+} from "./accounts.js";
 
 const user = {
   id: "0199a6b4-7c1e-7d2a-9f3b-2c4d5e6f7a8b",
