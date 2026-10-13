@@ -459,7 +459,7 @@ packages. It is not ordinary restart behavior or a production reset policy.
 Stop the API before applying the new code, let active work finish and all old
 workers exit, then reset only Engine's development Redis DB 0 and its package
 volume before starting the new code. Preserve test DB 1 and unrelated services
-and storage. The ordered procedure is in the [README](../../README.md#engine-cancellation-transition-planned).
+and storage. The ordered procedure is in the [README](../../README.md#engine-cancellation-transition).
 Approving or documenting this policy does not execute the reset.
 
 ## Deployment and authentication

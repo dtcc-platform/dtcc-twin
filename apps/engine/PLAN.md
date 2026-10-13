@@ -2552,7 +2552,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 4: Lifecycle behavior
 
-Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 is not executed. The remaining lifecycle work is still an outline; this section does not complete increment 4.
+Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13 and is committed in `d2b04c2`. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 was executed 2026-10-13; the user's instruction to finish the remaining tasks gave Step 1's go-ahead. Its results: `engine` and `engine-worker` were stopped. Database 0 held 21 keys, 10 of them job records from earlier manual runs, and no queued job; database 1 held 147. After `FLUSHDB`, database 0 had 0 keys and database 1 still 147. The two containers, both of project `dtcc-twin`, were the only ones that mounted `dtcc-twin_engine-packages`, whose labels named that project and `engine-packages`; the containers and the volume were removed, and `dtcc-twin_postgres-data` remained. With `pnpm dev:engine`, cancelling `smoke` while `city_volume_mesh` ran answered `200` with `cancelled`, and cancelling `city_volume_mesh` answered `409` with `execution_started`. `city_volume_mesh` completed after 103 s in the worker, and its 68,525-byte package downloaded. `smoke` stayed `cancelled`, its download answered `409`, and when the worker received it, the worker logged that it does not run because its record is `refused`, and Celery logged the task as ignored. With the worker stopped after a warm shutdown, a `smoke` job was `queued`, and cancelling it answered `200` with `cancelled`. Started again, the worker received and skipped it the same way, a later `smoke` job completed, and the first stayed `cancelled` without a package. The two cancelled records had TTLs of 2,678,263 and 2,678,384 s. Stopped, the worker logged a warm shutdown, and both containers exited with 0. `engine:check` gave 111 passed in 29.6 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`; `pnpm check` passed. The cancellation part of increment 4 is complete. The remaining lifecycle work is still an outline; this section does not complete increment 4.
 
 **Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages, and of packages left without a completed job, such as one kept after its job failed or one whose record has no finish time. It also handles a failed job whose worker recorded no exception type. The loss of a pool process, which Celery may record as a failure, is distinguished from the loss of the whole worker, which can leave the job's state stale. Both gaps were found in increment 2a's review.
 
@@ -2598,7 +2598,7 @@ No operation creates a missing record or overwrites an existing decision or outc
 
 Cancelled status includes its recorded finish time and no progress, error, or package. Package download returns `409` until the job publicly expires, then `404`. All public job routes expire cancellation after 30 periods of 24 hours; the record lasts 31 days. Repeated cancellation, polling, and eventual delivery do not reset either deadline. Delivery after the record disappears still cannot compute.
 
-**One-time development transition:** the approved policy discards local job history, queued messages, Celery results, and packages when this implementation is introduced. It has not been executed. Before cancellation code reaches the source mount, stop the API and warm-stop all old workers, allowing active computation to finish and confirming process exit. Keep Redis running; clear only the development Compose project's Engine DB 0. Identify the project's package volume, remove the stopped API/worker containers referencing it, and remove only that `engine-packages` volume. Then apply, rebuild, and start the new API and worker together before resuming submissions. Preserve DB 1, Postgres, and unrelated storage. Use the [README procedure](../../README.md#engine-cancellation-transition-planned), including its stop-timeout and volume-reference requirements. This removes the need for permanent legacy handling; it is not a routine restart policy. Every consumer of these queues must enforce the gate before cancellation is exposed, including future deployments.
+**One-time development transition:** the approved policy discards local job history, queued messages, Celery results, and packages when this implementation is introduced. Task 19 ran it on the development machine. Before cancellation code reaches the source mount, stop the API and warm-stop all old workers, allowing active computation to finish and confirming process exit. Keep Redis running; clear only the development Compose project's Engine DB 0. Identify the project's package volume, remove the stopped API/worker containers referencing it, and remove only that `engine-packages` volume. Then apply, rebuild, and start the new API and worker together before resuming submissions. Preserve DB 1, Postgres, and unrelated storage. Use the [README procedure](../../README.md#engine-cancellation-transition), including its stop-timeout and volume-reference requirements. This removes the need for permanent legacy handling; it is not a routine restart policy. Every consumer of these queues must enforce the gate before cancellation is exposed, including future deployments.
 
 **Verification to implement, not results:** write tests first and confirm each fails for missing behavior rather than setup/import errors. Existing test expectations may change only after the proposed change and reason are reviewed and approved. Use isolated test Redis and real prefork workers for race and delivery checks, with observable Dataset execution counts:
 
@@ -3698,11 +3698,11 @@ Record Task 18's results in Increment 4's status, leave the changes uncommitted,
 
 **Interfaces:** consumes Tasks 17 and 18 and the README's transition procedure. Produces no code: the development engine runs the gate, with its earlier jobs and packages discarded, and the README describes the transition for developers whose engine still has jobs from before it.
 
-- [ ] **Step 1: Ask before the transition**
+- [x] **Step 1: Ask before the transition**
 
 The transition deletes the development engine's job records, queued jobs, Celery results, and packages. Its policy was approved on 2026-10-13; running it now needs the user's go-ahead. Stop until the user gives it.
 
-- [ ] **Step 2: Run the transition**
+- [x] **Step 2: Run the transition**
 
 Follow the README's procedure with these commands, from the repository root:
 
@@ -3713,7 +3713,7 @@ Follow the README's procedure with these commands, from the repository root:
 5. `docker compose --profile engine rm -f engine engine-worker`, then `docker volume rm <package volume>`.
 6. `docker volume ls --filter label=com.docker.compose.project=<that project>`. Expected: the project's `postgres-data` volume remains.
 
-- [ ] **Step 3: Describe the transition as current**
+- [x] **Step 3: Describe the transition as current**
 
 In `README.md`, in the transition section:
 
@@ -3725,7 +3725,7 @@ In `README.md`, in the transition section:
 
 In `apps/engine/DESIGN.md` and in this file, replace `README.md#engine-cancellation-transition-planned` with `README.md#engine-cancellation-transition`. In the Cancellation section's "One-time development transition" paragraph, replace "It has not been executed." with "Task 19 ran it on the development machine."
 
-- [ ] **Step 4: Cancel through the worker service**
+- [x] **Step 4: Cancel through the worker service**
 
 Start `pnpm dev:engine` and wait until the worker logs that it is ready. With the development token, and the bounds `[319891, 6399790, 320091, 6399990]`:
 
@@ -3735,12 +3735,12 @@ Start `pnpm dev:engine` and wait until the worker logs that it is ready. With th
 
 Stop `pnpm dev:engine`. Expected: the worker logs a warm shutdown.
 
-- [ ] **Step 5: Validate**
+- [x] **Step 5: Validate**
 
 Run: `pnpm engine:check`, `pnpm engine:check:prod`, `npx --yes prettier@3.9.6 --check README.md apps/engine/DESIGN.md apps/engine/PLAN.md`, then `pnpm check`.
 Expected: 111 passed; the production and token checks pass; the files use Prettier code style; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
 
-- [ ] **Step 6: Stop for review**
+- [x] **Step 6: Stop for review**
 
 Record Task 19's results in Increment 4's status, including the outcome of each check in Step 4 and the database sizes from Step 2. Leave the changes uncommitted, and report Steps 2, 4, and 5. Suggested commit message: `Docs: Moved the development engine to job cancellation`.
 
