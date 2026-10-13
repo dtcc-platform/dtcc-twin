@@ -2552,7 +2552,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 4: Lifecycle behavior
 
-Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is left uncommitted for review. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Tasks 18 and 19 are not executed. The remaining lifecycle work is still an outline; this section does not complete increment 4.
+Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 is not executed. The remaining lifecycle work is still an outline; this section does not complete increment 4.
 
 **Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages, and of packages left without a completed job, such as one kept after its job failed or one whose record has no finish time. It also handles a failed job whose worker recorded no exception type. The loss of a pool process, which Celery may record as a failure, is distinguished from the loss of the whole worker, which can leave the job's state stale. Both gaps were found in increment 2a's review.
 
@@ -3284,7 +3284,7 @@ Record Task 17's results in Increment 4's status, leave the changes uncommitted,
   - `ExecutionStarted` in `dtcc_engine.jobs`.
   - `POST /api/v1/jobs/{job_id}/cancel`, authenticated, without a body, answering as DESIGN.md's table says.
 
-- [ ] **Step 1: Write the tests**
+- [x] **Step 1: Write the tests**
 
 In `apps/engine/tests/test_jobs.py`, replace `from collections.abc import Callable, Iterator` with:
 
@@ -3558,12 +3558,12 @@ def test_cancel_racing_the_start_either_prevents_the_run_or_is_refused(
     }, outcomes
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail for the right reason**
+- [x] **Step 2: Run the tests to verify they fail for the right reason**
 
 Run: `pnpm engine:check tests/test_jobs.py tests/test_redelivery.py`
 Expected: 23 failed and 49 passed. Every failure comes from the missing route, which FastAPI answers with `404 Not Found`: the tests get `404` where they expect `200`, `409`, `503`, or, without a token, `401`, and the unknown job's test gets FastAPI's message instead of "unknown or expired". Stop and report if a test fails in another way.
 
-- [ ] **Step 3: Cancel in Redis**
+- [x] **Step 3: Cancel in Redis**
 
 In `apps/engine/dtcc_engine/jobs.py`, add after the `FINISH` script:
 
@@ -3634,7 +3634,7 @@ Add before `Jobs.run`:
         return "cancelled" if record["outcome"] == "cancelled" else "already_finished"
 ```
 
-- [ ] **Step 4: Serve the cancel route**
+- [x] **Step 4: Serve the cancel route**
 
 In `apps/engine/dtcc_engine/api.py`, replace the import from `dtcc_engine.jobs` with:
 
@@ -3667,24 +3667,24 @@ Add before the package route, `@app.get("/api/v1/jobs/{job_id}/package", ...)`:
         return {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}", "result": result}
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `pnpm engine:check`
 Expected: 111 passed: Task 17's 88 and the 23 new ones.
 
-- [ ] **Step 6: Document the route**
+- [x] **Step 6: Document the route**
 
 In `README.md`, after "and download a completed job's package from `GET /api/v1/jobs/<job id>/package`.", add: "Cancel a job before a worker claims it with `POST /api/v1/jobs/<job id>/cancel`. For a job a worker has claimed, cancellation answers `409` until the job has finished, and then `200` with `already_finished`."
 
 Run: `npx --yes prettier@3.9.6 --check README.md apps/engine/PLAN.md`
 Expected: all files use Prettier code style.
 
-- [ ] **Step 7: Validate**
+- [x] **Step 7: Validate**
 
 Run: `pnpm engine:check:prod`, then `pnpm check`.
 Expected: as in Task 17, Step 7.
 
-- [ ] **Step 8: Stop for review**
+- [x] **Step 8: Stop for review**
 
 Record Task 18's results in Increment 4's status, leave the changes uncommitted, and report Steps 2, 5, and 7. Suggested commit message: `Feature: Added engine job cancellation before execution`.
 

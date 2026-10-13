@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from dtcc_core.common.progress import ProgressTracker
 from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, load_model_package, unregister
 from dtcc_core.model import Mesh
 from fastapi.testclient import TestClient
+from httpx import Response
 from kombu.exceptions import OperationalError
 from pydantic import field_validator
 
@@ -207,7 +209,12 @@ def change_record(jobs: Jobs, job_id: str, changes: dict[str, str | None]) -> No
 
 @pytest.mark.parametrize(
     ("method", "path"),
-    [("POST", "/api/v1/jobs"), ("GET", "/api/v1/jobs/some-job"), ("GET", "/api/v1/jobs/some-job/package")],
+    [
+        ("POST", "/api/v1/jobs"),
+        ("GET", "/api/v1/jobs/some-job"),
+        ("GET", "/api/v1/jobs/some-job/package"),
+        ("POST", "/api/v1/jobs/some-job/cancel"),
+    ],
 )
 def test_job_routes_reject_missing_tokens(client: TestClient, method: str, path: str) -> None:
     assert client.request(method, path, json=SMOKE).status_code == 401
@@ -593,3 +600,143 @@ def test_celery_success_or_revocation_alone_is_unavailable(
     job_id = submit(client, SMOKE)
     jobs.celery_app.backend.store_result(job_id, result, celery_state)
     assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).status_code == 503
+
+
+def cancel(client: TestClient, job_id: str) -> Response:
+    return client.post(f"/api/v1/jobs/{job_id}/cancel", headers=AUTHORIZED)
+
+
+def test_queued_job_is_cancelled_and_stays_cancelled(client: TestClient, jobs: Jobs) -> None:
+    job_id = submit(client, SMOKE)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        responses = list(pool.map(lambda _: cancel(client, job_id), range(8)))
+    record, lifetime = jobs.records.hgetall(record_key(job_id)), jobs.records.ttl(record_key(job_id))
+    again = cancel(client, job_id)
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    downloaded = client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    expected = {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}", "result": "cancelled"}
+    assert [(response.status_code, response.json()) for response in [*responses, again]] == [(200, expected)] * 9
+    assert (job["state"], job["finished_at"], job["progress"], job["error"], job["package"]) == (
+        "cancelled",
+        record["finished_at"],
+        None,
+        None,
+        None,
+    )
+    assert downloaded.status_code == 409
+    assert jobs.records.hgetall(record_key(job_id)) == record
+    assert RETENTION.total_seconds() < jobs.records.ttl(record_key(job_id)) <= lifetime
+
+
+def test_unconfirmed_submission_can_be_cancelled(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def lose_the_confirmation(*args, **kwargs):
+        raise OperationalError("connection lost before the broker replied")
+
+    monkeypatch.setattr(jobs.sender, "send_task", lose_the_confirmation)
+    job_id = client.post("/api/v1/jobs", json=SMOKE, headers=AUTHORIZED).json()["detail"]["job_id"]
+    response = cancel(client, job_id)
+    assert (response.status_code, response.json().get("result")) == (200, "cancelled")
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["state"] == "cancelled"
+    # The message may have been queued after all.
+    assert deliver(jobs, job_id, SMOKE) == "IGNORED"
+
+
+@pytest.mark.parametrize(
+    ("age", "status_code", "package_status_code"),
+    [(RETENTION - timedelta(minutes=1), 200, 409), (RETENTION + timedelta(seconds=1), 404, 404)],
+    ids=["within-retention", "after-retention"],
+)
+def test_cancelled_job_expires_after_the_retention(
+    client: TestClient, jobs: Jobs, age: timedelta, status_code: int, package_status_code: int
+) -> None:
+    job_id = submit(client, SMOKE)
+    assert cancel(client, job_id).status_code == 200
+    # Moves the recorded finish time back instead of waiting 30 days.
+    jobs.records.hset(record_key(job_id), "finished_at", (datetime.now(UTC) - age).isoformat())
+    polled = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    downloaded = client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert (cancel(client, job_id).status_code, polled.status_code) == (status_code, status_code)
+    assert downloaded.status_code == package_status_code
+
+
+@pytest.mark.parametrize(("fail", "state"), [(False, "completed"), (True, "failed")])
+def test_finished_job_is_reported_already_finished(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], fail: bool, state: str
+) -> None:
+    dataset, _ = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS, "fail": fail}}
+    job_id = submit(client, request)
+    deliver(jobs, job_id, request)
+    record = jobs.records.hgetall(record_key(job_id))
+    response = cancel(client, job_id)
+    assert (response.status_code, response.json().get("result")) == (200, "already_finished")
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["state"] == state
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+def test_claimed_job_cannot_be_cancelled(client: TestClient, jobs: Jobs) -> None:
+    job_id = submit(client, SMOKE)
+    # A delivery claimed the job: it is running, or about to run.
+    jobs.records.hset(record_key(job_id), "execution_gate", "started")
+    record = jobs.records.hgetall(record_key(job_id))
+    response = cancel(client, job_id)
+    assert response.status_code == 409
+    assert response.json()["detail"]["result"] == "execution_started"
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+@pytest.mark.parametrize("changes", UNUSABLE_CHANGES.values(), ids=UNUSABLE_CHANGES.keys())
+def test_cancel_of_an_unusable_record_is_unavailable_and_changes_nothing(
+    client: TestClient, jobs: Jobs, changes: dict[str, str | None]
+) -> None:
+    job_id = submit(client, SMOKE)
+    change_record(jobs, job_id, changes)
+    record = jobs.records.hgetall(record_key(job_id))
+    assert cancel(client, job_id).status_code == 503
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+def test_cancel_of_an_unknown_job_is_not_found(client: TestClient) -> None:
+    response = cancel(client, str(uuid.uuid4()))
+    assert response.status_code == 404
+    assert "unknown or expired" in response.json()["detail"]
+
+
+def test_lost_cancel_answer_leaves_the_outcome_to_polling(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job_id = submit(client, SMOKE)
+
+    def cancel_then_lose_the_answer(*args, **kwargs):
+        # Redis cancels the job, and its answer is lost.
+        outcome = {"execution_gate": "cancelled", "outcome": "cancelled", "finished_at": datetime.now(UTC).isoformat()}
+        jobs.records.hset(record_key(job_id), mapping=outcome)
+        raise redis.ConnectionError("connection lost before Redis answered")
+
+    monkeypatch.setattr(jobs, "cancel_script", cancel_then_lose_the_answer, raising=False)
+    response = cancel(client, job_id)
+    assert response.status_code == 503
+    assert "poll" in response.json()["detail"]
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["state"] == "cancelled"
+
+
+@pytest.mark.parametrize("record_age", ["within-retention", "after-retention", "removed"])
+def test_delivery_after_cancellation_never_runs(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], record_age: str
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    job_id = submit(client, request)
+    assert cancel(client, job_id).status_code == 200
+    if record_age == "after-retention":
+        old = (datetime.now(UTC) - RETENTION - timedelta(seconds=1)).isoformat()
+        jobs.records.hset(record_key(job_id), "finished_at", old)
+    elif record_age == "removed":
+        jobs.records.delete(record_key(job_id))
+    record, lifetime = jobs.records.hgetall(record_key(job_id)), jobs.records.ttl(record_key(job_id))
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == []
+    assert jobs.records.hgetall(record_key(job_id)) == record
+    assert jobs.records.ttl(record_key(job_id)) <= lifetime

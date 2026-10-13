@@ -56,6 +56,25 @@ end
 redis.call('EXPIRE', KEYS[1], ARGV[3])
 return 'recorded'
 """
+# Cancels a job no delivery has claimed: ARGV is the finish time and the record's lifetime.
+CANCEL = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'missing'
+end
+local gate, outcome, finished = unpack(redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at'))
+if outcome then
+  return 'finished'
+end
+if gate == 'started' and not finished then
+  return 'started'
+end
+if gate ~= 'waiting' or finished then
+  return 'unusable'
+end
+redis.call('HSET', KEYS[1], 'execution_gate', 'cancelled', 'outcome', 'cancelled', 'finished_at', ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+return 'cancelled'
+"""
 logger = logging.getLogger(__name__)
 
 
@@ -89,6 +108,10 @@ class JobStateUnavailable(Exception):
     """Engine's record of a job is unusable, or Celery's state cannot be trusted without the record's outcome."""
 
 
+class ExecutionStarted(Exception):
+    """A delivery claimed the job, which has no recorded outcome yet, so it can no longer be cancelled."""
+
+
 class UnconfirmedSubmission(Exception):
     """The broker did not confirm a job's message, so the job may or may not be queued.
 
@@ -116,6 +139,7 @@ class Jobs:
         self.records = redis.Redis.from_url(redis_url, decode_responses=True)
         self.start_script = self.records.register_script(START)
         self.finish_script = self.records.register_script(FINISH)
+        self.cancel_script = self.records.register_script(CANCEL)
         self.celery_app = Celery("dtcc_engine", broker=redis_url, backend=redis_url)
         self.celery_app.conf.update(
             task_default_queue=target,
@@ -233,6 +257,33 @@ class Jobs:
                 else None
             ),
         }
+
+    def cancel(self, job_id: str) -> str | None:
+        """Cancel a job that no delivery has claimed.
+
+        Returns:
+            `cancelled` if the job is cancelled, now or before; `already_finished` if it completed or failed; None if
+            the job is unknown or expired.
+
+        Raises:
+            ExecutionStarted: If a delivery claimed the job, and it has not finished.
+            JobStateUnavailable: If the job's record is unusable.
+            redis.RedisError: If Redis did not answer; the job may or may not be cancelled.
+        """
+        # Checks the acceptance fields, which never change once written; the cancellation checks the rest.
+        if self.read_record(job_id) is None:
+            return None
+        finished_at = datetime.now(UTC).isoformat()
+        answer = self.cancel_script(keys=[record_key(job_id)], args=[finished_at, int(RECORD_LIFETIME.total_seconds())])
+        if answer == "started":
+            raise ExecutionStarted(job_id)
+        if answer == "unusable":
+            raise JobStateUnavailable(job_id)
+        # A recorded outcome never changes, so this read sees the one the cancellation found or made.
+        record = self.read_record(job_id)
+        if record is None or datetime.now(UTC) >= record["finished_at"] + RETENTION:
+            return None
+        return "cancelled" if record["outcome"] == "cancelled" else "already_finished"
 
     def run(self, task: Task, dataset_name: str, parameters: dict[str, Any]) -> None:
         """Run a job in the worker if this delivery claims it, and record how the job ended.

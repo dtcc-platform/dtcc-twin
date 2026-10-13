@@ -1,4 +1,4 @@
-"""Tests of how often a job runs when the worker receives it once or again.
+"""Tests of how often a job runs when the worker receives it once, again, or after the job was cancelled.
 
 The worker here uses the prefork pool, as the worker service does: a pool process runs the job while the worker's
 main process keeps receiving messages. The tests have their own module so that no other test's worker thread is running
@@ -15,11 +15,15 @@ import redis
 from celery.contrib.testing.worker import start_worker
 from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister
 from dtcc_core.model import Mesh
+from fastapi.testclient import TestClient
 from kombu import Connection
 
+from dtcc_engine.api import create_app
 from dtcc_engine.jobs import RUN_DATASET, Jobs, record_key
 
 BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
+TOKEN = "test-token"
+AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
 RELEASE_KEY = "engine-test:release"
 VISIBILITY_TIMEOUT = 1
 
@@ -72,6 +76,8 @@ def counting_dataset(redis_url: str) -> Iterator[str]:
 def prefork_jobs(redis_url: str, tmp_path: Path, counting_dataset: str) -> Iterator[Jobs]:
     """Jobs served by a one-process prefork worker; a gated job is released at the latest when the test ends."""
     jobs = Jobs(redis_url, "prefork", tmp_path)
+    # An earlier test released its gated jobs.
+    jobs.records.delete(RELEASE_KEY)
     with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
         try:
             yield jobs
@@ -135,3 +141,63 @@ def test_job_delivered_again_after_it_finished_does_not_run_again(
     # The second delivery's STARTED replaced a failure in Celery's result, though not a success.
     celery_state = prefork_jobs.celery_app.backend.get_task_meta(job_id)["status"]
     assert celery_state == ("STARTED" if fail else "SUCCESS")
+
+
+def cancel(jobs: Jobs, job_id: str) -> tuple[int, str]:
+    """Cancel the job through the API, and return the status code and the result it reports."""
+    response = TestClient(create_app(TOKEN, jobs)).post(f"/api/v1/jobs/{job_id}/cancel", headers=AUTHORIZED)
+    body = response.json()
+    return response.status_code, body["detail"]["result"] if isinstance(body.get("detail"), dict) else body.get(
+        "result"
+    )
+
+
+def test_job_cancelled_before_a_worker_runs_never_runs(redis_url: str, tmp_path: Path, counting_dataset: str) -> None:
+    jobs = Jobs(redis_url, "late-worker", tmp_path)
+    job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "cancelled"})
+    assert cancel(jobs, job_id) == (200, "cancelled")
+    # The decision is in Redis, so a worker that starts, or starts again, after the cancellation sees it.
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        last = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "after-cancelled"})
+        wait_until_completed(jobs, last)
+    assert jobs.records.get(runs_key("cancelled")) is None
+    assert jobs.status(job_id)["state"] == "cancelled"
+    assert not jobs.package_path(job_id).exists()
+    # The skipped delivery's STARTED, which the recorded cancellation overrides.
+    assert jobs.celery_app.backend.get_task_meta(job_id)["status"] == "STARTED"
+
+
+def test_started_job_cannot_be_cancelled_and_completes(prefork_jobs: Jobs, counting_dataset: str) -> None:
+    records = prefork_jobs.records
+    job_id = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "started", "gated": True})
+    wait_for(lambda: records.get(runs_key("started")) == "1")
+    assert cancel(prefork_jobs, job_id) == (409, "execution_started")
+    records.set(RELEASE_KEY, 1)
+    wait_until_completed(prefork_jobs, job_id)
+    assert records.get(runs_key("started")) == "1"
+    assert prefork_jobs.status(job_id)["package"]["available"]
+
+
+def test_cancel_racing_the_start_either_prevents_the_run_or_is_refused(
+    prefork_jobs: Jobs, counting_dataset: str
+) -> None:
+    records = prefork_jobs.records
+    attempts = {}
+    for attempt in range(10):
+        label = f"race-{attempt}"
+        job_id = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": label})
+        attempts[label] = (job_id, cancel(prefork_jobs, job_id))
+        if attempts[label][1] != (200, "cancelled"):
+            wait_until_completed(prefork_jobs, job_id)
+    # Sent last, so every earlier delivery, run or skipped, is done when it completes.
+    last = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "race-last"})
+    wait_until_completed(prefork_jobs, last)
+    outcomes = [
+        (*answer, records.get(runs_key(label)), prefork_jobs.status(job_id)["state"])
+        for label, (job_id, answer) in attempts.items()
+    ]
+    assert set(outcomes) <= {
+        (200, "cancelled", None, "cancelled"),
+        (409, "execution_started", "1", "completed"),
+        (200, "already_finished", "1", "completed"),
+    }, outcomes
