@@ -55,6 +55,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 20. Redis loses a job's record while the job runs: whether the job completes or fails, the worker does not recreate a partial record. Pinned in Task 17 (`test_record_lost_while_the_job_runs_is_not_recreated`).
 21. A cancellation's answer is lost: `503`, which does not say the cancellation failed, and polling shows `cancelled`. Pinned in Task 18 (`test_lost_cancel_answer_leaves_the_outcome_to_polling`).
 22. A job's record has no gate, as every record from before Task 17 does, or its fields contradict each other: status, download, and cancellation answer `503`, nothing changes the record, and no delivery runs the job. Pinned in Tasks 17 and 18 (`test_unusable_record_is_reported_unavailable_and_never_runs`, `test_cancel_of_an_unusable_record_is_unavailable_and_changes_nothing`).
+23. A Dataset's provider rejects a request whose URL holds the provider key: the failed job reports Core's failure class, status code, and transience, and its target without credentials, but no part of the key. Pinned in Task 20 (`test_upstream_failure_reports_cores_metadata_without_credentials`).
 
 ---
 
@@ -2552,7 +2553,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 4: Lifecycle behavior
 
-Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13 and is committed in `d2b04c2`. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 was executed 2026-10-13; the user's instruction to finish the remaining tasks gave Step 1's go-ahead. Its results: `engine` and `engine-worker` were stopped. Database 0 held 21 keys, 10 of them job records from earlier manual runs, and no queued job; database 1 held 147. After `FLUSHDB`, database 0 had 0 keys and database 1 still 147. The two containers, both of project `dtcc-twin`, were the only ones that mounted `dtcc-twin_engine-packages`, whose labels named that project and `engine-packages`; the containers and the volume were removed, and `dtcc-twin_postgres-data` remained. With `pnpm dev:engine`, cancelling `smoke` while `city_volume_mesh` ran answered `200` with `cancelled`, and cancelling `city_volume_mesh` answered `409` with `execution_started`. `city_volume_mesh` completed after 103 s in the worker, and its 68,525-byte package downloaded. `smoke` stayed `cancelled`, its download answered `409`, and when the worker received it, the worker logged that it does not run because its record is `refused`, and Celery logged the task as ignored. With the worker stopped after a warm shutdown, a `smoke` job was `queued`, and cancelling it answered `200` with `cancelled`. Started again, the worker received and skipped it the same way, a later `smoke` job completed, and the first stayed `cancelled` without a package. The two cancelled records had TTLs of 2,678,263 and 2,678,384 s. Stopped, the worker logged a warm shutdown, and both containers exited with 0. `engine:check` gave 111 passed in 29.6 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`; `pnpm check` passed. The cancellation part of increment 4 is complete. The remaining lifecycle work is still an outline; this section does not complete increment 4.
+Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13 and is committed in `d2b04c2`. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 was executed 2026-10-13; the user's instruction to finish the remaining tasks gave Step 1's go-ahead. Its results: `engine` and `engine-worker` were stopped. Database 0 held 21 keys, 10 of them job records from earlier manual runs, and no queued job; database 1 held 147. After `FLUSHDB`, database 0 had 0 keys and database 1 still 147. The two containers, both of project `dtcc-twin`, were the only ones that mounted `dtcc-twin_engine-packages`, whose labels named that project and `engine-packages`; the containers and the volume were removed, and `dtcc-twin_postgres-data` remained. With `pnpm dev:engine`, cancelling `smoke` while `city_volume_mesh` ran answered `200` with `cancelled`, and cancelling `city_volume_mesh` answered `409` with `execution_started`. `city_volume_mesh` completed after 103 s in the worker, and its 68,525-byte package downloaded. `smoke` stayed `cancelled`, its download answered `409`, and when the worker received it, the worker logged that it does not run because its record is `refused`, and Celery logged the task as ignored. With the worker stopped after a warm shutdown, a `smoke` job was `queued`, and cancelling it answered `200` with `cancelled`. Started again, the worker received and skipped it the same way, a later `smoke` job completed, and the first stayed `cancelled` without a package. The two cancelled records had TTLs of 2,678,263 and 2,678,384 s. Stopped, the worker logged a warm shutdown, and both containers exited with 0. `engine:check` gave 111 passed in 29.6 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`; `pnpm check` passed. The cancellation part of increment 4 is complete. The remaining lifecycle work is being expanded into tasks one at a time, from Task 20 (Remaining lifecycle work); Task 20 was expanded 2026-10-13 and is not executed.
 
 **Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages, and of packages left without a completed job, such as one kept after its job failed or one whose record has no finish time. It also handles a failed job whose worker recorded no exception type. The loss of a pool process, which Celery may record as a failure, is distinguished from the loss of the whole worker, which can leave the job's state stale. Both gaps were found in increment 2a's review.
 
@@ -3743,6 +3744,279 @@ Expected: 111 passed; the production and token checks pass; the files use Pretti
 - [x] **Step 6: Stop for review**
 
 Record Task 19's results in Increment 4's status, including the outcome of each check in Step 4 and the database sizes from Step 2. Leave the changes uncommitted, and report Steps 2, 4, and 5. Suggested commit message: `Docs: Moved the development engine to job cancellation`.
+
+### Remaining lifecycle work
+
+**Expansion** (2026-10-13): the rest of increment 4 is expanded one task at a time, each committed and reviewed before the next is written; a later task may change once the earlier ones are reviewed. Each was first run in a scratch copy of the Engine, as Tasks 17 to 19 were. The tasks:
+
+- Task 20: a failed job reports Core's metadata of an upstream failure, without the parts that can hold a credential (Failure reporting row).
+- Task 21: a lost pool process, and a whole worker that is lost and started again, leave a recorded failure rather than a job that reports `running` for ever (Failure reporting and Restart behavior rows).
+- Task 22: records of jobs that never finish expire (stale-state retention).
+- Task 23: each host deletes expired packages and packages without a completed job (Retention row).
+- Task 24: separate API, worker, and broker restarts are checked with real Redis and workers (Restart behavior row).
+
+### Task 20: Report an upstream failure's metadata without its credentials
+
+A failed job reports only its exception type (Increment 2a). Core gives its live Datasets a typed `DatasetUpstreamError` and `DatasetDescriptor.serialize_upstream_error`, which turns one into JSON-safe metadata; Engine decides which of it a consumer sees (this increment's upstream interfaces). This task returns that metadata for a job that failed with one, without the parts that can hold a credential: the Failure reporting row's useful error information, within DESIGN.md's rule that no error response exposes the API token or provider credentials.
+
+**Interfaces verified for the task** (2026-10-13, at Core `17c6efe` and Sim `41055d5`, through `git show` in the reference checkouts):
+
+- `DatasetUpstreamError(*, dataset, operation, target, failure_class, status_code=None, message)` is a `RuntimeError` in `dtcc_core/datasets/dataset.py`; `dtcc_core.datasets` does not export it. Its `is_transient` is true for the failure classes `connection`, `timeout`, and `http_5xx`.
+- `DatasetDescriptor.serialize_upstream_error(exc)` returns `dataset`, `operation`, `target`, `failure_class`, `status_code`, `message`, and `is_transient`.
+- `DatasetDescriptor.build_upstream_error` sets the message to `f"{dataset} {operation} failed for {target}: {exc}"`, where `exc` is the requests exception, and a requests `HTTPError`'s text holds the full request URL, query included. Trafiklab's GTFS requests send the API key as the `key` query parameter (`dtcc_core/datasets/transport/trafiklab_gtfs.py`), so a message can hold it.
+- Callers pass as the target a request URL without its query parameters, built from a constant or from a Dataset's `base_url` argument, which a consumer can set (`weather.py`, `ocean.py`, `hydrology.py`, `air_quality.py`); a provider name (`transport/base.py`); or a description such as the requested bounds (`transit_vehicles.py`).
+- Sim raises no `DatasetUpstreamError` at `41055d5`.
+
+**Decisions** (proposed with the task):
+
+- A job that failed with a `DatasetUpstreamError` reports `error.upstream`: Core's serialized metadata without `message`, and with a URL target reduced to its scheme, host, port, and path, so neither a query nor a `user:password@` part reaches the consumer. Every other failure keeps `{"type": ...}` alone. The worker's log keeps the full error (DESIGN.md, Failure reporting).
+- The worker computes the metadata, and the finish script records it with the outcome as `error_upstream`, in JSON. A record holds it only with `outcome=failed`; one that is unreadable, or that holds it with another outcome, is unusable.
+- Only the raised exception is checked, not the exceptions it was raised from: Core raises the typed error itself.
+- Existing tests: `UNUSABLE_CHANGES` gains two records, so both parametrized unusable-record tests cover them; no expectation changes.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/tests/test_jobs.py`
+- Modify: `apps/engine/PLAN.md` (Increment 4 status)
+
+**Interfaces:**
+
+- Consumes: from Task 17, the `FINISH` script, `Jobs.read_record`, `Jobs.status`, `Jobs.run`, and `Jobs.finish`; the test helpers `submit`, `deliver`, `UNUSABLE_CHANGES`, and the `client` and `jobs` fixtures. From Core: `DatasetUpstreamError` and `DatasetDescriptor.serialize_upstream_error`.
+- Produces: `public_upstream_error(error)` in `dtcc_engine.jobs`; the record field `error_upstream`, the `FINISH` script's fifth argument, and `Jobs.finish(job_id, outcome, error_type="", upstream=None)`; a failed job's `error.upstream` in its status.
+
+- [ ] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_jobs.py`, replace `from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, load_model_package, unregister` with:
+
+```python
+from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, load_model_package, unregister
+from dtcc_core.datasets.dataset import DatasetUpstreamError
+```
+
+Replace the `SMOKE` line with:
+
+```python
+SMOKE = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}}
+PROVIDER_KEY = "provider-key-5e1d"
+```
+
+In `UNUSABLE_CHANGES`, add after the `failure-without-type` entry:
+
+```python
+    "upstream-detail-without-failure": {
+        "execution_gate": "started",
+        "outcome": "completed",
+        "finished_at": FINISHED_AT,
+        "error_upstream": "{}",
+    },
+    "unreadable-upstream-detail": {
+        "execution_gate": "started",
+        "outcome": "failed",
+        "finished_at": FINISHED_AT,
+        "error_type": "DatasetUpstreamError",
+        "error_upstream": "not json",
+    },
+```
+
+Add before `deliver`:
+
+```python
+@pytest.fixture
+def upstream_failing_dataset() -> Iterator[str]:
+    """Register a Dataset that fails as Core's live Datasets do when their provider fails, and return its name.
+
+    Its target and its message repeat a provider key, as a request URL's query can.
+    """
+
+    class UpstreamProbeArgs(DatasetBaseArgs):
+        target: str
+
+    class UpstreamProbeDataset(DatasetDescriptor):
+        name = "engine_upstream_probe"
+        description = "Dataset defined by an Engine test whose provider fails"
+        ArgsModel = UpstreamProbeArgs
+
+        def build(self, args):
+            raise DatasetUpstreamError(
+                dataset="engine_upstream_probe",
+                operation="fetch",
+                target=args.target,
+                failure_class="http_4xx",
+                status_code=401,
+                message=f"401 Client Error: Unauthorized for url: https://provider.example/data?key={PROVIDER_KEY}",
+            )
+
+    try:
+        yield "engine_upstream_probe"
+    finally:
+        unregister("engine_upstream_probe")
+```
+
+Add at the end of the file:
+
+```python
+@pytest.mark.parametrize(
+    ("target", "public_target"),
+    [
+        (
+            f"https://user:{PROVIDER_KEY}@provider.example:8443/data?key={PROVIDER_KEY}#part",
+            "https://provider.example:8443/data",
+        ),
+        ("trafiklab", "trafiklab"),
+    ],
+    ids=["url", "provider"],
+)
+def test_upstream_failure_reports_cores_metadata_without_credentials(
+    client: TestClient, jobs: Jobs, upstream_failing_dataset: str, target: str, public_target: str
+) -> None:
+    request = {"dataset": upstream_failing_dataset, "parameters": {"bounds": BOUNDS, "target": target}}
+    job_id = submit(client, request)
+    assert deliver(jobs, job_id, request) == "FAILURE"
+    response = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    assert response.json()["error"] == {
+        "type": "DatasetUpstreamError",
+        "upstream": {
+            "dataset": "engine_upstream_probe",
+            "operation": "fetch",
+            "target": public_target,
+            "failure_class": "http_4xx",
+            "status_code": 401,
+            "is_transient": False,
+        },
+    }
+    assert PROVIDER_KEY not in response.text
+```
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reasons**
+
+Run: `pnpm engine:check tests/test_jobs.py`
+Expected: 6 failed and 66 passed. Both cases of `test_upstream_failure_reports_cores_metadata_without_credentials` get `{"type": "DatasetUpstreamError"}` without `upstream`. With the two new unusable records, `test_unusable_record_is_reported_unavailable_and_never_runs` gets `200` and `409` for status and download instead of `503`, and `test_cancel_of_an_unusable_record_is_unavailable_and_changes_nothing` gets `200` instead of `503`. Stop and report if a test fails in another way.
+
+- [ ] **Step 3: Record and report the metadata**
+
+In `apps/engine/dtcc_engine/jobs.py`, replace `import logging` with:
+
+```python
+import json
+import logging
+```
+
+Replace `from typing import Any` with:
+
+```python
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+```
+
+Replace the import from `dtcc_core.common.progress` with:
+
+```python
+from dtcc_core.common.progress import get_progress_callback, set_progress_callback
+from dtcc_core.datasets.dataset import DatasetUpstreamError
+```
+
+Replace the comment above the `FINISH` script with:
+
+```python
+# Records how a started job ended: ARGV is the outcome, the finish time, the record's lifetime, the error type, and the
+# upstream failure's metadata.
+```
+
+In the `FINISH` script, add before `redis.call('EXPIRE', KEYS[1], ARGV[3])`:
+
+```python
+if ARGV[5] ~= '' then
+  redis.call('HSET', KEYS[1], 'error_upstream', ARGV[5])
+end
+```
+
+Add before `class JobStateUnavailable`:
+
+```python
+def public_upstream_error(error: DatasetUpstreamError) -> dict[str, Any]:
+    """Return Core's metadata of an upstream failure without its message, and with its target's URL credentials removed.
+
+    The message can repeat a request URL with its query, which can hold a provider key, and a target URL can hold
+    credentials that a consumer gave in a Dataset's base URL.
+    """
+    metadata = datasets.DatasetDescriptor.serialize_upstream_error(error)
+    del metadata["message"]
+    target = urlsplit(metadata["target"])
+    if target.scheme and target.netloc:
+        metadata["target"] = urlunsplit((target.scheme, target.netloc.rpartition("@")[2], target.path, "", ""))
+    return metadata
+```
+
+In `Jobs.read_record`, replace the assignment to `consistent` with:
+
+```python
+            consistent = (
+                outcome in OUTCOMES[record["execution_gate"]]
+                and ("finished_at" in record) == (outcome is not None)
+                and ("error_type" in record) == (outcome == "failed")
+                and ("error_upstream" not in record or outcome == "failed")
+            )
+```
+
+and, in the dictionary it returns, replace the `error_type` entry with:
+
+```python
+                "error_type": record.get("error_type"),
+                "error_upstream": json.loads(record["error_upstream"]) if "error_upstream" in record else None,
+```
+
+In `Jobs.status`, add before `return {`:
+
+```python
+        error = {"type": record["error_type"]} if state == "failed" else None
+        if error is not None and record["error_upstream"] is not None:
+            error["upstream"] = record["error_upstream"]
+```
+
+and replace its `error` entry with `"error": error,`. In `Jobs.run`, replace the `except Exception as error:` clause with:
+
+```python
+        except Exception as error:
+            upstream = public_upstream_error(error) if isinstance(error, DatasetUpstreamError) else None
+            self.finish(job_id, "failed", type(error).__name__, upstream)
+            raise
+```
+
+Replace `Jobs.finish` with:
+
+```python
+    def finish(self, job_id: str, outcome: str, error_type: str = "", upstream: dict[str, Any] | None = None) -> None:
+        """Record how a claimed job ended, with its finish time and error, and start its record's lifetime.
+
+        Raises:
+            Ignore: If the job's record is gone or no longer claimed, so no outcome was recorded.
+            redis.RedisError: If Redis did not answer; the outcome may or may not be recorded.
+        """
+        finished_at = datetime.now(UTC).isoformat()
+        lifetime = int(RECORD_LIFETIME.total_seconds())
+        details = json.dumps(upstream) if upstream else ""
+        answer = self.finish_script(
+            keys=[record_key(job_id)], args=[outcome, finished_at, lifetime, error_type, details]
+        )
+        if answer != "recorded":
+            logger.warning("Job %s %s, but its record is %s, so the outcome is not recorded", job_id, outcome, answer)
+            raise Ignore()
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 117 passed: the 111 earlier tests and the 6 new cases.
+
+- [ ] **Step 5: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [ ] **Step 6: Stop for review**
+
+Record Task 20's results in Increment 4's status, leave the changes uncommitted, and report Steps 2, 4, and 5. Suggested commit message: `Feature: Reported engine upstream failures without credentials`.
 
 ## Increment 5a: Production image for the HTTP service
 
