@@ -60,6 +60,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 25. A worker is killed while it runs a job and is started again: the job fails with `WorkerRestarted`; a job that another worker claimed keeps running; a worker that does not return leaves its job running. Pinned in Task 21 (`test_worker_started_again_fails_the_jobs_its_earlier_run_left`) and checked through the worker service in Task 21, Step 6.
 26. A job never finishes, because its message was lost, its submission was never queued, or its worker never returned: its record expires 31 days after its submission or its claim, and the job is then unknown. Pinned in Task 22 (`test_job_records_outlast_the_package_retention`, `test_claim_restarts_the_lifetime_of_the_record`).
 27. A host's package directory holds packages of expired, failed, cancelled, unknown, and running jobs, and a staging directory that a killed export left: when the worker starts, and every hour after, it deletes the packages no job can deliver and the old staging directory, and keeps the running job's package. Pinned in Task 23 (`test_worker_deletes_the_packages_no_job_can_deliver`).
+28. The API, the worker, and Redis are restarted one at a time while jobs run and wait: an API or worker restart, or a graceful Redis restart, loses and fails no job; status answers `503` while Redis is down; and after Redis loses its data, the lost jobs are unknown rather than failed. Pinned in Task 24 (`test_restarted_api_serves_the_jobs_the_earlier_one_accepted`, `test_job_queued_while_no_worker_runs_runs_when_a_worker_starts`) and checked through the worker service in Task 24, Step 3.
 
 ---
 
@@ -2557,7 +2558,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 4: Lifecycle behavior
 
-Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13 and is committed in `d2b04c2`. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 was executed 2026-10-13; the user's instruction to finish the remaining tasks gave Step 1's go-ahead. Its results: `engine` and `engine-worker` were stopped. Database 0 held 21 keys, 10 of them job records from earlier manual runs, and no queued job; database 1 held 147. After `FLUSHDB`, database 0 had 0 keys and database 1 still 147. The two containers, both of project `dtcc-twin`, were the only ones that mounted `dtcc-twin_engine-packages`, whose labels named that project and `engine-packages`; the containers and the volume were removed, and `dtcc-twin_postgres-data` remained. With `pnpm dev:engine`, cancelling `smoke` while `city_volume_mesh` ran answered `200` with `cancelled`, and cancelling `city_volume_mesh` answered `409` with `execution_started`. `city_volume_mesh` completed after 103 s in the worker, and its 68,525-byte package downloaded. `smoke` stayed `cancelled`, its download answered `409`, and when the worker received it, the worker logged that it does not run because its record is `refused`, and Celery logged the task as ignored. With the worker stopped after a warm shutdown, a `smoke` job was `queued`, and cancelling it answered `200` with `cancelled`. Started again, the worker received and skipped it the same way, a later `smoke` job completed, and the first stayed `cancelled` without a package. The two cancelled records had TTLs of 2,678,263 and 2,678,384 s. Stopped, the worker logged a warm shutdown, and both containers exited with 0. `engine:check` gave 111 passed in 29.6 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`; `pnpm check` passed. The cancellation part of increment 4 is complete. The remaining lifecycle work is being expanded into tasks one at a time, from Task 20 (Remaining lifecycle work); Tasks 20 to 23 were expanded 2026-10-13 and are not executed.
+Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13 and is committed in `d2b04c2`. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 was executed 2026-10-13; the user's instruction to finish the remaining tasks gave Step 1's go-ahead. Its results: `engine` and `engine-worker` were stopped. Database 0 held 21 keys, 10 of them job records from earlier manual runs, and no queued job; database 1 held 147. After `FLUSHDB`, database 0 had 0 keys and database 1 still 147. The two containers, both of project `dtcc-twin`, were the only ones that mounted `dtcc-twin_engine-packages`, whose labels named that project and `engine-packages`; the containers and the volume were removed, and `dtcc-twin_postgres-data` remained. With `pnpm dev:engine`, cancelling `smoke` while `city_volume_mesh` ran answered `200` with `cancelled`, and cancelling `city_volume_mesh` answered `409` with `execution_started`. `city_volume_mesh` completed after 103 s in the worker, and its 68,525-byte package downloaded. `smoke` stayed `cancelled`, its download answered `409`, and when the worker received it, the worker logged that it does not run because its record is `refused`, and Celery logged the task as ignored. With the worker stopped after a warm shutdown, a `smoke` job was `queued`, and cancelling it answered `200` with `cancelled`. Started again, the worker received and skipped it the same way, a later `smoke` job completed, and the first stayed `cancelled` without a package. The two cancelled records had TTLs of 2,678,263 and 2,678,384 s. Stopped, the worker logged a warm shutdown, and both containers exited with 0. `engine:check` gave 111 passed in 29.6 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`; `pnpm check` passed. The cancellation part of increment 4 is complete. The remaining lifecycle work is being expanded into tasks one at a time, from Task 20 (Remaining lifecycle work); Tasks 20 to 24 were expanded 2026-10-13 and are not executed; with them, increment 4 is expanded in full.
 
 **Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages, and of packages left without a completed job, such as one kept after its job failed or one whose record has no finish time. It also handles a failed job whose worker recorded no exception type. The loss of a pool process, which Celery may record as a failure, is distinguished from the loss of the whole worker, which can leave the job's state stale. Both gaps were found in increment 2a's review.
 
@@ -2565,7 +2566,7 @@ Status: the cancellation design and one-time development transition below were a
 
 **Checks:** the Failure reporting, Cancellation, Retention, and Restart behavior rows of the acceptance table, each restart exercised separately, against the selected Celery version (upstream item 5).
 
-**Blockers:** cancellation needs implementation and the real Redis/prefork checks below. Worker-loss detection, incomplete state normalization, stale-record retention, and package cleanup still need their own design and verification.
+**Blockers:** none known. Tasks 17 to 19, the cancellation, are executed; Tasks 20 to 24, the remaining lifecycle work, are expanded and wait for review and execution.
 
 ### Cancellation
 
@@ -4689,6 +4690,90 @@ Expected: as in Task 17, Step 7.
 - [ ] **Step 7: Stop for review**
 
 Record Task 23's results in Increment 4's status, leave the changes uncommitted, and report Steps 2, 4, and 6. Suggested commit message: `Feature: Deleted engine packages that no job can deliver`.
+
+### Task 24: Check API, worker, and broker restarts separately
+
+The Restart behavior row asks that separate API, worker, and broker restarts promise no recovery, delete no surviving work, and report unavailable and unknown state honestly; the Failure reporting row asks the same of broker and host failures. Tasks 17 to 23 give a lost claimant a recorded failure, every record a lifetime, and every host a cleanup. This task checks each restart on its own: two automated tests pin what the API and a worker started later do with surviving work, and the restarts themselves, including Redis's, run through the worker service, because the automated suite shares `engine-redis` with `pnpm dev:engine` and cannot restart it.
+
+**Interfaces verified for the task** (2026-10-13, in the experiments and in Compose):
+
+- `engine-redis` runs `redis:8` with its defaults: RDB snapshots at the save points `3600 1 300 100 60 10000`, no append-only file, and its data in the container's anonymous `/data` volume. A graceful restart saves a snapshot and loses nothing; a killed Redis loses what was written since the last snapshot. The experiments of 2026-10-13 showed both, and that a worker reconnects about 2 s after Redis returns.
+- The API keeps no state of its own; status and packages come from Redis and the package directory.
+
+**Decisions** (proposed with the task):
+
+- The two new tests pin existing behavior, so they pass when written, as Task 14's coverage tests did.
+- The worker service is restarted with Compose's `restart`, `stop`, `start`, and `kill`, one component at a time. A worker lost during a job is Task 21's Step 6 and is not repeated.
+- The Redis loss is checked with a queued job only, while the worker is stopped: a running job's progress writes can reach a save point and make the outcome depend on timing. The check discards the development job records written since the last snapshot, which are test jobs; restart behavior promises no recovery.
+
+**Files:**
+
+- Modify: `apps/engine/tests/test_redelivery.py`
+- Modify: `apps/engine/PLAN.md` (Increment 4 status)
+
+**Interfaces:**
+
+- Consumes: the fixtures `prefork_jobs` and `counting_dataset`, the helpers `wait_until_completed`, `runs_key`, `TOKEN`, and `AUTHORIZED`, and `create_app`; Tasks 17 to 23 for the behavior observed through the worker service.
+- Produces: two tests; the Restart behavior and Failure reporting rows' evidence in Increment 4's status.
+
+- [ ] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_redelivery.py`, add at the end of the file:
+
+```python
+def test_restarted_api_serves_the_jobs_the_earlier_one_accepted(
+    redis_url: str, prefork_jobs: Jobs, counting_dataset: str
+) -> None:
+    request = {"dataset": counting_dataset, "parameters": {"bounds": BOUNDS, "label": "api-restart"}}
+    response = TestClient(create_app(TOKEN, prefork_jobs)).post("/api/v1/jobs", json=request, headers=AUTHORIZED)
+    job_id = response.json()["job_id"]
+    wait_until_completed(prefork_jobs, job_id)
+    # The API keeps no state of its own: a new one reads the same Redis and package directory.
+    restarted = TestClient(create_app(TOKEN, Jobs(redis_url, "prefork", prefork_jobs.package_dir)))
+    polled = restarted.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    downloaded = restarted.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert (polled.status_code, polled.json()["state"]) == (200, "completed")
+    assert downloaded.content == prefork_jobs.package_path(job_id).read_bytes()
+
+
+def test_job_queued_while_no_worker_runs_runs_when_a_worker_starts(
+    redis_url: str, tmp_path: Path, counting_dataset: str
+) -> None:
+    jobs = Jobs(redis_url, "started-later", tmp_path)
+    job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "queued-without-worker"})
+    assert jobs.status(job_id)["state"] == "queued"
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        wait_until_completed(jobs, job_id)
+    assert jobs.records.get(runs_key("queued-without-worker")) == "1"
+```
+
+- [ ] **Step 2: Run the tests**
+
+Run: `pnpm engine:check tests/test_redelivery.py`
+Expected: 11 passed: the 9 earlier tests and the 2 new ones, which pin existing behavior. If either fails, stop and report.
+
+Run: `pnpm engine:check`
+Expected: 125 passed.
+
+- [ ] **Step 3: Restart each component through the worker service**
+
+Start `pnpm dev:engine` and wait until the worker logs that it is ready. With the development token, the bounds `[319891, 6399790, 320091, 6399990]`, and, in each check, `city_volume_mesh` as the job that runs and `smoke` as the job queued behind it:
+
+1. **API.** Submit both; while `city_volume_mesh` runs, `docker compose --profile engine restart engine`, and wait until `/api/v1/health` answers. Expected: `city_volume_mesh` still `running` and `smoke` still `queued`; both complete, and both packages download.
+2. **Worker.** `docker compose --profile engine stop engine-worker`; the worker logs a warm shutdown. Submit `smoke`: it is `queued`. `docker compose --profile engine start engine-worker`. Expected: the job completes.
+3. **Redis.** Submit both; while `city_volume_mesh` runs, `docker compose --profile engine restart engine-redis`, polling the first job meanwhile. Expected: while Redis is down, status answers `503` with "temporarily unavailable", never `failed`; the worker logs that it reconnected; both jobs complete, and both packages download.
+4. **Redis lost.** `docker compose --profile engine stop engine-worker`. Submit `smoke`: it is `queued`. `docker compose --profile engine kill -s KILL engine-redis`, then `docker compose --profile engine start engine-redis`. Expected: the job is `404` "unknown or expired", because its record was written after the last snapshot; after `docker compose --profile engine start engine-worker`, nothing runs it. Jobs that finished since the last snapshot are unknown too, and the worker deletes their packages when it starts, logging each.
+
+Stop `pnpm dev:engine`. Expected: the worker logs a warm shutdown.
+
+- [ ] **Step 4: Validate**
+
+Run: `pnpm engine:check:prod`, `npx --yes prettier@3.9.6 --check apps/engine/PLAN.md`, then `pnpm check`.
+Expected: the production and token checks pass; the plan uses Prettier code style; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
+
+- [ ] **Step 5: Stop for review**
+
+Record Task 24's results in Increment 4's status, including each check in Step 3, set Increment 4's status to executed once Tasks 20 to 24 are, leave the changes uncommitted, and report Steps 2, 3, and 4. Suggested commit message: `Test: Checked engine restarts`.
 
 ## Increment 5a: Production image for the HTTP service
 
