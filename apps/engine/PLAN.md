@@ -59,6 +59,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 24. A job's pool process is killed: the job fails with `WorkerLostError` and a finish time, and the worker runs the next job. Pinned in Task 21 (`test_job_whose_pool_process_is_lost_fails_and_the_worker_runs_on`).
 25. A worker is killed while it runs a job and is started again: the job fails with `WorkerRestarted`; a job that another worker claimed keeps running; a worker that does not return leaves its job running. Pinned in Task 21 (`test_worker_started_again_fails_the_jobs_its_earlier_run_left`) and checked through the worker service in Task 21, Step 6.
 26. A job never finishes, because its message was lost, its submission was never queued, or its worker never returned: its record expires 31 days after its submission or its claim, and the job is then unknown. Pinned in Task 22 (`test_job_records_outlast_the_package_retention`, `test_claim_restarts_the_lifetime_of_the_record`).
+27. A host's package directory holds packages of expired, failed, cancelled, unknown, and running jobs, and a staging directory that a killed export left: when the worker starts, and every hour after, it deletes the packages no job can deliver and the old staging directory, and keeps the running job's package. Pinned in Task 23 (`test_worker_deletes_the_packages_no_job_can_deliver`).
 
 ---
 
@@ -2556,7 +2557,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 4: Lifecycle behavior
 
-Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13 and is committed in `d2b04c2`. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 was executed 2026-10-13; the user's instruction to finish the remaining tasks gave Step 1's go-ahead. Its results: `engine` and `engine-worker` were stopped. Database 0 held 21 keys, 10 of them job records from earlier manual runs, and no queued job; database 1 held 147. After `FLUSHDB`, database 0 had 0 keys and database 1 still 147. The two containers, both of project `dtcc-twin`, were the only ones that mounted `dtcc-twin_engine-packages`, whose labels named that project and `engine-packages`; the containers and the volume were removed, and `dtcc-twin_postgres-data` remained. With `pnpm dev:engine`, cancelling `smoke` while `city_volume_mesh` ran answered `200` with `cancelled`, and cancelling `city_volume_mesh` answered `409` with `execution_started`. `city_volume_mesh` completed after 103 s in the worker, and its 68,525-byte package downloaded. `smoke` stayed `cancelled`, its download answered `409`, and when the worker received it, the worker logged that it does not run because its record is `refused`, and Celery logged the task as ignored. With the worker stopped after a warm shutdown, a `smoke` job was `queued`, and cancelling it answered `200` with `cancelled`. Started again, the worker received and skipped it the same way, a later `smoke` job completed, and the first stayed `cancelled` without a package. The two cancelled records had TTLs of 2,678,263 and 2,678,384 s. Stopped, the worker logged a warm shutdown, and both containers exited with 0. `engine:check` gave 111 passed in 29.6 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`; `pnpm check` passed. The cancellation part of increment 4 is complete. The remaining lifecycle work is being expanded into tasks one at a time, from Task 20 (Remaining lifecycle work); Tasks 20 to 22 were expanded 2026-10-13 and are not executed.
+Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13 and is committed in `d2b04c2`. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 was executed 2026-10-13; the user's instruction to finish the remaining tasks gave Step 1's go-ahead. Its results: `engine` and `engine-worker` were stopped. Database 0 held 21 keys, 10 of them job records from earlier manual runs, and no queued job; database 1 held 147. After `FLUSHDB`, database 0 had 0 keys and database 1 still 147. The two containers, both of project `dtcc-twin`, were the only ones that mounted `dtcc-twin_engine-packages`, whose labels named that project and `engine-packages`; the containers and the volume were removed, and `dtcc-twin_postgres-data` remained. With `pnpm dev:engine`, cancelling `smoke` while `city_volume_mesh` ran answered `200` with `cancelled`, and cancelling `city_volume_mesh` answered `409` with `execution_started`. `city_volume_mesh` completed after 103 s in the worker, and its 68,525-byte package downloaded. `smoke` stayed `cancelled`, its download answered `409`, and when the worker received it, the worker logged that it does not run because its record is `refused`, and Celery logged the task as ignored. With the worker stopped after a warm shutdown, a `smoke` job was `queued`, and cancelling it answered `200` with `cancelled`. Started again, the worker received and skipped it the same way, a later `smoke` job completed, and the first stayed `cancelled` without a package. The two cancelled records had TTLs of 2,678,263 and 2,678,384 s. Stopped, the worker logged a warm shutdown, and both containers exited with 0. `engine:check` gave 111 passed in 29.6 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`; `pnpm check` passed. The cancellation part of increment 4 is complete. The remaining lifecycle work is being expanded into tasks one at a time, from Task 20 (Remaining lifecycle work); Tasks 20 to 23 were expanded 2026-10-13 and are not executed.
 
 **Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages, and of packages left without a completed job, such as one kept after its job failed or one whose record has no finish time. It also handles a failed job whose worker recorded no exception type. The loss of a pool process, which Celery may record as a failure, is distinguished from the loss of the whole worker, which can leave the job's state stale. Both gaps were found in increment 2a's review.
 
@@ -4489,6 +4490,205 @@ Expected: as in Task 17, Step 7.
 - [ ] **Step 7: Stop for review**
 
 Record Task 22's results in Increment 4's status, leave the changes uncommitted, and report Steps 2, 4, and 6. Suggested commit message: `Feature: Expired engine records of unfinished jobs`.
+
+### Task 23: Delete the packages that no job can deliver
+
+A completed job's package stays on disk after it expires, and a package can be left without a job that can deliver it: its job's record expired or was lost, or its job was recorded as failed after the export, as Task 21 records a lost claimant. DESIGN.md requires each host to clean up expired package files automatically, so that broker metadata expiry is not the only cleanup; expired packages are already refused (Task 12). This task has each host's worker delete them.
+
+**Interfaces verified for the task** (2026-10-13, at Core `17c6efe` and in the development image's Celery 5.6.3):
+
+- Core's canonical export stages the archive in `tempfile.TemporaryDirectory(dir=<package directory>, prefix='.dtcc-package-')` and moves it into place with `os.replace` (`dtcc_core/datasets/package.py`). The directory is removed when the export ends, unless its process is killed.
+- A worker bootstep that requires `celery.worker.components:Timer` gets the worker's timer, whose `call_repeatedly(seconds, function)` returns an entry with `cancel()`. The timer runs in the worker's main process, so a pass takes no pool process.
+
+**Decisions** (proposed with the task):
+
+- The worker deletes a package when its job's record is gone, or its job failed, was cancelled, or completed 30 periods of 24 hours ago or earlier. It keeps a package while its job has no outcome, because the job may still record completion, and while the job's record is unusable. A pass whose Redis read fails deletes no more packages; the next pass tries again.
+- It also deletes `.dtcc-package-*` directories at least a day old: an export takes seconds to minutes, so such a directory belongs to an export that was killed.
+- A bootstep runs a pass when the worker starts and then every hour, `CLEANUP_INTERVAL`. A host whose worker does not run keeps its files until the worker starts again; status and download already refuse expired packages. Each host's worker cleans the package directory it shares with that host's API.
+- Existing tests: `test_redelivery.py`'s docstring covers the new test. No expectation changes. The test shortens the interval to one second to see a later pass.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/tests/test_redelivery.py`
+- Modify: `apps/engine/DESIGN.md` (Package creation, delivery, and retention)
+- Modify: `apps/engine/PLAN.md` (Increment 4 status)
+
+**Interfaces:**
+
+- Consumes: `Jobs.read_record`, `Jobs.package_path`, `Jobs.package_dir`, `RETENTION`, and the worker bootsteps of Task 21; the test helper `wait_for`.
+- Produces: `CLEANUP_INTERVAL`, `STAGING_AGE`, `Jobs.clean_packages()`, and the worker bootstep `CleanPackages`.
+
+- [ ] **Step 1: Write the test**
+
+In `apps/engine/tests/test_redelivery.py`, replace the module docstring's first two lines with:
+
+```python
+"""Tests of how often a job runs when the worker receives it once, again, or after the job was cancelled, of the
+outcome a job gets when the process or the worker run that claimed it is lost, and of the packages the worker deletes.
+```
+
+Replace `from datetime import UTC, datetime` with:
+
+```python
+from datetime import UTC, datetime, timedelta
+```
+
+Add at the end of the file:
+
+```python
+def package_with_record(jobs: Jobs, fields: dict[str, str]) -> str:
+    """Write a package and a record of its job with these fields besides the acceptance fields; return the job's ID."""
+    job_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    acceptance = {"dataset": "smoke", "target": jobs.target, "submitted_at": now, "queued_at": now}
+    jobs.records.hset(record_key(job_id), mapping={**acceptance, **fields})
+    jobs.package_path(job_id).write_bytes(b"package")
+    return job_id
+
+
+def test_worker_deletes_the_packages_no_job_can_deliver(
+    redis_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dtcc_engine.jobs.CLEANUP_INTERVAL", timedelta(seconds=1), raising=False)
+    jobs = Jobs(redis_url, "cleaned", tmp_path)
+    now = datetime.now(UTC)
+    finished = {"execution_gate": "started", "finished_at": now.isoformat()}
+    expired = (now - RETENTION - timedelta(seconds=1)).isoformat()
+    packages = {
+        "completed": package_with_record(jobs, {**finished, "outcome": "completed"}),
+        "expired": package_with_record(jobs, {**finished, "outcome": "completed", "finished_at": expired}),
+        "failed": package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "WorkerLostError"}),
+        "cancelled": package_with_record(
+            jobs, {"execution_gate": "cancelled", "outcome": "cancelled", "finished_at": now.isoformat()}
+        ),
+        # Its job may still record completion.
+        "running": package_with_record(jobs, {"execution_gate": "started"}),
+        # Its state cannot be established, so it is kept.
+        "unusable": package_with_record(jobs, {}),
+    }
+    unknown = str(uuid.uuid4())
+    jobs.package_path(unknown).write_bytes(b"package")
+    packages["unknown"] = unknown
+    # Core stages an export beside the package; one left a day ago belongs to an export that was killed.
+    killed_export, running_export = tmp_path / ".dtcc-package-killed", tmp_path / ".dtcc-package-running"
+    killed_export.mkdir()
+    running_export.mkdir()
+    day_ago = time.time() - 86400
+    os.utime(killed_export, (day_ago, day_ago))
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        kept = {name for name, job_id in packages.items() if jobs.package_path(job_id).exists()}
+        assert kept == {"completed", "running", "unusable"}
+        assert (killed_export.exists(), running_export.exists()) == (False, True)
+        # A package whose job fails while the worker runs goes at a later pass.
+        failed_later = package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "RuntimeError"})
+        wait_for(lambda: not jobs.package_path(failed_later).exists(), timeout=10)
+```
+
+- [ ] **Step 2: Run the test to verify it fails for the right reason**
+
+Run: `pnpm engine:check tests/test_redelivery.py`
+Expected: 1 failed and 8 passed. When the worker has started, every package is still there, so the set of kept packages also holds `expired`, `failed`, `cancelled`, and `unknown`. Stop and report if the test fails in another way.
+
+- [ ] **Step 3: Delete the packages in the worker**
+
+In `apps/engine/dtcc_engine/jobs.py`, replace `import os` with:
+
+```python
+import os
+import shutil
+```
+
+Add after the `RUN_DATASET` line:
+
+```python
+# How often a worker deletes the packages that no job can deliver.
+CLEANUP_INTERVAL = timedelta(hours=1)
+# Core stages an export in a directory beside the package; one this old belongs to an export that was killed.
+STAGING_AGE = timedelta(days=1)
+```
+
+In `Jobs.__init__`, add after the line that adds `RecordLostClaims`:
+
+```python
+        class CleanPackages(bootsteps.StartStopStep):
+            """Deletes the packages that no job can deliver when the worker starts, and then every interval."""
+
+            requires = {"celery.worker.components:Timer"}
+
+            def start(self, worker: Any) -> None:
+                jobs.clean_packages()
+                self.cleanup = worker.timer.call_repeatedly(CLEANUP_INTERVAL.total_seconds(), jobs.clean_packages)
+
+            def stop(self, worker: Any) -> None:
+                self.cleanup.cancel()
+
+        self.celery_app.steps["worker"].add(CleanPackages)
+```
+
+Add before `Jobs.record_lost_process`:
+
+```python
+    def clean_packages(self) -> None:
+        """Delete this host's packages that no job can deliver, and the staging directories of killed exports.
+
+        A package goes when its job is unknown or expired, failed, was cancelled, or completed more than the retention
+        ago. It stays while its job has no outcome, which may still be completion, and while the job's record is
+        unusable. A pass that Redis does not answer deletes no more packages; the next pass does.
+        """
+        now = datetime.now(UTC)
+        try:
+            for path in self.package_dir.glob("*.dtccpkg"):
+                try:
+                    record = self.read_record(path.stem)
+                except JobStateUnavailable:
+                    continue
+                outcome = record["outcome"] if record else None
+                expired = outcome == "completed" and now >= record["finished_at"] + RETENTION
+                if record is None or outcome in ("failed", "cancelled") or expired:
+                    path.unlink(missing_ok=True)
+                    logger.info("Deleted package %s, which no job can deliver", path.name)
+        except redis.RedisError:
+            logger.warning("Could not read job records; packages are deleted at the next pass", exc_info=True)
+        for staging in self.package_dir.glob(".dtcc-package-*"):
+            try:
+                age = now.timestamp() - staging.stat().st_mtime
+            except FileNotFoundError:
+                # The export finished and removed it meanwhile.
+                continue
+            if age >= STAGING_AGE.total_seconds():
+                shutil.rmtree(staging, ignore_errors=True)
+                logger.info("Deleted %s, left by an export that was killed", staging.name)
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 123 passed: the 122 earlier tests and the new one.
+
+- [ ] **Step 5: Document the cleanup**
+
+In `apps/engine/DESIGN.md`, in Package creation, delivery, and retention, add after the paragraph that ends "merely because their files remain on disk.":
+
+```markdown
+Each host's worker deletes the packages that no job can deliver when it starts
+and every hour: those whose job is unknown or expired, failed, was cancelled, or
+completed more than 30 periods of 24 hours ago. A package stays while its job
+has no outcome. The worker also deletes the staging directories that killed
+exports left beside the packages.
+```
+
+Run: `npx --yes prettier@3.9.6 --check apps/engine/DESIGN.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 6: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [ ] **Step 7: Stop for review**
+
+Record Task 23's results in Increment 4's status, leave the changes uncommitted, and report Steps 2, 4, and 6. Suggested commit message: `Feature: Deleted engine packages that no job can deliver`.
 
 ## Increment 5a: Production image for the HTTP service
 
