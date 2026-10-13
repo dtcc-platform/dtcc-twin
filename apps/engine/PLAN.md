@@ -4194,8 +4194,8 @@ from celery.signals import task_failure
 Replace the comment above the `START` script with:
 
 ```python
-# Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started, and records its
-# claim: ARGV is the worker's node name, the worker run, and the pool process ID.
+# Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started, and
+# records its claim: ARGV is the claim, which names the worker's node, the worker run, and the pool process.
 ```
 
 and, in the script, replace the `HSET` line with:
@@ -4207,8 +4207,8 @@ redis.call('HSET', KEYS[1], 'execution_gate', 'started', 'claimed_by', ARGV[1])
 Add after the `CANCEL` script:
 
 ```python
-# Records the failure of a started job whose claimant is gone, unless its claim changed or it has an outcome: ARGV is the
-# claim, the error type, the finish time, and the record's lifetime.
+# Records the failure of a started job whose claimant is gone, unless its claim changed or it has an outcome:
+# ARGV is the claim, the error type, the finish time, and the record's lifetime.
 LOST = """
 local fields = redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at', 'claimed_by')
 local gate, outcome, finished, claim = unpack(fields)
@@ -4300,7 +4300,7 @@ Add after `Jobs.finish`:
 
 ```python
     def record_lost_process(self, sender: Task, task_id: str, exception: BaseException, **kwargs: Any) -> None:
-        """Record the failure of a job whose pool process was lost, which Celery reports in the worker's main process."""
+        """Record the failure of a job whose pool process was lost, reported by Celery in the worker's main process."""
         if sender.app is self.celery_app and isinstance(exception, WorkerLostError):
             self.record_lost_claims(job_ids=[task_id])
 
