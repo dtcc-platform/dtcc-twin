@@ -22,7 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, ValidationError
 from redis import RedisError
 
-from dtcc_engine.jobs import Jobs, UnconfirmedSubmission, jobs_from_environment
+from dtcc_engine.jobs import Jobs, JobStateUnavailable, UnconfirmedSubmission, jobs_from_environment
 
 VERSIONED_PACKAGES = ("dtcc-engine", "dtcc-core", "dtcc-sim")
 # RFC 6750 b64token: any other configured token could never match a well-formed Authorization header.
@@ -109,6 +109,10 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
         except RedisError:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job state is temporarily unavailable"
+            ) from None
+        except JobStateUnavailable:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job state cannot be established"
             ) from None
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' is unknown or expired")

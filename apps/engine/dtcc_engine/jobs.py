@@ -1,8 +1,8 @@
 """Asynchronous Dataset jobs on one compute target.
 
 A job runs one Dataset in a Celery worker and delivers its realization as a canonical Dataset
-Package. Celery owns the queue and the execution state; Engine keeps its own record of each job
-in the same Redis, so unknown and expired jobs are distinguishable from queued ones.
+Package. Celery owns the queue and task results; Engine keeps its own record of each job in the
+same Redis, which decides whether a delivery may run the Dataset and records how the job ended.
 """
 
 import logging
@@ -16,6 +16,7 @@ import dtcc_core.datasets as datasets
 import dtcc_sim  # noqa: F401  Importing Sim registers its Dataset Definitions with Core.
 import redis
 from celery import Celery, Task
+from celery.exceptions import Ignore
 from dtcc_core.common.progress import get_progress_callback, set_progress_callback
 from kombu.exceptions import OperationalError
 
@@ -23,13 +24,38 @@ RETENTION = timedelta(days=30)
 # A day beyond the retention, so a job's records outlast its package even if hosts' clocks differ slightly.
 RECORD_LIFETIME = RETENTION + timedelta(days=1)
 RUN_DATASET = "dtcc_engine.run_dataset"
-STATES = {
-    "PENDING": "queued",
-    "STARTED": "running",
-    "PROGRESS": "running",
-    "SUCCESS": "completed",
-    "FAILURE": "failed",
-}
+# Celery's states of a job without a recorded outcome; SUCCESS follows the outcome, so it never appears alone.
+CELERY_STATES = {"PENDING": "queued", "STARTED": "running", "PROGRESS": "running", "FAILURE": "failed"}
+# The outcomes a record can hold with each value of its execution gate.
+OUTCOMES = {"waiting": {None}, "started": {None, "completed", "failed"}, "cancelled": {"cancelled"}}
+# Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started.
+START = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'missing'
+end
+local gate, outcome, finished = unpack(redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at'))
+if gate ~= 'waiting' or outcome or finished then
+  return 'refused'
+end
+redis.call('HSET', KEYS[1], 'execution_gate', 'started')
+return 'started'
+"""
+# Records how a started job ended: ARGV is the outcome, the finish time, the record's lifetime, and the error type.
+FINISH = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'missing'
+end
+local gate, outcome, finished = unpack(redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at'))
+if gate ~= 'started' or outcome or finished then
+  return 'refused'
+end
+redis.call('HSET', KEYS[1], 'outcome', ARGV[1], 'finished_at', ARGV[2])
+if ARGV[4] ~= '' then
+  redis.call('HSET', KEYS[1], 'error_type', ARGV[4])
+end
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 'recorded'
+"""
 logger = logging.getLogger(__name__)
 
 
@@ -45,6 +71,22 @@ def store_progress(task: Task, progress: dict[str, Any]) -> None:
     except redis.RedisError:
         # A lost progress report must not fail the computation.
         logger.warning("Could not store the progress of job %s", task.request.id, exc_info=True)
+
+
+def parse_time(value: str) -> datetime:
+    """Parse a timestamp Engine wrote.
+
+    Raises:
+        ValueError: If the value is not an ISO 8601 timestamp with a UTC offset.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.utcoffset() is None:
+        raise ValueError(f"Timestamp {value!r} has no UTC offset")
+    return parsed
+
+
+class JobStateUnavailable(Exception):
+    """Engine's record of a job is unusable, or Celery's state cannot be trusted without the record's outcome."""
 
 
 class UnconfirmedSubmission(Exception):
@@ -72,6 +114,8 @@ class Jobs:
         self.target = target
         self.package_dir = package_dir
         self.records = redis.Redis.from_url(redis_url, decode_responses=True)
+        self.start_script = self.records.register_script(START)
+        self.finish_script = self.records.register_script(FINISH)
         self.celery_app = Celery("dtcc_engine", broker=redis_url, backend=redis_url)
         self.celery_app.conf.update(
             task_default_queue=target,
@@ -106,7 +150,15 @@ class Jobs:
         job_id = str(uuid4())
         key = record_key(job_id)
         submitted_at = datetime.now(UTC).isoformat()
-        self.records.hset(key, mapping={"dataset": dataset_name, "target": self.target, "submitted_at": submitted_at})
+        self.records.hset(
+            key,
+            mapping={
+                "dataset": dataset_name,
+                "target": self.target,
+                "submitted_at": submitted_at,
+                "execution_gate": "waiting",
+            },
+        )
         try:
             self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=self.target)
             self.records.hset(key, "queued_at", datetime.now(UTC).isoformat())
@@ -114,31 +166,67 @@ class Jobs:
             raise UnconfirmedSubmission(job_id) from error
         return job_id
 
+    def read_record(self, job_id: str) -> dict[str, Any] | None:
+        """Return Engine's record of the job with its timestamps parsed, or None if the job has no record.
+
+        Raises:
+            JobStateUnavailable: If the record lacks an acceptance field or its gate, or its fields contradict each
+                other.
+            redis.RedisError: If Redis is unreachable.
+        """
+        record = self.records.hgetall(record_key(job_id))
+        if not record:
+            return None
+        try:
+            outcome = record.get("outcome")
+            consistent = (
+                outcome in OUTCOMES[record["execution_gate"]]
+                and ("finished_at" in record) == (outcome is not None)
+                and ("error_type" in record) == (outcome == "failed")
+            )
+            if not consistent:
+                raise JobStateUnavailable(job_id)
+            return {
+                "dataset": record["dataset"],
+                "target": record["target"],
+                "submitted_at": parse_time(record["submitted_at"]),
+                "queued_at": parse_time(record["queued_at"]) if "queued_at" in record else None,
+                "outcome": outcome,
+                "finished_at": parse_time(record["finished_at"]) if outcome else None,
+                "error_type": record.get("error_type"),
+            }
+        except (KeyError, ValueError) as error:
+            raise JobStateUnavailable(job_id) from error
+
     def status(self, job_id: str) -> dict[str, Any] | None:
         """Return the job's state, progress, error, and package, or None if the job is unknown or expired.
 
         Raises:
+            JobStateUnavailable: If the job's state cannot be established from its record and Celery's state.
             redis.RedisError: If Redis is unreachable, so the state is unknown for now.
         """
+        # Read before the record: the worker records an outcome before Celery stores a terminal state.
         meta = self.celery_app.backend.get_task_meta(job_id)
-        record = self.records.hgetall(record_key(job_id))
-        if not record:
+        record = self.read_record(job_id)
+        if record is None:
             return None
-        state = STATES[meta["status"]]
-        if state == "queued" and "queued_at" not in record:
-            state = "unconfirmed"
-        finished_at = datetime.fromisoformat(record["finished_at"]) if "finished_at" in record else None
+        finished_at = record["finished_at"]
         if finished_at is not None and datetime.now(UTC) >= finished_at + RETENTION:
             return None
+        state = record["outcome"] or CELERY_STATES.get(meta["status"])
+        if state is None:
+            raise JobStateUnavailable(job_id)
+        if state == "queued" and record["queued_at"] is None:
+            state = "unconfirmed"
         return {
             "job_id": job_id,
             "dataset": record["dataset"],
             "target": record["target"],
-            "submitted_at": record["submitted_at"],
-            "finished_at": record.get("finished_at"),
+            "submitted_at": record["submitted_at"].isoformat(),
+            "finished_at": finished_at.isoformat() if finished_at else None,
             "state": state,
-            "progress": meta["result"] if meta["status"] == "PROGRESS" else None,
-            "error": {"type": record.get("error_type")} if state == "failed" else None,
+            "progress": meta["result"] if state == "running" and meta["status"] == "PROGRESS" else None,
+            "error": {"type": record["error_type"]} if state == "failed" else None,
             "package": (
                 {"available": self.package_path(job_id).is_file(), "expires_at": (finished_at + RETENTION).isoformat()}
                 if state == "completed"
@@ -147,13 +235,19 @@ class Jobs:
         }
 
     def run(self, task: Task, dataset_name: str, parameters: dict[str, Any]) -> None:
-        """Run a job in the worker: invoke the Dataset, export its realization, and validate the package.
+        """Run a job in the worker if this delivery claims it, and record how the job ended.
+
+        The job invokes the Dataset, exports its realization, and validates the package.
 
         Raises:
+            Ignore: If this delivery does not claim the job, or the job's record is gone or no longer claimed when the
+                job ends; Celery then stores no result.
             Exception: Whatever the Dataset, the export, or the validation raised; the job then fails.
         """
-        key = record_key(task.request.id)
-        path = self.package_path(task.request.id)
+        job_id = task.request.id
+        if not self.claim(job_id):
+            raise Ignore()
+        path = self.package_path(job_id)
         previous_callback = get_progress_callback()
         set_progress_callback(lambda progress: store_progress(task, progress))
         try:
@@ -165,14 +259,41 @@ class Jobs:
                 path.unlink()
                 raise
         except Exception as error:
-            self.records.hset(key, "error_type", type(error).__name__)
+            self.finish(job_id, "failed", type(error).__name__)
             raise
         finally:
             set_progress_callback(previous_callback)
-            with self.records.pipeline() as pipeline:
-                pipeline.hset(key, "finished_at", datetime.now(UTC).isoformat())
-                pipeline.expire(key, RECORD_LIFETIME)
-                pipeline.execute()
+        self.finish(job_id, "completed")
+
+    def claim(self, job_id: str) -> bool:
+        """Claim permission to run the job's Dataset, which only one caller gets, and only while the job is waiting.
+
+        A claim whose answer Redis did not send is not repeated: it may have been made.
+        """
+        try:
+            # Checks the acceptance fields, which never change once written; the claim checks the rest.
+            self.read_record(job_id)
+            answer = self.start_script(keys=[record_key(job_id)])
+        except (JobStateUnavailable, redis.RedisError):
+            logger.warning("Job %s does not run: its record is unusable or Redis did not answer", job_id, exc_info=True)
+            return False
+        if answer != "started":
+            logger.warning("Job %s does not run: its record is %s", job_id, answer)
+        return answer == "started"
+
+    def finish(self, job_id: str, outcome: str, error_type: str = "") -> None:
+        """Record how a claimed job ended, with its finish time, and start its record's lifetime.
+
+        Raises:
+            Ignore: If the job's record is gone or no longer claimed, so no outcome was recorded.
+            redis.RedisError: If Redis did not answer; the outcome may or may not be recorded.
+        """
+        finished_at = datetime.now(UTC).isoformat()
+        lifetime = int(RECORD_LIFETIME.total_seconds())
+        answer = self.finish_script(keys=[record_key(job_id)], args=[outcome, finished_at, lifetime, error_type])
+        if answer != "recorded":
+            logger.warning("Job %s %s, but its record is %s, so the outcome is not recorded", job_id, outcome, answer)
+            raise Ignore()
 
 
 def jobs_from_environment() -> Jobs:

@@ -1,7 +1,7 @@
-"""Tests that a job waiting behind a running one is delivered to the worker once.
+"""Tests of how often a job runs when the worker receives it once or again.
 
 The worker here uses the prefork pool, as the worker service does: a pool process runs the job while the worker's
-main process keeps receiving messages. The test has its own module so that no other test's worker thread is running
+main process keeps receiving messages. The tests have their own module so that no other test's worker thread is running
 in this process when the pool forks.
 """
 
@@ -17,7 +17,7 @@ from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister
 from dtcc_core.model import Mesh
 from kombu import Connection
 
-from dtcc_engine.jobs import Jobs
+from dtcc_engine.jobs import RUN_DATASET, Jobs, record_key
 
 BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
 RELEASE_KEY = "engine-test:release"
@@ -37,11 +37,13 @@ def wait_for(condition: Callable[[], bool], timeout: float = 60.0) -> None:
 
 @pytest.fixture
 def counting_dataset(redis_url: str) -> Iterator[str]:
-    """Register a Dataset that counts its runs in Redis by label and, if `gated`, waits for the release key."""
+    """Register a Dataset that counts its runs in Redis by label, waits for the release key if `gated`, and raises if
+    `fail`."""
 
     class CountingProbeArgs(DatasetBaseArgs):
         label: str
         gated: bool = False
+        fail: bool = False
 
     class CountingProbeDataset(DatasetDescriptor):
         name = "engine_counting_probe"
@@ -54,6 +56,8 @@ def counting_dataset(redis_url: str) -> Iterator[str]:
             client.incr(runs_key(args.label))
             if args.gated:
                 wait_for(lambda: client.exists(RELEASE_KEY))
+            if args.fail:
+                raise RuntimeError("probe failure")
             return Mesh(
                 vertices=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), faces=np.array([[0, 1, 2]])
             )
@@ -84,6 +88,11 @@ def wait_until_completed(jobs: Jobs, job_id: str) -> None:
     wait_for(completed)
 
 
+def wait_until_finished(jobs: Jobs, job_id: str) -> dict:
+    wait_for(lambda: jobs.status(job_id)["state"] in ("completed", "failed"))
+    return jobs.status(job_id)
+
+
 def test_job_waiting_behind_a_running_job_runs_once(prefork_jobs: Jobs, counting_dataset: str, redis_url: str) -> None:
     runs = prefork_jobs.records
     prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "held", "gated": True})
@@ -100,3 +109,29 @@ def test_job_waiting_behind_a_running_job_runs_once(prefork_jobs: Jobs, counting
     last = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "last"})
     wait_until_completed(prefork_jobs, last)
     assert runs.mget([runs_key(label) for label in ("held", "waiting", "last")]) == ["1", "1", "1"]
+
+
+@pytest.mark.parametrize("fail", [False, True], ids=["completed", "failed"])
+def test_job_delivered_again_after_it_finished_does_not_run_again(
+    prefork_jobs: Jobs, counting_dataset: str, fail: bool
+) -> None:
+    records = prefork_jobs.records
+    label = "failed" if fail else "completed"
+    parameters = {"bounds": BOUNDS, "label": label, "fail": fail}
+    job_id = prefork_jobs.submit(counting_dataset, parameters)
+    finished = wait_until_finished(prefork_jobs, job_id)
+    record, lifetime = records.hgetall(record_key(job_id)), records.ttl(record_key(job_id))
+    package = None if fail else prefork_jobs.package_path(job_id).read_bytes()
+    # The job's message again, as a broker that delivers it a second time would send it.
+    prefork_jobs.sender.send_task(RUN_DATASET, args=[counting_dataset, parameters], task_id=job_id, queue="prefork")
+    # Sent after the second delivery, so it runs after it.
+    last = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": f"after-{label}"})
+    wait_until_completed(prefork_jobs, last)
+    assert records.get(runs_key(label)) == "1"
+    assert prefork_jobs.status(job_id) == finished
+    assert records.hgetall(record_key(job_id)) == record
+    assert records.ttl(record_key(job_id)) <= lifetime
+    assert (None if fail else prefork_jobs.package_path(job_id).read_bytes()) == package
+    # The second delivery's STARTED replaced a failure in Celery's result, though not a success.
+    celery_state = prefork_jobs.celery_app.backend.get_task_meta(job_id)["status"]
+    assert celery_state == ("STARTED" if fail else "SUCCESS")

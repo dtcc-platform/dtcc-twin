@@ -2552,7 +2552,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 4: Lifecycle behavior
 
-Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19, which are not executed. The remaining lifecycle work is still an outline; this section does not complete increment 4.
+Status: the cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is left uncommitted for review. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Tasks 18 and 19 are not executed. The remaining lifecycle work is still an outline; this section does not complete increment 4.
 
 **Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages, and of packages left without a completed job, such as one kept after its job failed or one whose record has no finish time. It also handles a failed job whose worker recorded no exception type. The loss of a pool process, which Celery may record as a failure, is distinguished from the loss of the whole worker, which can leave the job's state stale. Both gaps were found in increment 2a's review.
 
@@ -2661,12 +2661,12 @@ After targeted checks, run the full Engine suite, production checks with token c
   - `Jobs.status` takes a terminal state from the recorded outcome and raises `JobStateUnavailable` when it cannot establish the state; the status and download routes answer it with `503`.
   - `parse_time`, `JobStateUnavailable`, `CELERY_STATES` (replacing `STATES`), `OUTCOMES`, `START`, and `FINISH` in `dtcc_engine.jobs`.
 
-- [ ] **Step 1: Check that the development engine is stopped**
+- [x] **Step 1: Check that the development engine is stopped**
 
 Run: `docker compose --profile engine ps --status running --services`
 Expected: neither `engine` nor `engine-worker` is listed. If either is, stop both as step 1 of the README's transition says, and clear nothing: the transition is Task 19's. The API reloads mounted source and the worker does not, so a running pair would serve the new status code with the old worker.
 
-- [ ] **Step 2: Write the tests**
+- [x] **Step 2: Write the tests**
 
 In `apps/engine/tests/test_jobs.py`, replace `import pytest` and `from celery import Celery` with:
 
@@ -2976,7 +2976,7 @@ def test_job_delivered_again_after_it_finished_does_not_run_again(
     assert celery_state == ("STARTED" if fail else "SUCCESS")
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail for the right reasons**
+- [x] **Step 3: Run the tests to verify they fail for the right reasons**
 
 Run: `pnpm engine:check tests/test_jobs.py tests/test_redelivery.py`
 Expected: 21 failed and 28 passed. Each failure is on the behavior the test specifies:
@@ -2989,7 +2989,7 @@ Expected: 21 failed and 28 passed. Each failure is on the behavior the test spec
 
 Both cases of `test_celery_state_is_reported_without_a_recorded_outcome` pass: they pin 2a behavior that stays. Stop and report if any test fails in another way, or if another test passes.
 
-- [ ] **Step 4: Gate execution and record outcomes**
+- [x] **Step 4: Gate execution and record outcomes**
 
 In `apps/engine/dtcc_engine/jobs.py`, replace the module docstring with:
 
@@ -3224,7 +3224,7 @@ Replace `Jobs.run` with:
             raise Ignore()
 ```
 
-- [ ] **Step 5: Answer an unusable record with `503`**
+- [x] **Step 5: Answer an unusable record with `503`**
 
 In `apps/engine/dtcc_engine/api.py`, replace the import from `dtcc_engine.jobs` with:
 
@@ -3251,17 +3251,17 @@ Replace `find_job` with:
         return job
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `pnpm engine:check`
 Expected: 88 passed: the 65 earlier tests and the 23 new ones.
 
-- [ ] **Step 7: Validate**
+- [x] **Step 7: Validate**
 
 Run: `pnpm engine:check:prod`, then `pnpm check`.
 Expected: the production checks pass with `engine-redis` in their own Compose project, and their token checks pass; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
 
-- [ ] **Step 8: Stop for review**
+- [x] **Step 8: Stop for review**
 
 Record Task 17's results in Increment 4's status, leave the changes uncommitted, and report Steps 1, 3, 6, and 7. Suggested commit message: `Feature: Gated engine jobs and recorded their outcomes`.
 

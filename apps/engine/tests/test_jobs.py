@@ -13,7 +13,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from celery import Celery
+import redis
+from celery import Celery, current_task
+from celery.exceptions import TaskRevokedError
 from dtcc_core.common.progress import ProgressTracker
 from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, load_model_package, unregister
 from dtcc_core.model import Mesh
@@ -140,6 +142,67 @@ def failing_dataset() -> Iterator[str]:
         yield "engine_failing_probe"
     finally:
         unregister("engine_failing_probe")
+
+
+@pytest.fixture
+def probe_dataset(jobs: Jobs) -> Iterator[tuple[str, list[str]]]:
+    """Register a Dataset that records the ID of each job it runs for, and return its name and that list.
+
+    `fail` makes it raise; `lose_record` makes it delete its job's record first, as Redis losing its data would.
+    """
+    runs: list[str] = []
+
+    class ProbeArgs(DatasetBaseArgs):
+        fail: bool = False
+        lose_record: bool = False
+
+    class ProbeDataset(DatasetDescriptor):
+        name = "engine_probe"
+        description = "Dataset defined by an Engine test that records its runs"
+        ArgsModel = ProbeArgs
+
+        def build(self, args):
+            runs.append(current_task.request.id)
+            if args.lose_record:
+                jobs.records.delete(record_key(current_task.request.id))
+            if args.fail:
+                raise RuntimeError("probe failure")
+            return triangle()
+
+    try:
+        yield "engine_probe", runs
+    finally:
+        unregister("engine_probe")
+
+
+def deliver(jobs: Jobs, job_id: str, request: dict) -> str:
+    """Run the job's task in this process, as a worker does with a delivered message, and return Celery's state.
+
+    Unlike a worker, this stores no state in the result backend.
+    """
+    task = jobs.celery_app.tasks[RUN_DATASET]
+    return task.apply(args=[request["dataset"], request["parameters"]], task_id=job_id).state
+
+
+FINISHED_AT = "2026-10-13T12:00:00+00:00"
+# Changes that make a submitted job's record unusable; None deletes the field.
+UNUSABLE_CHANGES = {
+    "no-gate": {"execution_gate": None},
+    "unknown-gate": {"execution_gate": "paused"},
+    "no-dataset": {"dataset": None},
+    "unreadable-submission-time": {"submitted_at": "yesterday"},
+    "finish-time-without-outcome": {"finished_at": FINISHED_AT},
+    "outcome-of-a-waiting-job": {"outcome": "completed", "finished_at": FINISHED_AT},
+    "failure-without-type": {"execution_gate": "started", "outcome": "failed", "finished_at": FINISHED_AT},
+}
+
+
+def change_record(jobs: Jobs, job_id: str, changes: dict[str, str | None]) -> None:
+    for field, value in changes.items():
+        if value is None:
+            jobs.records.hdel(record_key(job_id), field)
+        else:
+            jobs.records.hset(record_key(job_id), field, value)
 
 
 @pytest.mark.parametrize(
@@ -333,6 +396,24 @@ def test_status_read_while_the_job_finishes_is_consistent(
     assert (response.json()["state"], response.json()["finished_at"]) == ("queued", None)
 
 
+def test_status_read_while_the_job_finishes_reports_its_outcome(jobs: Jobs, monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = jobs.submit("smoke", {"bounds": BOUNDS})
+    # Celery's backend is per thread, so this test reads the status in its own thread rather than through the API.
+    read_celery_state = jobs.celery_app.backend.get_task_meta
+
+    def finish_after_the_read(task_id: str, *args, **kwargs) -> dict:
+        meta = read_celery_state(task_id, *args, **kwargs)
+        # The job finishes between Engine's two reads: the worker records the outcome, then Celery stores SUCCESS.
+        outcome = {"execution_gate": "started", "outcome": "completed", "finished_at": datetime.now(UTC).isoformat()}
+        jobs.records.hset(record_key(job_id), mapping=outcome)
+        jobs.celery_app.backend.mark_as_done(job_id, None)
+        return meta
+
+    monkeypatch.setattr(jobs.celery_app.backend, "get_task_meta", finish_after_the_read)
+    job = jobs.status(job_id)
+    assert (job["state"], job["finished_at"] is not None) == ("completed", True)
+
+
 def test_job_task_is_not_shared_with_other_celery_apps(jobs: Jobs) -> None:
     # A shared task joins every app finalized later, and a name's first registration wins,
     # so a worker could run another Jobs instance's task.
@@ -386,3 +467,129 @@ def test_finished_job_and_its_package_expire_after_the_retention(
     polled = served_client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
     downloaded = served_client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
     assert (polled.status_code, downloaded.status_code) == (status_code, status_code)
+
+
+@pytest.mark.parametrize(("fail", "outcome"), [(False, "completed"), (True, "failed")])
+def test_job_delivered_again_does_not_run_again(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], fail: bool, outcome: str
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS, "fail": fail}}
+    job_id = submit(client, request)
+    deliver(jobs, job_id, request)
+    key = record_key(job_id)
+    record, lifetime = jobs.records.hgetall(key), jobs.records.ttl(key)
+    package = None if fail else jobs.package_path(job_id).read_bytes()
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == [job_id]
+    assert (record.get("outcome"), record.get("error_type")) == (outcome, "RuntimeError" if fail else None)
+    assert jobs.records.hgetall(key) == record
+    assert jobs.records.ttl(key) <= lifetime
+    assert (None if fail else jobs.package_path(job_id).read_bytes()) == package
+
+
+def test_delivery_of_a_job_another_delivery_claimed_does_not_run_it(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]]
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    job_id = submit(client, request)
+    # Another delivery of the same message claimed the job and is running it.
+    jobs.records.hset(record_key(job_id), "execution_gate", "started")
+    record = jobs.records.hgetall(record_key(job_id))
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == []
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+@pytest.mark.parametrize("changes", UNUSABLE_CHANGES.values(), ids=UNUSABLE_CHANGES.keys())
+def test_unusable_record_is_reported_unavailable_and_never_runs(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], changes: dict[str, str | None]
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    job_id = submit(client, request)
+    change_record(jobs, job_id, changes)
+    record = jobs.records.hgetall(record_key(job_id))
+    polled = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    downloaded = client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert (polled.status_code, downloaded.status_code) == (503, 503)
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == []
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+@pytest.mark.parametrize("fail", [False, True], ids=["completing", "failing"])
+def test_record_lost_while_the_job_runs_is_not_recreated(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], fail: bool
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS, "fail": fail, "lose_record": True}}
+    job_id = submit(client, request)
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == [job_id]
+    assert not jobs.records.exists(record_key(job_id))
+
+
+@pytest.mark.parametrize("claimed", [False, True], ids=["before-the-claim", "after-the-claim"])
+def test_claim_without_an_answer_does_not_run_the_job(
+    client: TestClient,
+    jobs: Jobs,
+    probe_dataset: tuple[str, list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+    claimed: bool,
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    job_id = submit(client, request)
+
+    def lose_the_answer(*args, **kwargs):
+        # Redis fails before it runs the claim, or runs it and its answer is lost.
+        if claimed:
+            jobs.records.hset(record_key(job_id), "execution_gate", "started")
+        raise redis.ConnectionError("connection lost before Redis answered")
+
+    monkeypatch.setattr(jobs, "start_script", lose_the_answer, raising=False)
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == []
+    assert "outcome" not in jobs.records.hgetall(record_key(job_id))
+
+
+@pytest.mark.parametrize(("fail", "outcome"), [(False, "completed"), (True, "failed")])
+def test_recorded_outcome_prevails_over_celery_state(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], fail: bool, outcome: str
+) -> None:
+    dataset, _ = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS, "fail": fail}}
+    job_id = submit(client, request)
+    deliver(jobs, job_id, request)
+    # A later delivery of the same message: Celery stores STARTED before the task can decline to run.
+    jobs.celery_app.backend.store_result(job_id, {"pid": 0, "hostname": "duplicate"}, "STARTED")
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    assert (job["state"], job["error"]) == (outcome, {"type": "RuntimeError"} if fail else None)
+    assert job["finished_at"] is not None
+    assert (job["package"] is None) == fail
+
+
+@pytest.mark.parametrize(
+    ("celery_state", "result", "state"),
+    [("STARTED", {"pid": 0, "hostname": "worker"}, "running"), ("FAILURE", RuntimeError("worker lost"), "failed")],
+)
+def test_celery_state_is_reported_without_a_recorded_outcome(
+    client: TestClient, jobs: Jobs, celery_state: str, result: object, state: str
+) -> None:
+    # A failure Celery recorded without Engine's outcome, such as a lost pool process, gets no invented finish time.
+    job_id = submit(client, SMOKE)
+    jobs.celery_app.backend.store_result(job_id, result, celery_state)
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    assert (job["state"], job["finished_at"]) == (state, None)
+
+
+@pytest.mark.parametrize(("celery_state", "result"), [("SUCCESS", None), ("REVOKED", TaskRevokedError("revoked"))])
+def test_celery_success_or_revocation_alone_is_unavailable(
+    client: TestClient, jobs: Jobs, celery_state: str, result: object
+) -> None:
+    # Engine records the outcome before Celery stores SUCCESS, and Engine sends no revoke.
+    job_id = submit(client, SMOKE)
+    jobs.celery_app.backend.store_result(job_id, result, celery_state)
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).status_code == 503
