@@ -121,9 +121,10 @@ flowchart LR
 ```
 
 Workers execute Core/Sim Python APIs in their own environment. Celery owns the
-queue, worker processes, execution state, and worker concurrency. Engine owns
+queue, worker processes, task results, and worker concurrency. Engine owns
 the small amount of application coordination needed to select a configured
-target, expose upstream contracts, translate job status, and deliver packages.
+target, expose upstream contracts, arbitrate starting against cancellation,
+record terminal job outcomes, translate job status, and deliver packages.
 
 There is one job and one Celery task per Dataset invocation. Remote execution
 does not create a central task that waits for another task over HTTP. The
@@ -241,14 +242,14 @@ Engine provides the following operations through its versioned HTTP API. The
 implementation plan will select concrete route and module names while
 preserving these operation contracts.
 
-| Operation                 | Input                                                                                           | Output                                                                                                                    |
-| ------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| List or describe Datasets | Optional Dataset identity                                                                       | Upstream descriptors, parameter schemas, supported semantic products, and target availability.                            |
-| List compute targets      | No Dataset request required                                                                     | Configured target identifiers, versions, local capabilities, and observed availability.                                   |
-| Submit a job              | Dataset name, parameter object including bounds where applicable, and optional execution target | Accepted job ID and a status reference; no wait for Dataset completion.                                                   |
-| Get job status            | Job ID                                                                                          | Execution state, available progress, useful error information, cancellation-request information, and result availability. |
-| Download a result         | Completed job ID                                                                                | The validated `.dtccpkg` archive.                                                                                         |
-| Request cancellation      | Job ID                                                                                          | Whether cancellation was requested, is already resolved, or is unsupported for the job's current execution state.         |
+| Operation                 | Input                                                                                           | Output                                                                                                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| List or describe Datasets | Optional Dataset identity                                                                       | Upstream descriptors, parameter schemas, supported semantic products, and target availability.                      |
+| List compute targets      | No Dataset request required                                                                     | Configured target identifiers, versions, local capabilities, and observed availability.                             |
+| Submit a job              | Dataset name, parameter object including bounds where applicable, and optional execution target | Accepted job ID and a status reference; no wait for Dataset completion.                                             |
+| Get job status            | Job ID                                                                                          | Execution state, available progress, useful error information, confirmed cancellation, and result availability.     |
+| Download a result         | Completed job ID                                                                                | The validated `.dtccpkg` archive.                                                                                   |
+| Request cancellation      | Job ID                                                                                          | Confirmed pre-execution cancellation, an already finished job, or refusal because execution permission was claimed. |
 
 Consumer requests are JSON-compatible descriptions of Dataset invocations. They
 do not carry Python model objects, uploaded data, arbitrary code, or arbitrary
@@ -275,9 +276,20 @@ Job status distinguishes queued, running, completed, failed, and confirmed
 cancelled work. A job whose submission the broker did not confirm is
 unconfirmed rather than queued, because it may or may not be queued; it is
 reported as running once a worker starts it, and Engine never sends it again.
-Cancellation being requested is separate information from
-confirmation that work was cancelled. Unknown or expired jobs and temporary
-status unavailability must be distinguishable from queued work.
+Cancellation is confirmed only by Engine's recorded outcome. A cancel response
+with `result=cancelled` confirms it; a communication failure or lost response
+leaves the caller uncertain until polling resolves the outcome. Unknown or expired
+jobs and temporary status unavailability must be distinguishable from queued
+work.
+
+An explicit Engine outcome of `completed`, `failed`, or `cancelled` is
+authoritative over Celery metadata. A finish timestamp alone does not establish
+an outcome. Celery still supplies observed task state and progress when no
+Engine outcome is recorded; a failure without Engine finish metadata must not
+be silently turned into running work or assigned an invented finish time.
+Celery `SUCCESS` alone does not authorize a package download, and `REVOKED`
+alone does not confirm cancellation. Missing or inconsistent information must
+be reported as unavailable where an outcome cannot be established.
 
 Progress reports upstream measurements and messages when available. A running
 job without measured progress must not be given an invented percentage or
@@ -352,27 +364,80 @@ Downstream consumers must store results they need to retain durably.
   unrestricted internal tracebacks. Operational diagnostics can retain the
   information needed to investigate the job.
 
-No exactly-once execution or duplicate-submission guarantee is introduced by
-this specification. Broker reconnection and read-only status polling do not
-constitute permission for Engine to retry a Dataset computation.
+The start gate below allows at most one delivery to claim execution for a
+surviving acceptance record. This is not an exactly-once execution or
+duplicate-submission guarantee: a crash after the claim can leave the Dataset
+uninvoked, and separate submissions have separate job IDs. It supplies no
+durability or recovery guarantee after Redis state loss or rollback. Broker
+reconnection and read-only status polling do not constitute permission for
+Engine to retry a Dataset computation.
 
 ### Cancellation
 
-V1 supports best-effort cancellation before execution starts, using existing
-Celery facilities. If cancellation races with execution starting, the job may
-run. Accepting a cancellation request must not be presented as proof that
-running work has stopped.
+V1 supports cancellation before a worker claims permission to invoke the
+Dataset. Engine records `execution_gate=waiting` with the acceptance fields
+before publishing the job. A Redis Lua operation validates the existing record
+and atomically makes one of two decisions:
 
-Running-job cancellation is deferred. Engine must not copy the existing Sim
-service's programmatic `terminate=True` behavior as a general cancellation API.
-Celery's [worker documentation](https://docs.celeryq.dev/en/stable/userguide/workers.html#revoke-revoking-tasks)
-explains that this terminates a worker process and can affect a different task
-if that process has already moved on. Confirmation and race handling must be
-checked against the selected Celery version before exposing a
-terminal cancelled state.
+- The worker changes `waiting` to `started` immediately before Dataset
+  invocation. Only the delivery that wins this transition may compute.
+- Cancellation changes `waiting` to `cancelled` and records
+  `outcome=cancelled`, the UTC `finished_at`, and a 31-day record TTL together.
 
-No custom interruption hooks, process-management framework, or solver-specific
-cancellation implementation are included in the first release.
+Neither transition creates a record or overwrites a previous decision. Missing
+acceptance fields, a missing or unknown gate, and inconsistent outcome metadata
+cannot grant execution permission. A message whose record is absent never
+computes, including delivery after record expiry. There is no legacy execution
+path for gate-less records after the one-time development transition below.
+
+Cancelled or duplicate deliveries, and deliveries without usable acceptance
+records, bypass Dataset invocation and ordinary finalization. They use Celery
+`Ignore`, so they do not write `SUCCESS` or change Engine outcomes, timestamps,
+errors, or packages. Celery may write `STARTED` before the task body runs;
+Engine's recorded terminal outcome must still win when status is read.
+
+The winning execution records `outcome=completed` only after Core's package
+validation succeeds, or `outcome=failed` with the original exception type on
+failure. One conditional Lua operation validates the existing acceptance record
+and its `started` gate, then writes the outcome, UTC finish time, applicable
+exception metadata, and 31-day TTL together. It never creates a missing record
+or overwrites an existing outcome. No separate worker exception write may
+recreate a record. Lost records and packages left without usable records remain
+lifecycle concerns; they do not justify fabricating terminal metadata.
+
+If a start operation fails or its response is lost, that delivery must not
+compute or automatically retry execution. Record diagnostics without inventing
+an outcome. `started` means permission was claimed, not that computation is
+alive or even began. Worker-loss detection and resolution of uncertain jobs
+remain separate lifecycle work.
+
+`POST /api/v1/jobs/{job_id}/cancel` requires the shared token and has no request
+body. Within public retention, a usable recorded terminal outcome takes
+precedence over the gate:
+
+| HTTP | Result              | Condition                                                                                               |
+| ---- | ------------------- | ------------------------------------------------------------------------------------------------------- |
+| 200  | `cancelled`         | Cancellation won, or the job was already cancelled.                                                     |
+| 200  | `already_finished`  | Engine has recorded `completed` or `failed`.                                                            |
+| 409  | `execution_started` | Execution permission was claimed, with no recorded terminal outcome.                                    |
+| 404  | Unknown or expired  | No acceptance record exists, or its public retention has ended.                                         |
+| 503  | State unavailable   | Redis failed, the operation response is uncertain, or the record is unusable, including a missing gate. |
+
+Successful responses include `job_id`, `status_url`, and `result`. A `503` does
+not assert that cancellation failed to take effect; the consumer polls. An
+unconfirmed submission with a usable `waiting` record can also be cancelled.
+
+Cancelled status exposes the recorded finish time and no progress, error, or
+package. Download returns `409` until public expiry. Status, cancellation, and
+download return `404` from 30 periods of 24 hours after cancellation; the record
+is retained for 31 days. Polling, repeated cancellation, and later deliveries
+do not extend either deadline.
+
+Engine sends no Celery revoke and does not terminate running jobs. No custom
+interruption hooks, process-management framework, or solver-specific
+cancellation implementation are included. Before cancellation is exposed,
+every worker that can consume these jobs must enforce the gate. Real Redis and
+prefork-worker checks must establish these behaviors before acceptance.
 
 ### Restart behavior
 
@@ -384,6 +449,15 @@ that survives through the broker, workers, or filesystem can remain usable.
 There is no additional coordination mechanism whose purpose is to erase
 surviving jobs. Guaranteed persistence, recovery, and resumption are explicitly
 deferred requirements for a later release.
+
+The cancellation upgrade has a one-time development transition that explicitly
+discards existing local job records, queued messages, task results, and stored
+packages. It is not ordinary restart behavior or a production reset policy.
+Stop the API before applying the new code, let active work finish and all old
+workers exit, then reset only Engine's development Redis DB 0 and its package
+volume before starting the new code. Preserve test DB 1 and unrelated services
+and storage. The ordered procedure is in the [README](../../README.md#engine-cancellation-transition-planned).
+Approving or documenting this policy does not execute the reset.
 
 ## Deployment and authentication
 
@@ -513,8 +587,8 @@ not claims of passing runtime tests or a verified release combination.
 
 | Reference                         | Inspected revision                         |
 | --------------------------------- | ------------------------------------------ |
-| `dtcc-core`, from Sim's `uv.lock` | `2289d11f85049e13d5042e5cb3e5627c6568765f` |
-| `dtcc-sim`                        | `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339` |
+| `dtcc-core`, from Sim's `uv.lock` | `17c6efe44ca7622e6ef4a802627dfce3ef7f6174` |
+| `dtcc-sim`                        | `41055d560c66939a93e23c51f4cc71210541cb26` |
 | `dtcc-tetgen-wrapper`             | `22ab9ff2ee1dd03f82ce24dd0f378f00da7e487c` |
 
 ### Reusable interfaces
@@ -572,10 +646,14 @@ not claims of passing runtime tests or a verified release combination.
    `.dtccpkg` delivery over HTTP. Do not reuse them unchanged or restore their
    legacy shared-volume assumptions. The required Engine HTTP adapter handles
    discovery and transport while Core retains package semantics.
-5. **Cancellation behavior must be verified.** Sim's existing endpoint calls
-   Celery revoke with forced process termination. V1 intentionally uses the
-   narrower cancellation contract above. Verify queued-task races and state
-   reporting against the selected Celery version.
+5. **Celery revocation investigated and superseded.** Source inspection at
+   Celery 5.6.3 and the implementation-side experiments recorded in
+   [PLAN.md](PLAN.md#increment-4-lifecycle-behavior) motivate using the Engine
+   gate above instead of Sim's revoke/termination approach. `REVOKED` does not
+   prove that computation stopped, and `Ignore` does not prevent Celery's
+   earlier `STARTED` write. This investigation is not acceptance evidence for
+   the gate: verify its races, terminal outcomes, retention, and failures with
+   real Redis and prefork workers.
 
 Reference checkouts remain unmodified during Engine work. Missing shared
 capabilities require separately proposed Core or Sim changes. The implementation
@@ -601,7 +679,7 @@ one Engine address, whether execution was local or remote.
 | Concurrency          | Concurrent submissions never cause a host to execute more Dataset jobs than its configured worker limit, including when capacity observations race.                                                                                                    |
 | Polling              | Queued and running jobs are distinguishable; upstream progress is retained; missing progress is not fabricated; unknown IDs are not reported as queued.                                                                                                |
 | Failure reporting    | Dataset, required packaging, broker, and host failures produce the specified outcomes without automatic Dataset resubmission or false claims that work stopped.                                                                                        |
-| Cancellation         | Pre-execution cancellation and the start/cancel race are exercised; acceptance is distinct from confirmed cancellation; running-job cancellation is reported as unsupported.                                                                           |
+| Cancellation         | The start/cancel gate is exercised with real workers; cancellation winning prevents execution, a start winner prevents cancellation, uncertain responses remain uncertain, and duplicate deliveries preserve terminal outcomes and retention.          |
 | Package correctness  | Core validation confirms manifest integrity, required canonical Protobuf content, and supported schema/root type; model-level tests demonstrate lossless round trips.                                                                                  |
 | Retention            | Completed packages remain retrievable during the 30-day retention window under normal operation, expire from the completion time, and are physically cleaned up; downloads do not reset expiry.                                                        |
 | Restart behavior     | Separate API, worker, and broker restarts do not promise recovery or force deletion of surviving work; unavailable and unknown state are reported honestly.                                                                                            |

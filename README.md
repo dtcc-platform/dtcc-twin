@@ -43,6 +43,17 @@ The engine is optional and its image is large; frontend and backend work does no
 
 `pnpm dev:engine` also starts the engine's Redis and a Celery worker. The job routes take the same token. Submit a job with `POST /api/v1/jobs` and a body such as `{"dataset": "smoke", "parameters": {"bounds": [319891, 6399790, 320091, 6399990]}}`, poll `GET /api/v1/jobs/<job id>`, and download a completed job's package from `GET /api/v1/jobs/<job id>/package`. The worker does not reload code: after changing the engine, run `docker compose --profile engine restart engine-worker`. `pnpm engine:check` starts the engine's Redis if it is not running and leaves it running.
 
+### Engine cancellation transition (planned)
+
+Cancellation is specified in [Engine's design](apps/engine/DESIGN.md#cancellation) but is not implemented yet. Its first implementation requires the one-time local development transition below, which discards old job history, queued jobs, Celery results, and stored packages. The policy is approved for that upgrade; this documentation change does not perform or call for a reset now. It is not a routine restart procedure or a production migration.
+
+1. **Before applying the cancellation code**, stop the Engine API and warm-stop the worker. The API reloads mounted source automatically, while the worker does not; cancellation must never be served while an old worker can consume jobs. Allow active computation to finish and verify that both processes have exited. Compose's default stop grace period is 10 seconds before forced termination: allow enough time for the actual job, or wait for it to finish before stopping. A longer timeout alone does not confirm a graceful exit. Keep Engine's Redis running.
+2. Clear **only DB 0 of this development Compose project's `engine-redis`**. It contains Engine's acceptance records, the Celery broker, and task results. This deliberately discards queued work and job history. DB 1 is the separate test database and must remain untouched.
+3. Identify this project's `engine-packages` volume from the Engine containers' mounts, remove the stopped `engine` and `engine-worker` containers that reference it, then remove that volume. Docker cannot remove a volume still referenced by a container. This deletes all stored packages. Preserve Redis, test DB 1, `postgres-data`, and unrelated services and volumes; do not use a project-wide volume teardown.
+4. Apply the new cancellation implementation, then rebuild and start the Engine API and worker together with `pnpm dev:engine`. Both must run the gate-aware code before submissions resume. Old job IDs are no longer available; submit new jobs as needed.
+
+See [the cancellation plan](apps/engine/PLAN.md#cancellation) for the contract and checks. The shutdown and volume requirements follow Docker's [stop grace period](https://docs.docker.com/reference/compose-file/services/#stop_grace_period) and [volume removal](https://docs.docker.com/reference/cli/docker/volume/rm/) rules. This transition has not been run or runtime-verified as part of the documentation change.
+
 ## Commands
 
 From the repo root:
