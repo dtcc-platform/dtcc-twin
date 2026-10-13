@@ -376,8 +376,10 @@ Engine to retry a Dataset computation.
 
 V1 supports cancellation before a worker claims permission to invoke the
 Dataset. Engine records `execution_gate=waiting` with the acceptance fields
-before publishing the job. A Redis Lua operation validates the existing record
-and atomically makes one of two decisions:
+before publishing the job. Engine validates the existing record, then a Redis
+Lua operation checks its gate and terminal fields and atomically makes one of two
+decisions. The acceptance fields never change once written, so validating them
+before the operation keeps each decision atomic:
 
 - The worker changes `waiting` to `started` immediately before Dataset
   invocation. Only the delivery that wins this transition may compute.
@@ -398,8 +400,9 @@ Engine's recorded terminal outcome must still win when status is read.
 
 The winning execution records `outcome=completed` only after Core's package
 validation succeeds, or `outcome=failed` with the original exception type on
-failure. One conditional Lua operation validates the existing acceptance record
-and its `started` gate, then writes the outcome, UTC finish time, applicable
+failure. One conditional Lua operation checks that the record still exists with
+its `started` gate and no outcome, relying on the acceptance validation made when
+execution was claimed, then writes the outcome, UTC finish time, applicable
 exception metadata, and 31-day TTL together. It never creates a missing record
 or overwrites an existing outcome. No separate worker exception write may
 recreate a record. Lost records and packages left without usable records remain
