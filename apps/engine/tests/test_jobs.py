@@ -19,6 +19,7 @@ from celery import Celery, current_task
 from celery.exceptions import TaskRevokedError
 from dtcc_core.common.progress import ProgressTracker
 from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, load_model_package, unregister
+from dtcc_core.datasets.dataset import DatasetUpstreamError
 from dtcc_core.model import Mesh
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -32,6 +33,7 @@ TOKEN = "test-token"
 AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
 BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
 SMOKE = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}}
+PROVIDER_KEY = "provider-key-5e1d"
 FINISHED = ("completed", "failed")
 
 
@@ -177,6 +179,37 @@ def probe_dataset(jobs: Jobs) -> Iterator[tuple[str, list[str]]]:
         unregister("engine_probe")
 
 
+@pytest.fixture
+def upstream_failing_dataset() -> Iterator[str]:
+    """Register a Dataset that fails as Core's live Datasets do when their provider fails, and return its name.
+
+    Its message repeats a provider key, as a request URL's query can, and its target is the one requested.
+    """
+
+    class UpstreamProbeArgs(DatasetBaseArgs):
+        target: str
+
+    class UpstreamProbeDataset(DatasetDescriptor):
+        name = "engine_upstream_probe"
+        description = "Dataset defined by an Engine test whose provider fails"
+        ArgsModel = UpstreamProbeArgs
+
+        def build(self, args):
+            raise DatasetUpstreamError(
+                dataset="engine_upstream_probe",
+                operation="fetch",
+                target=args.target,
+                failure_class="http_4xx",
+                status_code=401,
+                message=f"401 Client Error: Unauthorized for url: https://provider.example/data?key={PROVIDER_KEY}",
+            )
+
+    try:
+        yield "engine_upstream_probe"
+    finally:
+        unregister("engine_upstream_probe")
+
+
 def deliver(jobs: Jobs, job_id: str, request: dict) -> str:
     """Run the job's task in this process, as a worker does with a delivered message, and return Celery's state.
 
@@ -196,6 +229,19 @@ UNUSABLE_CHANGES = {
     "finish-time-without-outcome": {"finished_at": FINISHED_AT},
     "outcome-of-a-waiting-job": {"outcome": "completed", "finished_at": FINISHED_AT},
     "failure-without-type": {"execution_gate": "started", "outcome": "failed", "finished_at": FINISHED_AT},
+    "upstream-detail-without-failure": {
+        "execution_gate": "started",
+        "outcome": "completed",
+        "finished_at": FINISHED_AT,
+        "error_upstream": "{}",
+    },
+    "unreadable-upstream-detail": {
+        "execution_gate": "started",
+        "outcome": "failed",
+        "finished_at": FINISHED_AT,
+        "error_type": "DatasetUpstreamError",
+        "error_upstream": "not json",
+    },
 }
 
 
@@ -740,3 +786,35 @@ def test_delivery_after_cancellation_never_runs(
     assert runs == []
     assert jobs.records.hgetall(record_key(job_id)) == record
     assert jobs.records.ttl(record_key(job_id)) <= lifetime
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        f"https://user:{PROVIDER_KEY}@provider.example:8443/data?key={PROVIDER_KEY}",
+        f"//user:{PROVIDER_KEY}@provider.example/data",
+        f"https://provider.example/{PROVIDER_KEY}/data",
+        f"https://[{PROVIDER_KEY}/data",
+    ],
+    ids=["url", "url-without-scheme", "key-in-path", "malformed-url"],
+)
+def test_upstream_failure_reports_cores_metadata_without_credentials(
+    client: TestClient, jobs: Jobs, upstream_failing_dataset: str, target: str
+) -> None:
+    request = {"dataset": upstream_failing_dataset, "parameters": {"bounds": BOUNDS, "target": target}}
+    job_id = submit(client, request)
+    assert deliver(jobs, job_id, request) == "FAILURE"
+    response = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    job = response.json()
+    assert job["error"] == {
+        "type": "DatasetUpstreamError",
+        "upstream": {
+            "dataset": "engine_upstream_probe",
+            "operation": "fetch",
+            "failure_class": "http_4xx",
+            "status_code": 401,
+            "is_transient": False,
+        },
+    }
+    assert job["finished_at"] is not None
+    assert PROVIDER_KEY not in response.text

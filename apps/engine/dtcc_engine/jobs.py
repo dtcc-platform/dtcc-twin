@@ -5,6 +5,7 @@ Package. Celery owns the queue and task results; Engine keeps its own record of 
 same Redis, which decides whether a delivery may run the Dataset and records how the job ended.
 """
 
+import json
 import logging
 import os
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,7 @@ import redis
 from celery import Celery, Task
 from celery.exceptions import Ignore
 from dtcc_core.common.progress import get_progress_callback, set_progress_callback
+from dtcc_core.datasets.dataset import DatasetUpstreamError
 from kombu.exceptions import OperationalError
 
 RETENTION = timedelta(days=30)
@@ -40,7 +42,8 @@ end
 redis.call('HSET', KEYS[1], 'execution_gate', 'started')
 return 'started'
 """
-# Records how a started job ended: ARGV is the outcome, the finish time, the record's lifetime, and the error type.
+# Records how a started job ended: ARGV is the outcome, the finish time, the record's lifetime, the error type, and the
+# upstream failure's metadata.
 FINISH = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
   return 'missing'
@@ -52,6 +55,9 @@ end
 redis.call('HSET', KEYS[1], 'outcome', ARGV[1], 'finished_at', ARGV[2])
 if ARGV[4] ~= '' then
   redis.call('HSET', KEYS[1], 'error_type', ARGV[4])
+end
+if ARGV[5] ~= '' then
+  redis.call('HSET', KEYS[1], 'error_upstream', ARGV[5])
 end
 redis.call('EXPIRE', KEYS[1], ARGV[3])
 return 'recorded'
@@ -102,6 +108,17 @@ def parse_time(value: str) -> datetime:
     if parsed.utcoffset() is None:
         raise ValueError(f"Timestamp {value!r} has no UTC offset")
     return parsed
+
+
+def public_upstream_error(error: DatasetUpstreamError) -> dict[str, Any]:
+    """Return Core's metadata of an upstream failure without its message and its target, which can hold credentials.
+
+    The message can repeat a request URL with its query, which can hold a provider key, and the target can be built
+    from a Dataset's base URL, which a consumer sets and which can hold a credential anywhere in it.
+    """
+    metadata = datasets.DatasetDescriptor.serialize_upstream_error(error)
+    del metadata["message"], metadata["target"]
+    return metadata
 
 
 class JobStateUnavailable(Exception):
@@ -207,6 +224,7 @@ class Jobs:
                 outcome in OUTCOMES[record["execution_gate"]]
                 and ("finished_at" in record) == (outcome is not None)
                 and ("error_type" in record) == (outcome == "failed")
+                and ("error_upstream" not in record or outcome == "failed")
             )
             if not consistent:
                 raise JobStateUnavailable(job_id)
@@ -218,6 +236,7 @@ class Jobs:
                 "outcome": outcome,
                 "finished_at": parse_time(record["finished_at"]) if outcome else None,
                 "error_type": record.get("error_type"),
+                "error_upstream": json.loads(record["error_upstream"]) if "error_upstream" in record else None,
             }
         except (KeyError, ValueError) as error:
             raise JobStateUnavailable(job_id) from error
@@ -242,6 +261,9 @@ class Jobs:
             raise JobStateUnavailable(job_id)
         if state == "queued" and record["queued_at"] is None:
             state = "unconfirmed"
+        error = {"type": record["error_type"]} if state == "failed" else None
+        if error is not None and record["error_upstream"] is not None:
+            error["upstream"] = record["error_upstream"]
         return {
             "job_id": job_id,
             "dataset": record["dataset"],
@@ -250,7 +272,7 @@ class Jobs:
             "finished_at": finished_at.isoformat() if finished_at else None,
             "state": state,
             "progress": meta["result"] if state == "running" and meta["status"] == "PROGRESS" else None,
-            "error": {"type": record["error_type"]} if state == "failed" else None,
+            "error": error,
             "package": (
                 {"available": self.package_path(job_id).is_file(), "expires_at": (finished_at + RETENTION).isoformat()}
                 if state == "completed"
@@ -310,7 +332,8 @@ class Jobs:
                 path.unlink()
                 raise
         except Exception as error:
-            self.finish(job_id, "failed", type(error).__name__)
+            upstream = public_upstream_error(error) if isinstance(error, DatasetUpstreamError) else None
+            self.finish(job_id, "failed", type(error).__name__, upstream)
             raise
         finally:
             set_progress_callback(previous_callback)
@@ -332,8 +355,8 @@ class Jobs:
             logger.warning("Job %s does not run: its record is %s", job_id, answer)
         return answer == "started"
 
-    def finish(self, job_id: str, outcome: str, error_type: str = "") -> None:
-        """Record how a claimed job ended, with its finish time, and start its record's lifetime.
+    def finish(self, job_id: str, outcome: str, error_type: str = "", upstream: dict[str, Any] | None = None) -> None:
+        """Record how a claimed job ended, with its finish time and error, and start its record's lifetime.
 
         Raises:
             Ignore: If the job's record is gone or no longer claimed, so no outcome was recorded.
@@ -341,7 +364,10 @@ class Jobs:
         """
         finished_at = datetime.now(UTC).isoformat()
         lifetime = int(RECORD_LIFETIME.total_seconds())
-        answer = self.finish_script(keys=[record_key(job_id)], args=[outcome, finished_at, lifetime, error_type])
+        details = json.dumps(upstream) if upstream else ""
+        answer = self.finish_script(
+            keys=[record_key(job_id)], args=[outcome, finished_at, lifetime, error_type, details]
+        )
         if answer != "recorded":
             logger.warning("Job %s %s, but its record is %s, so the outcome is not recorded", job_id, outcome, answer)
             raise Ignore()
