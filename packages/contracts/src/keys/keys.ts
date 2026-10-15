@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { idParamsSchema } from "../common/params.js";
 
+export const maxApiKeysPerUser = 5;
+
 export const apiKeySchema = z.object({
   id: z.uuid(),
   userId: z.uuid(),

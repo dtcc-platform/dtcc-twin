@@ -1,11 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import type { ApiKeyList, CreateApiKeyBody, CreatedApiKey } from "@repo/contracts";
+import { maxApiKeysPerUser, type ApiKeyList, type CreateApiKeyBody, type CreatedApiKey } from "@repo/contracts";
 import { GatewayClient } from "../../infra/gateway/gateway.client.js";
 import { UsersService } from "../users/users.service.js";
 import { KeysRepository } from "./keys.repository.js";
 
-const maxKeys = 5;
 // unsure if we need a prefix
 const keyPrefix = "dtcc_";
 const shownPrefixLength = 12;
@@ -32,8 +31,8 @@ export class KeysService {
   async create(userId: string, body: CreateApiKeyBody): Promise<CreatedApiKey> {
     const user = await this.users.get(userId);
     if (user.status !== "active") throw new ForbiddenException("Only active accounts can create API keys");
-    if ((await this.repository.count(userId)) >= maxKeys) {
-      throw new ConflictException(`An account can have at most ${String(maxKeys)} API keys`);
+    if ((await this.repository.count(userId)) >= maxApiKeysPerUser) {
+      throw new ConflictException(`An account can have at most ${String(maxApiKeysPerUser)} API keys`);
     }
 
     const key = keyPrefix + randomBytes(32).toString("base64url");

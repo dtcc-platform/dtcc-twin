@@ -78,6 +78,7 @@ export {
   apiKeySchema,
   createApiKeyBodySchema,
   createdApiKeySchema,
+  maxApiKeysPerUser,
   userKeyParamsSchema,
   type ApiKey,
   type ApiKeyList,
