@@ -340,6 +340,16 @@ files; broker metadata expiry alone is insufficient. Host outages can delay phys
 but expired packages must not become newly available merely because their files
 remain on disk.
 
+Each host's worker deletes the packages that no job can deliver when it starts
+and every hour: those whose job is unknown or expired, failed, was cancelled, or
+completed more than 30 periods of 24 hours ago. A package stays while its job
+has no outcome. Deleting a package is retention; it does not show that the
+job's computation stopped. When the worker starts, before it runs any job, it
+also deletes the staging directories that exports left beside the packages: the
+host's worker is the only one that exports there, and it starts only after its
+earlier run stopped (Restart behavior), so those exports were killed. A staging
+directory left while the worker runs stays until the worker starts again.
+
 The 30-day period is a temporary retention policy, not a persistence guarantee.
 Downstream consumers must store results they need to retain durably.
 

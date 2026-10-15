@@ -1,5 +1,5 @@
-"""Tests of how often a job runs when the worker receives it once, again, or after the job was cancelled, and of the
-outcome a job gets when the process or the worker run that claimed it is lost.
+"""Tests of how often a job runs when the worker receives it once, again, or after the job was cancelled, of the
+outcome a job gets when the process or the worker run that claimed it is lost, and of the packages the worker deletes.
 
 The worker here uses the prefork pool, as the worker service does: a pool process runs the job while the worker's
 main process keeps receiving messages. The tests have their own module so that no other test's worker thread is running
@@ -11,7 +11,7 @@ import signal
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -264,3 +264,54 @@ def test_worker_started_again_fails_the_jobs_its_earlier_run_left(
     # Another worker's claim: that worker may still be running the job.
     assert (elsewhere_job["state"], elsewhere_job["finished_at"]) == ("running", None)
     assert [jobs.records.hgetall(record_key(job_id)) for job_id in unusable] == before
+
+
+def package_with_record(jobs: Jobs, fields: dict[str, str]) -> str:
+    """Write a package and a record of its job with these fields besides the acceptance fields; return the job's ID."""
+    job_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    acceptance = {"dataset": "smoke", "target": jobs.target, "submitted_at": now, "queued_at": now}
+    jobs.records.hset(record_key(job_id), mapping={**acceptance, **fields})
+    jobs.package_path(job_id).write_bytes(b"package")
+    return job_id
+
+
+def test_worker_deletes_the_packages_no_job_can_deliver(
+    redis_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dtcc_engine.jobs.CLEANUP_INTERVAL", timedelta(seconds=1), raising=False)
+    jobs = Jobs(redis_url, "cleaned", tmp_path)
+    now = datetime.now(UTC)
+    finished = {"execution_gate": "started", "finished_at": now.isoformat()}
+    expired = (now - RETENTION - timedelta(seconds=1)).isoformat()
+    packages = {
+        "completed": package_with_record(jobs, {**finished, "outcome": "completed"}),
+        "expired": package_with_record(jobs, {**finished, "outcome": "completed", "finished_at": expired}),
+        "failed": package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "WorkerLostError"}),
+        "cancelled": package_with_record(
+            jobs, {"execution_gate": "cancelled", "outcome": "cancelled", "finished_at": now.isoformat()}
+        ),
+        # Its job may still record completion.
+        "running": package_with_record(jobs, {"execution_gate": "started"}),
+        # Its state cannot be established, so it is kept.
+        "unusable": package_with_record(jobs, {}),
+    }
+    unknown = str(uuid.uuid4())
+    jobs.package_path(unknown).write_bytes(b"package")
+    packages["unknown"] = unknown
+    # Core stages an export beside the package; one there before the worker starts belongs to an export that was killed.
+    killed_export = tmp_path / ".dtcc-package-killed"
+    killed_export.mkdir()
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        kept = {name for name, job_id in packages.items() if jobs.package_path(job_id).exists()}
+        assert kept == {"completed", "running", "unusable"}
+        assert not killed_export.exists()
+        # One that appears while the worker runs may belong to a running export, however old it is.
+        running_export = tmp_path / ".dtcc-package-running"
+        running_export.mkdir()
+        two_days_ago = time.time() - 2 * 86400
+        os.utime(running_export, (two_days_ago, two_days_ago))
+        # A package whose job fails while the worker runs goes at a later pass.
+        failed_later = package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "RuntimeError"})
+        wait_for(lambda: not jobs.package_path(failed_later).exists(), timeout=10)
+        assert running_export.exists()

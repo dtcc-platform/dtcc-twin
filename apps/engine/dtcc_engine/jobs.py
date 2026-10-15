@@ -8,6 +8,7 @@ same Redis, which decides whether a delivery may run the Dataset and records how
 import json
 import logging
 import os
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ RETENTION = timedelta(days=30)
 # A day beyond the retention, so a job's records outlast its package even if hosts' clocks differ slightly.
 RECORD_LIFETIME = RETENTION + timedelta(days=1)
 RUN_DATASET = "dtcc_engine.run_dataset"
+# How often a worker deletes the packages that no job can deliver.
+CLEANUP_INTERVAL = timedelta(hours=1)
 # Celery's states of a job without a recorded outcome; SUCCESS follows the outcome, so it never appears alone.
 CELERY_STATES = {"PENDING": "queued", "STARTED": "running", "PROGRESS": "running", "FAILURE": "failed"}
 # The outcomes a record can hold with each value of its execution gate.
@@ -240,6 +243,25 @@ class Jobs:
 
         self.celery_app.steps["worker"].add(RecordLostClaims)
 
+        class CleanPackages(bootsteps.StartStopStep):
+            """Deletes the packages that no job can deliver when the worker starts, and then every interval.
+
+            When the worker starts, it also deletes the staging directories of exports that were killed.
+            """
+
+            requires = {"celery.worker.components:Timer"}
+
+            def start(self, worker: Any) -> None:
+                # Celery starts the consumer after every other step, so none of this worker's exports runs yet.
+                jobs.clean_staging()
+                jobs.clean_packages()
+                self.cleanup = worker.timer.call_repeatedly(CLEANUP_INTERVAL.total_seconds(), jobs.clean_packages)
+
+            def stop(self, worker: Any) -> None:
+                self.cleanup.cancel()
+
+        self.celery_app.steps["worker"].add(CleanPackages)
+
     def package_path(self, job_id: str) -> Path:
         """Return where the job's package is stored once the job completes."""
         return self.package_dir / f"{job_id}.dtccpkg"
@@ -441,6 +463,38 @@ class Jobs:
         if answer != "recorded":
             logger.warning("Job %s %s, but its record is %s, so the outcome is not recorded", job_id, outcome, answer)
             raise Ignore()
+
+    def clean_packages(self) -> None:
+        """Delete this host's packages that no job can deliver.
+
+        A package goes when its job is unknown or expired, failed, was cancelled, or completed more than the retention
+        ago. It stays while its job has no outcome, which may still be completion, and while the job's record is
+        unusable. A pass that Redis does not answer deletes no more packages; the next pass does.
+        """
+        now = datetime.now(UTC)
+        try:
+            for path in self.package_dir.glob("*.dtccpkg"):
+                try:
+                    record = self.read_record(path.stem)
+                except JobStateUnavailable:
+                    continue
+                outcome = record["outcome"] if record else None
+                expired = outcome == "completed" and now >= record["finished_at"] + RETENTION
+                if record is None or outcome in ("failed", "cancelled") or expired:
+                    path.unlink(missing_ok=True)
+                    logger.info("Deleted package %s, which no job can deliver", path.name)
+        except redis.RedisError:
+            logger.warning("Could not read job records; packages are deleted at the next pass", exc_info=True)
+
+    def clean_staging(self) -> None:
+        """Delete the directories in which Core staged exports beside the packages.
+
+        Call it only before the worker runs jobs: the host's worker is the only one that exports here, and its earlier
+        run has stopped, so every such directory belongs to an export that was killed.
+        """
+        for staging in self.package_dir.glob(".dtcc-package-*"):
+            shutil.rmtree(staging, ignore_errors=True)
+            logger.info("Deleted %s, left by an export that was killed", staging.name)
 
     def record_lost_process(self, sender: Task, task_id: str, exception: BaseException, **kwargs: Any) -> None:
         """Record the failure of a job whose pool process was lost, reported by Celery in the worker's main process."""
