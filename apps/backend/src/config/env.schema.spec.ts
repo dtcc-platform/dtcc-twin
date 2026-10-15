@@ -7,8 +7,8 @@ const JWT_SECRET = "a-test-secret-that-is-32-chars-long";
 const required = { DATABASE_URL, JWT_SECRET };
 
 describe("envSchema", () => {
-  it("fills in the defaults for everything but the secrets, and leaves the engine unconfigured", () => {
-    const { ENGINE_URL, ENGINE_API_TOKEN, ...rest } = envSchema.parse(required);
+  it("fills in the defaults for everything but the secrets, and leaves the engine and the gateway unconfigured", () => {
+    const { ENGINE_URL, ENGINE_API_TOKEN, APISIX_ADMIN_URL, APISIX_ADMIN_KEY, ...rest } = envSchema.parse(required);
 
     expect(rest).toStrictEqual({
       NODE_ENV: "development",
@@ -20,6 +20,8 @@ describe("envSchema", () => {
     });
     expect(ENGINE_URL).toBeUndefined();
     expect(ENGINE_API_TOKEN).toBeUndefined();
+    expect(APISIX_ADMIN_URL).toBeUndefined();
+    expect(APISIX_ADMIN_KEY).toBeUndefined();
   });
 
   it("requires DATABASE_URL, since a default would carry credentials", () => {
@@ -81,6 +83,20 @@ describe("envSchema", () => {
     expect(envSchema.parse({ ENGINE_API_TOKEN: "a1-._~+/==", ...required }).ENGINE_API_TOKEN).toBe("a1-._~+/==");
     expect(() => envSchema.parse({ ENGINE_API_TOKEN: "has space", ...required })).toThrow(/ENGINE_API_TOKEN/);
     expect(() => envSchema.parse({ ENGINE_API_TOKEN: "a=b", ...required })).toThrow(/ENGINE_API_TOKEN/);
+  });
+
+  it("treats empty gateway variables as unset, since .env.example leaves them empty", () => {
+    const env = envSchema.parse({ APISIX_ADMIN_URL: "", APISIX_ADMIN_KEY: "", ...required });
+
+    expect(env.APISIX_ADMIN_URL).toBeUndefined();
+    expect(env.APISIX_ADMIN_KEY).toBeUndefined();
+  });
+
+  it("accepts only an http(s) APISIX_ADMIN_URL", () => {
+    expect(envSchema.parse({ APISIX_ADMIN_URL: "http://127.0.0.1:9180", ...required }).APISIX_ADMIN_URL).toBe(
+      "http://127.0.0.1:9180",
+    );
+    expect(() => envSchema.parse({ APISIX_ADMIN_URL: "127.0.0.1:9180", ...required })).toThrow(/APISIX_ADMIN_URL/);
   });
 
   it("drops the unrelated variables that process.env always carries", () => {

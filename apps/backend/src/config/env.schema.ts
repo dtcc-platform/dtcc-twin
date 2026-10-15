@@ -4,7 +4,7 @@ import { z } from "zod";
 // DTCC Engine's own rule: it refuses to start with any other token, which could never match a Bearer header.
 const engineTokenPattern = /^[A-Za-z0-9\-._~+/]+=*$/;
 
-// .env.example leaves the engine variables empty, and empty means the engine isn't configured.
+// .env.example leaves the engine and gateway variables empty, and empty means they aren't configured.
 function emptyAsUnset(value: unknown): unknown {
   return value === "" ? undefined : value;
 }
@@ -31,6 +31,11 @@ export const envSchema = z.object({
     z.string().regex(engineTokenPattern, "must use only letters, digits, -._~+/ and trailing =").optional(),
   ),
   PACKAGE_STORAGE_DIR: z.string().min(1).default(".data/packages"),
+  APISIX_ADMIN_URL: z.preprocess(
+    emptyAsUnset,
+    z.url({ protocol: /^https?$/, error: "must be an http(s) URL" }).optional(),
+  ),
+  APISIX_ADMIN_KEY: z.preprocess(emptyAsUnset, z.string().optional()),
 });
 
 function isOrigin(value: string): boolean {
