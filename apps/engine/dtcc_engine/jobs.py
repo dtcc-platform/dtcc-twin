@@ -31,8 +31,16 @@ RUN_DATASET = "dtcc_engine.run_dataset"
 CELERY_STATES = {"PENDING": "queued", "STARTED": "running", "PROGRESS": "running", "FAILURE": "failed"}
 # The outcomes a record can hold with each value of its execution gate.
 OUTCOMES = {"waiting": {None}, "started": {None, "completed", "failed"}, "cancelled": {"cancelled"}}
-# Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started, and
-# records its claim: ARGV is the claim, which names the worker's node, the worker run, and the pool process.
+# Records the broker's confirmation of a job's message, if the job's record still exists: ARGV is the time.
+QUEUED = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'missing'
+end
+redis.call('HSET', KEYS[1], 'queued_at', ARGV[1])
+return 'recorded'
+"""
+# Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started, records its
+# claim, and restarts the record's lifetime: ARGV is the claim and the lifetime.
 START = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
   return 'missing'
@@ -42,6 +50,7 @@ if gate ~= 'waiting' or outcome or finished then
   return 'refused'
 end
 redis.call('HSET', KEYS[1], 'execution_gate', 'started', 'claimed_by', ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
 return 'started'
 """
 # Records how a started job ended: ARGV is the outcome, the finish time, the record's lifetime, the error type, and the
@@ -187,6 +196,7 @@ class Jobs:
         self.target = target
         self.package_dir = package_dir
         self.records = redis.Redis.from_url(redis_url, decode_responses=True)
+        self.queued_script = self.records.register_script(QUEUED)
         self.start_script = self.records.register_script(START)
         self.finish_script = self.records.register_script(FINISH)
         self.cancel_script = self.records.register_script(CANCEL)
@@ -239,26 +249,27 @@ class Jobs:
 
         Raises:
             redis.RedisError: If Redis cannot record the job; nothing was sent.
-            UnconfirmedSubmission: If sending the job, or recording its confirmation, failed; the job may be queued,
-                and it is not sent again.
+            UnconfirmedSubmission: If sending the job or recording its confirmation failed, or the job's record was
+                lost meanwhile; the job may be queued, and it is not sent again.
         """
         job_id = str(uuid4())
         key = record_key(job_id)
         submitted_at = datetime.now(UTC).isoformat()
-        self.records.hset(
-            key,
-            mapping={
-                "dataset": dataset_name,
-                "target": self.target,
-                "submitted_at": submitted_at,
-                "execution_gate": "waiting",
-            },
-        )
+        acceptance = {"dataset": dataset_name, "target": self.target, "submitted_at": submitted_at}
+        with self.records.pipeline() as pipeline:
+            pipeline.hset(key, mapping={**acceptance, "execution_gate": "waiting"})
+            # The record of a job that never finishes expires too.
+            pipeline.expire(key, RECORD_LIFETIME)
+            pipeline.execute()
         try:
             self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=self.target)
-            self.records.hset(key, "queued_at", datetime.now(UTC).isoformat())
+            answer = self.queued_script(keys=[key], args=[datetime.now(UTC).isoformat()])
         except (redis.RedisError, OperationalError) as error:
             raise UnconfirmedSubmission(job_id) from error
+        if answer != "recorded":
+            # Recreating the record would leave one without its acceptance fields or a lifetime.
+            logger.warning("Job %s was sent, but its record is %s, so its confirmation is not recorded", job_id, answer)
+            raise UnconfirmedSubmission(job_id)
         return job_id
 
     def read_record(self, job_id: str) -> dict[str, Any] | None:
@@ -406,7 +417,7 @@ class Jobs:
         try:
             # Checks the acceptance fields, which never change once written; the claim checks the rest.
             self.read_record(job_id)
-            answer = self.start_script(keys=[record_key(job_id)], args=[claim])
+            answer = self.start_script(keys=[record_key(job_id)], args=[claim, int(RECORD_LIFETIME.total_seconds())])
         except (JobStateUnavailable, redis.RedisError):
             logger.warning("Job %s does not run: its record is unusable or Redis did not answer", job_id, exc_info=True)
             return False

@@ -460,6 +460,14 @@ worker is lost and not started again keeps the state last recorded, as does a
 job whose lost process still appears to exist, because Engine cannot tell
 whether the work stopped.
 
+Engine's record of a job that never finishes expires 31 days after the job's
+submission or, once a delivery claimed it, after the claim. The job is then
+unknown, and a later delivery of it does not run. The expiry bounds the record;
+it does not show that the job stopped, and it neither cancels nor stops a job
+that still runs. A job that finishes after its record expired cannot record its
+outcome or deliver its package; one that finishes before keeps the retention
+that Package creation, delivery, and retention describes.
+
 There is no additional coordination mechanism whose purpose is to erase
 surviving jobs. Guaranteed persistence, recovery, and resumption are explicitly
 deferred requirements for a later release.

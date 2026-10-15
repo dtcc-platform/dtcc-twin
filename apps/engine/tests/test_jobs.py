@@ -503,7 +503,7 @@ def test_job_records_outlast_the_package_retention(
     wait_until(served_client, completed, lambda job: job["state"] == "completed")
     result_key = served_jobs.celery_app.backend.get_key_for_task(completed)
     retention, lifetime = RETENTION.total_seconds(), RECORD_LIFETIME.total_seconds()
-    assert jobs.records.ttl(record_key(queued)) == -1
+    assert retention < jobs.records.ttl(record_key(queued)) <= lifetime
     assert retention < served_jobs.records.ttl(record_key(completed)) <= lifetime
     assert retention < served_jobs.records.ttl(result_key) <= lifetime
 
@@ -821,3 +821,43 @@ def test_upstream_failure_reports_cores_metadata_without_credentials(
     }
     assert job["finished_at"] is not None
     assert PROVIDER_KEY not in response.text
+
+
+def test_claim_restarts_the_lifetime_of_the_record(jobs: Jobs) -> None:
+    job_id = jobs.submit("smoke", {"bounds": BOUNDS})
+    # As if the job had waited in the queue for almost all of its record's lifetime.
+    jobs.records.expire(record_key(job_id), 60)
+    assert jobs.claim(job_id, "celery@engine-test earlier-run 7")
+    assert RETENTION.total_seconds() < jobs.records.ttl(record_key(job_id)) <= RECORD_LIFETIME.total_seconds()
+
+
+def test_confirmation_does_not_recreate_a_record_lost_meanwhile(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As if Redis lost the record while the broker took the message.
+    def lose_the_record(*args, task_id, **kwargs):
+        jobs.records.delete(record_key(task_id))
+
+    monkeypatch.setattr(jobs.sender, "send_task", lose_the_record)
+    response = client.post("/api/v1/jobs", json=SMOKE, headers=AUTHORIZED)
+    assert response.status_code == 503
+    job_id = response.json()["detail"]["job_id"]
+    assert not jobs.records.exists(record_key(job_id))
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).status_code == 404
+
+
+def test_confirmation_keeps_the_outcome_and_lifetime_of_a_job_that_finished_first(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A worker can run a short job to its end before the API records the broker's confirmation.
+    def finish_while_sending(*args, task_id, **kwargs):
+        assert jobs.claim(task_id, "celery@engine-test earlier-run 7")
+        jobs.finish(task_id, "failed", "RuntimeError")
+        # Shortened, so that a confirmation that restarted the lifetime would show.
+        jobs.records.expire(record_key(task_id), 60)
+
+    monkeypatch.setattr(jobs.sender, "send_task", finish_while_sending)
+    job_id = submit(client, SMOKE)
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    assert (job["state"], job["error"]) == ("failed", {"type": "RuntimeError"})
+    assert jobs.records.ttl(record_key(job_id)) <= 60
