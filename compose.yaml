@@ -74,6 +74,9 @@ services:
     # Runs the Engine's jobs. Celery does not reload code: restart it after changing the engine.
     profiles: [engine]
     platform: linux/amd64
+    # A fixed host name gives the worker a fixed Celery node name, so that when it starts again it records the failure
+    # of the jobs its earlier run left.
+    hostname: engine-worker
     build:
       context: apps/engine
       target: dev

@@ -1,12 +1,17 @@
-"""Tests of how often a job runs when the worker receives it once, again, or after the job was cancelled.
+"""Tests of how often a job runs when the worker receives it once, again, or after the job was cancelled, and of the
+outcome a job gets when the process or the worker run that claimed it is lost.
 
 The worker here uses the prefork pool, as the worker service does: a pool process runs the job while the worker's
 main process keeps receiving messages. The tests have their own module so that no other test's worker thread is running
 in this process when the pool forks.
 """
 
+import os
+import signal
 import time
+import uuid
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -19,7 +24,7 @@ from fastapi.testclient import TestClient
 from kombu import Connection
 
 from dtcc_engine.api import create_app
-from dtcc_engine.jobs import RUN_DATASET, Jobs, record_key
+from dtcc_engine.jobs import RECORD_LIFETIME, RETENTION, RUN_DATASET, Jobs, record_key
 
 BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
 TOKEN = "test-token"
@@ -41,13 +46,16 @@ def wait_for(condition: Callable[[], bool], timeout: float = 60.0) -> None:
 
 @pytest.fixture
 def counting_dataset(redis_url: str) -> Iterator[str]:
-    """Register a Dataset that counts its runs in Redis by label, waits for the release key if `gated`, and raises if
-    `fail`."""
+    """Register a Dataset that counts its runs in Redis by label.
+
+    It waits for the release key if `gated`, raises if `fail`, and kills its own process if `crash`.
+    """
 
     class CountingProbeArgs(DatasetBaseArgs):
         label: str
         gated: bool = False
         fail: bool = False
+        crash: bool = False
 
     class CountingProbeDataset(DatasetDescriptor):
         name = "engine_counting_probe"
@@ -62,6 +70,8 @@ def counting_dataset(redis_url: str) -> Iterator[str]:
                 wait_for(lambda: client.exists(RELEASE_KEY))
             if args.fail:
                 raise RuntimeError("probe failure")
+            if args.crash:
+                os.kill(os.getpid(), signal.SIGKILL)
             return Mesh(
                 vertices=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), faces=np.array([[0, 1, 2]])
             )
@@ -201,3 +211,56 @@ def test_cancel_racing_the_start_either_prevents_the_run_or_is_refused(
         (409, "execution_started", "1", "completed"),
         (200, "already_finished", "1", "completed"),
     }, outcomes
+
+
+def claimed_job(jobs: Jobs, claimant: str) -> str:
+    """Record a job that `claimant` claimed and left running, as a worker run lost with it does; return its ID."""
+    job_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    acceptance = {"dataset": "smoke", "target": jobs.target, "submitted_at": now, "queued_at": now}
+    jobs.records.hset(record_key(job_id), mapping={**acceptance, "execution_gate": "started", "claimed_by": claimant})
+    jobs.celery_app.backend.store_result(job_id, {"pid": 7, "hostname": claimant.split()[0]}, "STARTED")
+    return job_id
+
+
+def test_job_whose_pool_process_is_lost_fails_and_the_worker_runs_on(prefork_jobs: Jobs, counting_dataset: str) -> None:
+    records = prefork_jobs.records
+    job_id = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "crashed", "crash": True})
+    wait_until_finished(prefork_jobs, job_id)
+    # Celery stores the failure just before the worker's main process records the outcome.
+    deadline = time.monotonic() + 5
+    while prefork_jobs.status(job_id)["finished_at"] is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+    job = prefork_jobs.status(job_id)
+    assert (job["state"], job["error"]) == ("failed", {"type": "WorkerLostError"})
+    assert job["finished_at"] is not None
+    assert RETENTION.total_seconds() < records.ttl(record_key(job_id)) <= RECORD_LIFETIME.total_seconds()
+    last = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "after-crash"})
+    wait_until_completed(prefork_jobs, last)
+
+
+def test_worker_started_again_fails_the_jobs_its_earlier_run_left(
+    redis_url: str, tmp_path: Path, counting_dataset: str
+) -> None:
+    jobs = Jobs(redis_url, "restarted", tmp_path)
+    node = "celery@engine-test-restarted"
+    left = claimed_job(jobs, f"{node} earlier-run 7")
+    elsewhere = claimed_job(jobs, "celery@engine-test-elsewhere earlier-run 7")
+    # Unusable records: the worker leaves them as they are, and they do not keep it from starting.
+    unusable = [
+        claimed_job(jobs, "earlier-run"),
+        claimed_job(jobs, f"{node} earlier-run seven"),
+        claimed_job(jobs, f"{node} earlier-run 7"),
+    ]
+    jobs.records.hdel(record_key(unusable[2]), "submitted_at")
+    before = [jobs.records.hgetall(record_key(job_id)) for job_id in unusable]
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1, hostname=node):
+        last = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "after-restart"})
+        wait_until_completed(jobs, last)
+    left_job, elsewhere_job = jobs.status(left), jobs.status(elsewhere)
+    assert (left_job["state"], left_job["error"]) == ("failed", {"type": "WorkerRestarted"})
+    assert left_job["finished_at"] is not None
+    assert RETENTION.total_seconds() < jobs.records.ttl(record_key(left)) <= RECORD_LIFETIME.total_seconds()
+    # Another worker's claim: that worker may still be running the job.
+    assert (elsewhere_job["state"], elsewhere_job["finished_at"]) == ("running", None)
+    assert [jobs.records.hgetall(record_key(job_id)) for job_id in unusable] == before

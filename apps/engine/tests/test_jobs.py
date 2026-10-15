@@ -235,6 +235,9 @@ UNUSABLE_CHANGES = {
         "finished_at": FINISHED_AT,
         "error_upstream": "{}",
     },
+    "claim-of-a-waiting-job": {"claimed_by": "celery@engine-test earlier-run 7"},
+    "claim-without-its-parts": {"execution_gate": "started", "claimed_by": "earlier-run"},
+    "claim-without-a-process-id": {"execution_gate": "started", "claimed_by": "celery@engine-test earlier-run seven"},
     "unreadable-upstream-detail": {
         "execution_gate": "started",
         "outcome": "failed",

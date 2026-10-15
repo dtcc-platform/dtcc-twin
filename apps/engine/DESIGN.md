@@ -449,6 +449,17 @@ jobs, job records, or completed packages. It does not deliberately cancel jobs
 or delete surviving results simply because the HTTP API restarts. Usable work
 that survives through the broker, workers, or filesystem can remain usable.
 
+Engine records a failure for a job whose claimant is gone and can no longer
+record an outcome. A job whose pool process is lost fails with
+`WorkerLostError`, which Celery reports in the worker's main process. When a
+worker starts, each job that an earlier run of the same worker claimed and left
+without an outcome fails with `WorkerRestarted`. This needs every worker to have
+a stable node name that no other running worker uses, and to start under it
+only after its earlier run and that run's processes have stopped. A job whose
+worker is lost and not started again keeps the state last recorded, as does a
+job whose lost process still appears to exist, because Engine cannot tell
+whether the work stopped.
+
 There is no additional coordination mechanism whose purpose is to erase
 surviving jobs. Guaranteed persistence, recovery, and resumption are explicitly
 deferred requirements for a later release.
