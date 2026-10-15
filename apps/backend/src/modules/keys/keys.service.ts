@@ -50,6 +50,14 @@ export class KeysService {
     return { ...apiKey, key };
   }
 
+  /** Revokes every key of the user by deleting their consumer, which stops all of them at once. */
+  async revokeAll(userId: string): Promise<void> {
+    // Without keys there is nothing to revoke, so disabling such a user doesn't depend on the gateway.
+    if ((await this.repository.count(userId)) === 0) return;
+    await this.gateway.deleteConsumer(userId);
+    await this.repository.deleteAll(userId);
+  }
+
   async revoke(userId: string, id: string): Promise<void> {
     const apiKey = await this.repository.findById(userId, id);
     if (!apiKey) throw new NotFoundException(`API key ${id} not found`);

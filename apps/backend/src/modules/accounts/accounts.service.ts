@@ -9,6 +9,7 @@ import type {
   UserPage,
 } from "@repo/contracts";
 import { AuthService } from "../auth/auth.service.js";
+import { KeysService } from "../keys/keys.service.js";
 import { UsersService } from "../users/users.service.js";
 
 @Injectable()
@@ -16,6 +17,7 @@ export class AccountsService {
   constructor(
     private readonly users: UsersService,
     private readonly auth: AuthService,
+    private readonly keys: KeysService,
   ) {}
 
   list(query: UserListQuery): Promise<UserPage> {
@@ -36,7 +38,11 @@ export class AccountsService {
 
   async setStatus(id: string, status: SetUserStatusBody["status"], callerId: string): Promise<User> {
     if (id === callerId) throw new ConflictException("Admins cannot change their own status");
-    if (status === "disabled") await this.users.ensureNotLastActiveAdmin(await this.users.get(id));
+    if (status === "disabled") {
+      await this.users.ensureNotLastActiveAdmin(await this.users.get(id));
+      // Before the status: if the gateway fails, nothing has changed and a retry does it all.
+      await this.keys.revokeAll(id);
+    }
 
     const user = await this.users.setStatus(id, status);
     // Also when already disabled, so retrying a disable that failed halfway finishes it.
@@ -51,6 +57,7 @@ export class AccountsService {
   async remove(id: string, callerId: string): Promise<void> {
     if (id === callerId) throw new ConflictException("Admins cannot delete themselves");
     await this.users.ensureNotLastActiveAdmin(await this.users.get(id));
+    await this.keys.revokeAll(id);
     await this.users.remove(id);
   }
 }

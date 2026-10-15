@@ -317,4 +317,80 @@ describe("API keys (e2e)", () => {
       expect(await names(grace)).toEqual(["Laptop"]);
     });
   });
+
+  describe("disabling and deleting a user", () => {
+    function setStatus(admin: Agent, id: string, status: string) {
+      return admin.put(`/api/admin/users/${id}/status`).send({ status });
+    }
+
+    it("disables a user by deleting their consumer, so every key stops at once, and lists none", async () => {
+      await create(ada, { name: "Laptop" });
+      await create(ada, { name: "CI" });
+      const gracesKey = await create(grace);
+
+      await setStatus(await adminAgent(), adaId, "disabled").expect(200);
+
+      expect(gateway.consumers()).toEqual([graceId]);
+      expect(gateway.credentials(graceId)).toEqual({ [gracesKey.id]: gracesKey.key });
+      expect(await names(ada)).toEqual([]);
+    });
+
+    it("enables a user again with no keys, who can then create new ones", async () => {
+      await create(ada);
+      const admin = await adminAgent();
+      await setStatus(admin, adaId, "disabled").expect(200);
+
+      await setStatus(admin, adaId, "active").expect(200);
+
+      expect(await names(ada)).toEqual([]);
+      const created = await create(ada, { name: "New laptop" });
+      expect(gateway.credentials(adaId)).toEqual({ [created.id]: created.key });
+    });
+
+    it("leaves the user active with every key when the gateway fails, and a retry finishes the job", async () => {
+      quietLogs();
+      const laptop = await create(ada);
+      const admin = await adminAgent();
+      gateway.setFailing(true);
+
+      const response = await setStatus(admin, adaId, "disabled").expect(503);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("SERVICE_UNAVAILABLE");
+      expect((await app.get(UsersService).get(adaId)).status).toBe("active");
+      gateway.setFailing(false);
+      expect(gateway.credentials(adaId)).toEqual({ [laptop.id]: laptop.key });
+      expect(await names(ada)).toEqual(["Laptop"]);
+
+      await setStatus(admin, adaId, "disabled").expect(200);
+      expect(gateway.consumers()).toEqual([]);
+    });
+
+    it("disables a user without keys without calling the gateway", async () => {
+      gateway.setFailing(true);
+
+      await setStatus(await adminAgent(), adaId, "disabled").expect(200);
+
+      expect((await app.get(UsersService).get(adaId)).status).toBe("disabled");
+    });
+
+    it("deletes a user's consumer before the user", async () => {
+      await create(ada);
+
+      await (await adminAgent()).delete(`/api/admin/users/${adaId}`).expect(204);
+
+      expect(gateway.consumers()).toEqual([]);
+    });
+
+    it("keeps the user and their keys when the gateway fails during a delete", async () => {
+      quietLogs();
+      const laptop = await create(ada);
+      gateway.setFailing(true);
+
+      await (await adminAgent()).delete(`/api/admin/users/${adaId}`).expect(503);
+
+      gateway.setFailing(false);
+      expect(await names(ada)).toEqual(["Laptop"]);
+      expect(gateway.credentials(adaId)).toEqual({ [laptop.id]: laptop.key });
+    });
+  });
 });
