@@ -249,7 +249,9 @@ class Jobs:
             When the worker starts, it also deletes the staging directories of exports that were killed.
             """
 
-            requires = {"celery.worker.components:Timer"}
+            # After the check of lost claims, which Celery would otherwise order at random, so that the packages of the
+            # jobs it fails are deleted at start.
+            requires = {"celery.worker.components:Timer", RecordLostClaims}
 
             def start(self, worker: Any) -> None:
                 # Celery starts the consumer after every other step, so none of this worker's exports runs yet.

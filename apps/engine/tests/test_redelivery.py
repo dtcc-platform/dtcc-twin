@@ -317,6 +317,18 @@ def test_worker_deletes_the_packages_no_job_can_deliver(
         assert running_export.exists()
 
 
+def test_worker_started_again_deletes_the_package_its_earlier_run_left(redis_url: str, tmp_path: Path) -> None:
+    jobs = Jobs(redis_url, "restarted-after-export", tmp_path)
+    node = "celery@engine-test-restarted-after-export"
+    # The earlier run exported the package and was lost before it recorded the job's completion.
+    left = claimed_job(jobs, f"{node} earlier-run 7")
+    jobs.package_path(left).write_bytes(b"package")
+    # Once the worker has started, its cleanup has run after its check of lost claims, not only an hour later.
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1, hostname=node):
+        assert jobs.status(left)["error"] == {"type": "WorkerRestarted"}
+        assert not jobs.package_path(left).exists()
+
+
 def test_restarted_api_serves_the_jobs_the_earlier_one_accepted(
     redis_url: str, prefork_jobs: Jobs, counting_dataset: str
 ) -> None:
