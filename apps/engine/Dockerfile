@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir \
     "dtcc-tetgen-wrapper @ git+https://github.com/dtcc-platform/dtcc-tetgen-wrapper.git@${TETGEN_WRAPPER_COMMIT}"
 
 # Core is the commit in Sim's uv.lock at DTCC_SIM_COMMIT; Sim's package metadata asks for Core's moving develop branch.
-ARG DTCC_CORE_COMMIT=2289d11f85049e13d5042e5cb3e5627c6568765f
-ARG DTCC_SIM_COMMIT=0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339
+ARG DTCC_CORE_COMMIT=17c6efe44ca7622e6ef4a802627dfce3ef7f6174
+ARG DTCC_SIM_COMMIT=41055d560c66939a93e23c51f4cc71210541cb26
 # Sim's only dependency is Core, installed first at its pin.
 RUN pip install --no-cache-dir \
         "dtcc-core @ git+https://github.com/dtcc-platform/dtcc-core.git@${DTCC_CORE_COMMIT}" \

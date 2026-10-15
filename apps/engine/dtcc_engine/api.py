@@ -22,7 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, ValidationError
 from redis import RedisError
 
-from dtcc_engine.jobs import Jobs, UnconfirmedSubmission, jobs_from_environment
+from dtcc_engine.jobs import ExecutionStarted, Jobs, JobStateUnavailable, UnconfirmedSubmission, jobs_from_environment
 
 VERSIONED_PACKAGES = ("dtcc-engine", "dtcc-core", "dtcc-sim")
 # RFC 6750 b64token: any other configured token could never match a well-formed Authorization header.
@@ -110,6 +110,10 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job state is temporarily unavailable"
             ) from None
+        except JobStateUnavailable:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job state cannot be established"
+            ) from None
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' is unknown or expired")
         return job
@@ -185,6 +189,27 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
     @app.get("/api/v1/jobs/{job_id}", dependencies=[Depends(require_token)])
     def job_status(job_id: str) -> dict[str, Any]:
         return find_job(job_id)
+
+    @app.post("/api/v1/jobs/{job_id}/cancel", dependencies=[Depends(require_token)])
+    def cancel_job(job_id: str) -> dict[str, str]:
+        try:
+            result = jobs.cancel(job_id)
+        except (RedisError, JobStateUnavailable):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Job state is unavailable, so whether the job is cancelled is unknown; poll the job",
+            ) from None
+        except ExecutionStarted:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "result": "execution_started",
+                    "message": "Execution permission has been claimed, so the job can no longer be cancelled",
+                },
+            ) from None
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' is unknown or expired")
+        return {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}", "result": result}
 
     @app.get("/api/v1/jobs/{job_id}/package", dependencies=[Depends(require_token)])
     def download_package(job_id: str) -> FileResponse:
