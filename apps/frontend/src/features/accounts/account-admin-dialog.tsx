@@ -6,6 +6,7 @@ import { authQueries } from "@/api/auth";
 import { ConfirmButton } from "@/components/common/confirm-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { UserKeyList } from "@/features/keys/user-key-list";
 import { AccountStatusActions } from "./account-status-actions.tsx";
 import { AccountStatusBadge } from "./account-status-badge.tsx";
 
@@ -43,6 +44,10 @@ export function AccountAdminDialog({ user }: { user: User }) {
           <div className="flex min-h-8 items-center justify-between gap-4">
             <span className="text-muted-foreground">Registered</span>
             <span>{new Date(user.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}</span>
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-muted-foreground">API keys</span>
+            <UserKeyList userId={user.id} />
           </div>
         </div>
         {!isSelf && (

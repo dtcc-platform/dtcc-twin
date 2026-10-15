@@ -36,7 +36,7 @@ export function AccountStatusActions({ user }: { user: User }) {
         label={action.label}
         variant={action.variant}
         title={`${action.label} ${user.name}?`}
-        description="They can no longer log in, and their sessions end."
+        description="They can no longer log in, their sessions end, and their API keys stop working."
         disabled={setStatus.isPending}
         onConfirm={() => run(action)}
       />

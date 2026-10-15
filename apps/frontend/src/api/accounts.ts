@@ -1,6 +1,7 @@
 import type { CreateUserBody, SetUserStatusBody, UpdateUserBody, User, UserListQuery, UserPage } from "@repo/contracts";
 import { keepPreviousData, mutationOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "./client/api-client.ts";
+import { keyQueries } from "./keys.ts";
 
 const all = ["accounts"] as const;
 
@@ -35,7 +36,12 @@ export const accountMutations = {
     mutationOptions({
       mutationFn: async ({ id, ...body }: { id: string } & SetUserStatusBody) =>
         (await api.put<User>(`/admin/users/${id}/status`, body)).data,
-      onSuccess: (_user, _variables, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: all }),
+      // Disabling also revokes the user's keys.
+      onSuccess: (_user, _variables, _onMutateResult, { client }) =>
+        Promise.all([
+          client.invalidateQueries({ queryKey: all }),
+          client.invalidateQueries({ queryKey: keyQueries.all }),
+        ]),
     }),
   delete: () =>
     mutationOptions({
