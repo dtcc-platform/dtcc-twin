@@ -26,7 +26,6 @@ const columns = columnHelper.columns([
     header: "Status",
     cell: ({ getValue }) => <AccountStatusBadge status={getValue()} />,
   }),
-  columnHelper.accessor("tier", { header: "Tier" }),
   columnHelper.accessor("createdAt", {
     header: "Registered",
     cell: ({ getValue }) => new Date(getValue()).toLocaleDateString(),

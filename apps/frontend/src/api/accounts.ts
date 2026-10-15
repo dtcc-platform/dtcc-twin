@@ -1,12 +1,4 @@
-import type {
-  CreateUserBody,
-  SetUserStatusBody,
-  SetUserTierBody,
-  UpdateUserBody,
-  User,
-  UserListQuery,
-  UserPage,
-} from "@repo/contracts";
+import type { CreateUserBody, SetUserStatusBody, UpdateUserBody, User, UserListQuery, UserPage } from "@repo/contracts";
 import { keepPreviousData, mutationOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "./client/api-client.ts";
 
@@ -43,12 +35,6 @@ export const accountMutations = {
     mutationOptions({
       mutationFn: async ({ id, ...body }: { id: string } & SetUserStatusBody) =>
         (await api.put<User>(`/admin/users/${id}/status`, body)).data,
-      onSuccess: (_user, _variables, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: all }),
-    }),
-  setTier: () =>
-    mutationOptions({
-      mutationFn: async ({ id, ...body }: { id: string } & SetUserTierBody) =>
-        (await api.put<User>(`/admin/users/${id}/tier`, body)).data,
       onSuccess: (_user, _variables, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: all }),
     }),
   delete: () =>

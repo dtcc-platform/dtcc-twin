@@ -1,4 +1,4 @@
-import { tierSchema, type User } from "@repo/contracts";
+import type { User } from "@repo/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { accountMutations } from "@/api/accounts";
@@ -6,13 +6,11 @@ import { authQueries } from "@/api/auth";
 import { ConfirmButton } from "@/components/common/confirm-button";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { AccountStatusActions } from "./account-status-actions.tsx";
 import { AccountStatusBadge } from "./account-status-badge.tsx";
 
 export function AccountAdminDialog({ user }: { user: User }) {
   const me = useQuery(authQueries.me());
-  const setTier = useMutation(accountMutations.setTier());
   const remove = useMutation(accountMutations.delete());
   const isSelf = me.data?.id === user.id;
 
@@ -37,32 +35,6 @@ export function AccountAdminDialog({ user }: { user: User }) {
                 <AccountStatusActions user={user} />
               )}
             </div>
-          </div>
-          <div className="flex min-h-8 items-center justify-between gap-4">
-            <label htmlFor={`tier-${user.id}`} className="text-muted-foreground">
-              Tier
-            </label>
-            <NativeSelect
-              id={`tier-${user.id}`}
-              size="sm"
-              value={user.tier}
-              disabled={setTier.isPending}
-              onChange={(event) =>
-                setTier.mutate(
-                  { id: user.id, tier: tierSchema.parse(event.target.value) },
-                  {
-                    onSuccess: (updated) => toast.success(`${updated.name} is on the ${updated.tier} tier.`),
-                    onError: (error) => toast.error(error.message),
-                  },
-                )
-              }
-            >
-              {tierSchema.options.map((tier) => (
-                <NativeSelectOption key={tier} value={tier}>
-                  {tier}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
           </div>
           <div className="flex min-h-8 items-center justify-between gap-4">
             <span className="text-muted-foreground">Role</span>

@@ -42,9 +42,6 @@ function StatusCard() {
         </CardTitle>
         <CardDescription>{statusDescriptions[me.data.status]}</CardDescription>
       </CardHeader>
-      <CardContent className="text-sm text-muted-foreground">
-        Tier: <span className="text-foreground">{me.data.tier}</span>
-      </CardContent>
     </Card>
   );
 }
