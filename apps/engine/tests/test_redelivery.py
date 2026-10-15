@@ -315,3 +315,29 @@ def test_worker_deletes_the_packages_no_job_can_deliver(
         failed_later = package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "RuntimeError"})
         wait_for(lambda: not jobs.package_path(failed_later).exists(), timeout=10)
         assert running_export.exists()
+
+
+def test_restarted_api_serves_the_jobs_the_earlier_one_accepted(
+    redis_url: str, prefork_jobs: Jobs, counting_dataset: str
+) -> None:
+    request = {"dataset": counting_dataset, "parameters": {"bounds": BOUNDS, "label": "api-restart"}}
+    response = TestClient(create_app(TOKEN, prefork_jobs)).post("/api/v1/jobs", json=request, headers=AUTHORIZED)
+    job_id = response.json()["job_id"]
+    wait_until_completed(prefork_jobs, job_id)
+    # The API keeps no state of its own: a new one reads the same Redis and package directory.
+    restarted = TestClient(create_app(TOKEN, Jobs(redis_url, "prefork", prefork_jobs.package_dir)))
+    polled = restarted.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    downloaded = restarted.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert (polled.status_code, polled.json()["state"]) == (200, "completed")
+    assert downloaded.content == prefork_jobs.package_path(job_id).read_bytes()
+
+
+def test_job_queued_while_no_worker_runs_runs_when_a_worker_starts(
+    redis_url: str, tmp_path: Path, counting_dataset: str
+) -> None:
+    jobs = Jobs(redis_url, "started-later", tmp_path)
+    job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "queued-without-worker"})
+    assert jobs.status(job_id)["state"] == "queued"
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        wait_until_completed(jobs, job_id)
+    assert jobs.records.get(runs_key("queued-without-worker")) == "1"
