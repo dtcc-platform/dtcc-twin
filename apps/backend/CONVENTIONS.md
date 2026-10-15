@@ -8,7 +8,7 @@
 - Other modules use a module's exported service, never its repository (`UsersModule` exports `UsersService`).
 - Dependencies point one way: a module never imports a module that depends on it, and `forwardRef` is not the fix. When a change must reach several modules, the operation lives in a module above them, as `accounts` sits above `users` and `auth`.
 - `users` is the user record that every module reads, and has no routes. Every route on a user is in `accounts`, and only `AccountsService` changes a user's status, tier or existence, because those reach every module that depends on the user.
-- Side effects that remove access (sessions, gateway keys) are explicit calls in a fixed order. Side effects that can happen later, such as emails or audit entries, go through events.
+- Side effects that remove access (sessions, gateway keys) are explicit calls in a fixed order, the gateway before the database: a failure then leaves access as it was, and a retry finishes the job. Side effects that can happen later, such as emails or audit entries, go through events.
 
 ### Routes
 

@@ -14,6 +14,7 @@ src/
   common/                 decorators, error handling, request id
   infra/database/         pool, shared columns, relations.ts
   infra/engine/           EngineClient: the only code that calls DTCC Engine
+  infra/gateway/          GatewayClient: the only code that calls APISIX's Admin API
   infra/storage/          PackageStorage: the packages of completed jobs
   docs/                   OpenAPI document and Swagger UI
   modules/<name>/         controller → service → repository, plus table and module
@@ -39,9 +40,9 @@ test/                     e2e specs and their helpers
 ## Accounts
 
 - `users` is the user record, which other modules read; it has no routes. `accounts` holds every route on a user: `AccountsController` for the caller (`PATCH /users/me`) and `AccountsAdminController` for admins (`/admin/users`). `AccountsService` is the only place a user's status, tier or existence changes.
-- Each user has a status, `pending`, `active` or `disabled`, and a tier, `default` or `elevated`. Signing up makes a `pending` user, logged in at once; a user an admin creates starts `active`.
+- Each user has a status, `pending`, `active` or `disabled`, and a tier, `default` or `elevated`. Signing up makes a `pending` user, logged in at once; a user an admin creates starts `active`. Tiers are not used yet: the frontend neither shows nor sets them, so every user it makes stays on `default`.
 - Admins change them with `PUT /admin/users/:id/status` (approve, reject, disable, enable; nothing goes back to `pending`) and `PUT /admin/users/:id/tier`. The tier survives disable and enable. `PATCH /admin/users/:id` edits only name and email.
-- Disabling ends the user's sessions, and login answers 403 `ACCOUNT_DISABLED` once the password matches. An access token already issued keeps working until it expires, up to 15 minutes.
+- Disabling revokes the user's API keys and ends their sessions, and login answers 403 `ACCOUNT_DISABLED` once the password matches. An access token already issued keeps working until it expires, up to 15 minutes. Enabling again restores no keys.
 - Admins can't change their own status or delete themselves, and the last active admin can't be disabled or deleted.
 
 ## Database
@@ -67,6 +68,7 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them, and `/api/jobs` s
   - `authHeader("admin")` signs a token for a user that doesn't exist. The guard never looks users up, so access tests need no rows. When the row matters, create the user through `UsersService` and pass its id: `authHeader("user", { userId })`.
   - `.env` is ignored; `JWT_SECRET` is random per run.
   - DTCC Engine is a stub (`test/helpers/stub-engine.ts`): a local HTTP server answering with the engine's shapes, set by each test. Config is read when `app.module.ts` is imported, so a file starts the stub and sets `ENGINE_URL` before importing `createTestApp` (`jobs.e2e-spec.ts`). Other files run with no engine configured.
+  - APISIX's Admin API is a stub too (`test/helpers/stub-gateway.ts`), set up the same way (`keys.e2e-spec.ts`). Without it, the backend runs with no gateway, as other files do.
   - Vitest clears every mock's calls before each test, so a spy set in `beforeAll` has no calls left by the time a test reads it.
 
 ## Commands
