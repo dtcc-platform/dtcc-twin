@@ -23,6 +23,12 @@ export class KeysService {
     return { items: await this.repository.findAll(userId) };
   }
 
+  /** For admins, who name the user in the URL: a missing user is a 404, not an empty list. */
+  async listForUser(userId: string): Promise<ApiKeyList> {
+    await this.users.get(userId);
+    return this.list(userId);
+  }
+
   async create(userId: string, body: CreateApiKeyBody): Promise<CreatedApiKey> {
     const user = await this.users.get(userId);
     if (user.status !== "active") throw new ForbiddenException("Only active accounts can create API keys");

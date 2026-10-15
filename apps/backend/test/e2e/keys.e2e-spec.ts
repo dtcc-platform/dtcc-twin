@@ -52,6 +52,11 @@ describe("API keys (e2e)", () => {
     return request.agent(app.getHttpServer()).set(await authHeader("user", { userId }));
   }
 
+  // An admin with no row, who passes every role check.
+  async function adminAgent(): Promise<Agent> {
+    return request.agent(app.getHttpServer()).set(await authHeader("admin"));
+  }
+
   async function create(agent: Agent, body: Record<string, unknown> = { name: "Laptop" }): Promise<CreatedApiKey> {
     const response = await agent.post("/api/keys").send(body).expect(201);
     return createdApiKeySchema.parse(response.body);
@@ -236,6 +241,80 @@ describe("API keys (e2e)", () => {
 
     it("needs a login", async () => {
       await request(app.getHttpServer()).delete(`/api/keys/${missingId}`).expect(401);
+    });
+  });
+
+  describe("GET /api/admin/users/:id/keys", () => {
+    it("lists a user's keys for an admin", async () => {
+      await create(ada, { name: "Laptop" });
+      await create(grace, { name: "Grace's server" });
+
+      const response = await (await adminAgent()).get(`/api/admin/users/${adaId}/keys`).expect(200);
+
+      expect(apiKeyListSchema.parse(response.body).items.map((key) => key.name)).toEqual(["Laptop"]);
+    });
+
+    it("returns a NOT_FOUND error for a missing user and rejects an id that is not a UUID", async () => {
+      const admin = await adminAgent();
+
+      const missing = await admin.get(`/api/admin/users/${missingId}/keys`).expect(404);
+      const invalid = await admin.get("/api/admin/users/not-a-uuid/keys").expect(400);
+
+      expect(errorResponseSchema.parse(missing.body).error.code).toBe("NOT_FOUND");
+      expect(errorResponseSchema.parse(invalid.body).error.errors?.map((issue) => issue.path)).toEqual(["id"]);
+    });
+
+    it("is admin-only", async () => {
+      const asUser = await ada.get(`/api/admin/users/${graceId}/keys`).expect(403);
+      await request(app.getHttpServer()).get(`/api/admin/users/${graceId}/keys`).expect(401);
+
+      expect(errorResponseSchema.parse(asUser.body).error.code).toBe("FORBIDDEN");
+    });
+  });
+
+  describe("DELETE /api/admin/users/:id/keys/:keyId", () => {
+    it("revokes a user's key in the gateway and the list", async () => {
+      const laptop = await create(ada, { name: "Laptop" });
+      const ci = await create(ada, { name: "CI" });
+
+      await (await adminAgent()).delete(`/api/admin/users/${adaId}/keys/${laptop.id}`).expect(204);
+
+      expect(await names(ada)).toEqual(["CI"]);
+      expect(gateway.credentials(adaId)).toEqual({ [ci.id]: ci.key });
+    });
+
+    it("returns a NOT_FOUND error for a key of another user, which stays", async () => {
+      const gracesKey = await create(grace);
+
+      const response = await (await adminAgent()).delete(`/api/admin/users/${adaId}/keys/${gracesKey.id}`).expect(404);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("NOT_FOUND");
+      expect(await names(grace)).toEqual(["Laptop"]);
+    });
+
+    it("keeps the key when the gateway fails", async () => {
+      quietLogs();
+      const laptop = await create(ada);
+      gateway.setFailing(true);
+
+      await (await adminAgent()).delete(`/api/admin/users/${adaId}/keys/${laptop.id}`).expect(503);
+
+      expect(await names(ada)).toEqual(["Laptop"]);
+    });
+
+    it("rejects a key id that is not a UUID", async () => {
+      const response = await (await adminAgent()).delete(`/api/admin/users/${adaId}/keys/not-a-uuid`).expect(400);
+
+      expect(errorResponseSchema.parse(response.body).error.errors?.map((issue) => issue.path)).toEqual(["keyId"]);
+    });
+
+    it("is admin-only", async () => {
+      const gracesKey = await create(grace);
+
+      await ada.delete(`/api/admin/users/${graceId}/keys/${gracesKey.id}`).expect(403);
+      await request(app.getHttpServer()).delete(`/api/admin/users/${graceId}/keys/${gracesKey.id}`).expect(401);
+
+      expect(await names(grace)).toEqual(["Laptop"]);
     });
   });
 });
