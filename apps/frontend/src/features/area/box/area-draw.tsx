@@ -110,6 +110,14 @@ function syncAreaDrawing(map: MapLibreMap, store: AreaStore): () => void {
     if (state.area !== previous.area || (previous.drawing && !state.drawing)) show(state.area);
   });
 
+  // trap: leaving the page removes the map before this cleanup runs, and stopping Terra Draw then clears
+  // sources that went with it. The map took Terra Draw's layers along, so there is nothing left to stop.
+  let mapRemoved = false;
+  function onMapRemove() {
+    mapRemoved = true;
+  }
+  map.once("remove", onMapRemove);
+
   draw.start();
   draw.on("change", onChange);
   draw.on("finish", onFinish);
@@ -117,6 +125,8 @@ function syncAreaDrawing(map: MapLibreMap, store: AreaStore): () => void {
 
   return () => {
     unsubscribe();
+    if (mapRemoved) return;
+    map.off("remove", onMapRemove);
     draw.stop();
   };
 }
