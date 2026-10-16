@@ -2550,7 +2550,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 3: Remote targets and delivery
 
-Status: expansion started 2026-10-15. Task 25 is expanded and not executed; its review of 2026-10-15 asked for changes, which were made the same day. Tasks 26 to 31 are outlined under Expansion and are expanded one at a time. An expanded task is not an accepted one until review accepts it, and an accepted plan is not an executed task.
+Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for changes, which were made the same day; its second review, of 2026-10-15 and 2026-10-16, accepted it, and Step 6.5's wording was narrowed after it. The plan is committed in `2e6eb02`. Task 25 was executed 2026-10-16. Its results: with the tests written, `engine:check tests/test_discovery.py tests/test_targets.py` gave 25 failed and 30 passed in 121.6 s, each as Step 2 expects: `/api/v1/host` answered `404` where the four token cases expect `401` and the three host cases `200`, the 8 target identifiers and 6 image digests raised no `ValueError`, and the four worker cases ended in `TimeoutExpired` after 30 s. With the implementation, `engine:check` gave 159 passed in 72.6 s. `engine` and `engine-worker` were stopped and development Redis was running; database 0 held 5 job records, one claimed by `celery@engine-worker`, which had an outcome, so Step 6.1 listed none. With `pnpm dev:engine`, the worker's banner named `celery@local` and its queue `local`. A `smoke` job completed with the claim `celery@local c130156e67cc42d6b4e6678f4f64d594 32`. `/api/v1/host` answered target `local`, `image_digest` null, and the versions, catalog revision, and 28 Datasets of `/api/v1/datasets`, and `401` without the token. With `city_volume_mesh` `running`, a second worker exited with 1 after 5 s, having logged `Unrecoverable error: RuntimeError('Another running worker answers as celery@local, so this one does not start')`. The job was still `running` without a finish time when it had exited, so the attempt was conclusive; it completed after 115 s in the worker, and its 68,525-byte package downloaded. Under `celery@engine-worker`, a worker exited with 1, having logged that a worker of target `local` must run as `celery@local`; with `--queues other`, one exited with 1, having logged that it must consume only the queue `local`. The running worker logged no error; stopped, it logged a warm shutdown, and both containers exited with 0. Prettier passed for `compose.yaml`, `DESIGN.md`, and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` failed once, on two backend e2e tests in `auth.e2e-spec.ts` that each log in twice and timed out at 5 s, at a load average of about 6; its rerun passed. Both reviews of the execution, of 2026-10-16, accepted it; the worker module's docstring now gives the launch command with `--hostname`, which Codex's review found missing. Tasks 26 to 31 are outlined under Expansion and are expanded one at a time. An expanded task is not an accepted one until review accepts it, and an accepted plan is not an executed task.
 
 **Scope:** configured remote targets, automatic local-first routing, explicit targets, per-host job limits, all-hosts-busy queueing, the compute-targets operation (target identifiers, versions, local capabilities, observed availability), aggregated discovery at the entry service that reports target availability and includes remote-only capabilities without executing them locally, and package transfer from a remote Engine HTTP service to the entry service without a shared filesystem. Remote discovery and delivery use the shared token.
 
@@ -2629,7 +2629,7 @@ Later tasks find a target's worker by its node name and compare hosts by image d
 - Consumes: from Tasks 3, 10, and 21, `dataset_catalog`, `require_token`, `create_app_from_environment`, `jobs_from_environment`, and the bootstep `RecordLostClaims`; the test fixture `redis_url`. From Celery: `bootsteps.StartStopStep` and its `requires`, `app.amqp.queues.consume_from`, `app.control.ping`, `app.connection_for_write`, `start_worker(..., hostname=...)`, and the `celery worker` command line.
 - Produces: `TARGET_PATTERN`, `IMAGE_DIGEST_PATTERN`, and `NODE_CHECK_TIMEOUT`; `Jobs(redis_url, target, package_dir, image_digest=None)` and `Jobs.image_digest`; `Jobs.check_worker(node, queues)` and the worker bootstep `CheckWorker`; the setting `ENGINE_IMAGE_DIGEST`; the route `GET /api/v1/host`; the test fixture `start_target_worker`.
 
-- [ ] **Step 1: Write the tests**
+- [x] **Step 1: Write the tests**
 
 In `apps/engine/tests/conftest.py`, replace `from collections.abc import Iterator` with `from collections.abc import Callable, Iterator`, add `from typing import Any` after `from pathlib import Path`, and replace the `served_jobs` fixture with:
 
@@ -2846,12 +2846,12 @@ def test_worker_refuses_the_node_name_of_a_running_worker_and_fails_none_of_its_
     assert (job["state"], job["finished_at"]) == ("running", None)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail for the right reasons**
+- [x] **Step 2: Run the tests to verify they fail for the right reasons**
 
 Run: `pnpm engine:check tests/test_discovery.py tests/test_targets.py`
 Expected: 25 failed and 30 passed, in about two minutes. `/api/v1/host` answers `404` where the four token cases expect `401` and the three host cases `200`; the 8 target identifiers and 6 image digests raise no `ValueError`; and the four worker cases end in `TimeoutExpired` after 30 s, because the worker starts and keeps running. Stop and report if a test fails in another way.
 
-- [ ] **Step 3: Check targets, workers, and digests, and report the host**
+- [x] **Step 3: Check targets, workers, and digests, and report the host**
 
 In `apps/engine/dtcc_engine/jobs.py`, add `import re` after `import os`, and add after `CLEANUP_INTERVAL`:
 
@@ -2963,12 +2963,12 @@ and in `create_app_from_environment`'s docstring, replace the `ValueError` entry
             `ENGINE_IMAGE_DIGEST` is malformed.
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `pnpm engine:check`
 Expected: 159 passed: the 134 earlier tests and the 25 new cases.
 
-- [ ] **Step 5: Run the development worker under its target's node name, and document it**
+- [x] **Step 5: Run the development worker under its target's node name, and document it**
 
 In `compose.yaml`, in the `engine-worker` service, remove the `hostname` key and the comment above it, and replace `command` with:
 
@@ -3025,7 +3025,7 @@ In this file, in increment 5b's Scope, replace "a stable Celery node name for ea
 Run: `npx --yes prettier@3.9.6 --check compose.yaml apps/engine/DESIGN.md apps/engine/PLAN.md`
 Expected: all files use Prettier code style.
 
-- [ ] **Step 6: Move the development worker to its node name, and check the refusals through the worker service**
+- [x] **Step 6: Move the development worker to its node name, and check the refusals through the worker service**
 
 If `pnpm dev:engine` is running, let its running jobs finish, and stop it: `docker compose --profile engine stop engine engine-worker`. Start its Redis, if it is not running: `docker compose --profile engine up -d --wait engine-redis`. Then:
 
@@ -3039,12 +3039,12 @@ If `pnpm dev:engine` is running, let its running jobs finish, and stop it: `dock
 
 Stop `pnpm dev:engine`.
 
-- [ ] **Step 7: Validate**
+- [x] **Step 7: Validate**
 
 Run: `pnpm engine:check:prod`, then `pnpm check`.
 Expected: as in Task 17, Step 7.
 
-- [ ] **Step 8: Stop for review**
+- [x] **Step 8: Stop for review**
 
 Record Task 25's results in Increment 3's status, including Step 6's observations, leave the changes uncommitted, and report Steps 2, 4, 6, and 7. Suggested commit message: `Feature: Named engine workers after their targets and added host discovery`.
 
@@ -6032,7 +6032,7 @@ Expected: passes. Set Task 9's status in 5a's status line, leave changes uncommi
 
 **Cancellation prerequisite:** every worker consuming the deployment's queues must enforce the start/cancel gate before any API exposes cancellation. The one-time development reset in increment 4 is not a production upgrade procedure.
 
-**Scope:** the worker containers' Celery-specific health-check override; a stable Celery node name for each worker that no other running worker uses, under which a worker starts only after its earlier run stopped (Task 21); the documented production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); building and validating the `linux/amd64` image on a native x86_64 Linux host (Task 9 ran it only under emulation); deploying the API and worker on that host, running representative Core and Sim jobs, and recording the baseline measurements the spec lists, with hardware, image digest, and software versions. The deployment runs the exact image digest it tested.
+**Scope:** the worker containers' Celery-specific health-check override; each worker's Celery node name, `celery@<target identifier>`, passed with `--hostname`, under which a worker starts only after its earlier run stopped (Tasks 21 and 25); `ENGINE_IMAGE_DIGEST`, the platform-specific digest of the image each host runs; the documented production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); building and validating the `linux/amd64` image on a native x86_64 Linux host (Task 9 ran it only under emulation); deploying the API and worker on that host, running representative Core and Sim jobs, and recording the baseline measurements the spec lists, with hardware, image digest, and software versions. The deployment runs the exact image digest it tested.
 
 **Upstream interfaces:** Celery's worker inspection for the health check, Celery 5.6.3 (increment 2a); the same `prod` image and `dtcc-engine` entry points as 5a.
 

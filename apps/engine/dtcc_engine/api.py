@@ -136,6 +136,11 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
     def list_datasets() -> dict[str, Any]:
         return dataset_catalog()
 
+    @app.get("/api/v1/host", dependencies=[Depends(require_token)])
+    def describe_host() -> dict[str, Any]:
+        # Host-local discovery, which must not query other hosts.
+        return {"target": jobs.target, "image_digest": jobs.image_digest, **dataset_catalog()}
+
     @app.get("/api/v1/datasets/{name}", dependencies=[Depends(require_token)])
     def describe_dataset(name: str) -> dict[str, Any]:
         registered = datasets.list()
@@ -228,7 +233,8 @@ def create_app_from_environment() -> FastAPI:
     """Create the application from `ENGINE_API_TOKEN` and the job settings; the Uvicorn `--factory` entry point.
 
     Raises:
-        ValueError: If `ENGINE_API_TOKEN` is unset, empty, or not an RFC 6750 bearer token.
+        ValueError: If `ENGINE_API_TOKEN` is unset, empty, or not an RFC 6750 bearer token, or if `ENGINE_TARGET` or
+            `ENGINE_IMAGE_DIGEST` is malformed.
         KeyError: If a job setting is unset: `ENGINE_REDIS_URL`, `ENGINE_TARGET`, or `ENGINE_PACKAGE_DIR`.
     """
     return create_app(os.environ.get("ENGINE_API_TOKEN", ""), jobs_from_environment())

@@ -8,6 +8,7 @@ same Redis, which decides whether a delivery may run the Dataset and records how
 import json
 import logging
 import os
+import re
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,6 +31,11 @@ RECORD_LIFETIME = RETENTION + timedelta(days=1)
 RUN_DATASET = "dtcc_engine.run_dataset"
 # How often a worker deletes the packages that no job can deliver.
 CLEANUP_INTERVAL = timedelta(hours=1)
+# A target's identifier also names its worker's node, celery@<identifier>, which claims hold between spaces.
+TARGET_PATTERN = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+IMAGE_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+# How long a starting worker waits for an answer from another running worker with its node name, once connected.
+NODE_CHECK_TIMEOUT = 0.5
 # Celery's states of a job without a recorded outcome; SUCCESS follows the outcome, so it never appears alone.
 CELERY_STATES = {"PENDING": "queued", "STARTED": "running", "PROGRESS": "running", "FAILURE": "failed"}
 # The outcomes a record can hold with each value of its execution gate.
@@ -191,12 +197,23 @@ class Jobs:
 
     Args:
         redis_url: Redis for Celery's broker and result backend, and for Engine's job records.
-        target: Identifier of this compute target; its jobs use the Celery queue of that name.
+        target: Identifier of this compute target, lowercase letters and digits in words joined by single hyphens;
+            its jobs use the Celery queue of that name, and its worker runs as `celery@<target>`.
         package_dir: Directory of completed packages, shared by this host's API and worker.
+        image_digest: The platform-specific digest of the image this host runs, `sha256:` and 64 lowercase
+            hexadecimal digits, if the deployment supplies it.
+
+    Raises:
+        ValueError: If the target identifier or the image digest is malformed.
     """
 
-    def __init__(self, redis_url: str, target: str, package_dir: Path) -> None:
+    def __init__(self, redis_url: str, target: str, package_dir: Path, image_digest: str | None = None) -> None:
+        if not TARGET_PATTERN.fullmatch(target):
+            raise ValueError(f"Target identifier {target!r} is not lowercase words joined by single hyphens")
+        if image_digest is not None and not IMAGE_DIGEST_PATTERN.fullmatch(image_digest):
+            raise ValueError(f"Image digest {image_digest!r} is not sha256: and 64 lowercase hexadecimal digits")
         self.target = target
+        self.image_digest = image_digest
         self.package_dir = package_dir
         self.records = redis.Redis.from_url(redis_url, decode_responses=True)
         self.queued_script = self.records.register_script(QUEUED)
@@ -229,8 +246,19 @@ class Jobs:
         task_failure.connect(self.record_lost_process, weak=False, dispatch_uid=self.worker_run)
         jobs = self
 
+        class CheckWorker(bootsteps.StartStopStep):
+            """Refuses to start a worker that would not run as this target's worker; see `Jobs.check_worker`."""
+
+            def start(self, worker: Any) -> None:
+                jobs.check_worker(worker.hostname, set(worker.app.amqp.queues.consume_from))
+
+        self.celery_app.steps["worker"].add(CheckWorker)
+
         class RecordLostClaims(bootsteps.StartStopStep):
             """When the worker starts, records the failure of the jobs that an earlier run of it claimed and left."""
+
+            # After the worker's check, so that a worker it refuses, such as a running worker's duplicate, fails no job.
+            requires = {CheckWorker}
 
             def start(self, worker: Any) -> None:
                 try:
@@ -498,6 +526,32 @@ class Jobs:
             shutil.rmtree(staging, ignore_errors=True)
             logger.info("Deleted %s, left by an export that was killed", staging.name)
 
+    def check_worker(self, node: str, queues: set[str]) -> None:
+        """Check that a worker may start: as `celery@<target>`, consuming only this target's queue.
+
+        It also refuses a node name that another running worker answers to, as a best effort: a running worker whose
+        answer is late or lost, or a broker error, which is logged, lets the worker start, as do two that start at once.
+
+        Raises:
+            ValueError: If `node` is not `celery@<target>`, or `queues` are not this target's queue alone.
+            RuntimeError: If another running worker answers as `node`.
+        """
+        if node != f"celery@{self.target}":
+            raise ValueError(f"A worker of target '{self.target}' must run as celery@{self.target}, not {node}")
+        if queues != {self.target}:
+            raise ValueError(
+                f"A worker of target '{self.target}' must consume only the queue '{self.target}', not {sorted(queues)}"
+            )
+        try:
+            # A connection of its own: on a pooled one, an earlier call that timed out can lose this answer.
+            with self.celery_app.connection_for_write() as connection:
+                answers = self.celery_app.control.ping([node], timeout=NODE_CHECK_TIMEOUT, connection=connection)
+        except OperationalError:
+            logger.warning("Could not check whether another running worker answers as %s", node, exc_info=True)
+            return
+        if answers:
+            raise RuntimeError(f"Another running worker answers as {node}, so this one does not start")
+
     def record_lost_process(self, sender: Task, task_id: str, exception: BaseException, **kwargs: Any) -> None:
         """Record the failure of a job whose pool process was lost, reported by Celery in the worker's main process."""
         if sender.app is self.celery_app and isinstance(exception, WorkerLostError):
@@ -536,5 +590,11 @@ class Jobs:
 
 
 def jobs_from_environment() -> Jobs:
-    """Create this host's jobs from `ENGINE_REDIS_URL`, `ENGINE_TARGET`, and `ENGINE_PACKAGE_DIR`."""
-    return Jobs(os.environ["ENGINE_REDIS_URL"], os.environ["ENGINE_TARGET"], Path(os.environ["ENGINE_PACKAGE_DIR"]))
+    """Create this host's jobs from `ENGINE_REDIS_URL`, `ENGINE_TARGET`, `ENGINE_PACKAGE_DIR`, and the optional
+    `ENGINE_IMAGE_DIGEST`, which, unset or empty, means that the deployment supplies no digest."""
+    return Jobs(
+        os.environ["ENGINE_REDIS_URL"],
+        os.environ["ENGINE_TARGET"],
+        Path(os.environ["ENGINE_PACKAGE_DIR"]),
+        os.environ.get("ENGINE_IMAGE_DIGEST") or None,
+    )

@@ -1,6 +1,7 @@
 """Tests for Engine's discovery API against the installed DTCC Core and DTCC Sim."""
 
 import json
+from pathlib import Path
 
 import pytest
 from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister
@@ -8,7 +9,7 @@ from dtcc_core.datasets import list as registered_datasets
 from fastapi.testclient import TestClient
 from pydantic import Field
 
-from dtcc_engine.api import create_app
+from dtcc_engine.api import create_app, create_app_from_environment
 from dtcc_engine.jobs import Jobs
 
 TOKEN = "test-token"
@@ -26,7 +27,7 @@ def test_health_needs_no_token(client: TestClient) -> None:
     assert response.json() == {"status": "ok"}
 
 
-@pytest.mark.parametrize("path", ["/api/v1/datasets", "/api/v1/datasets/buildings"])
+@pytest.mark.parametrize("path", ["/api/v1/datasets", "/api/v1/datasets/buildings", "/api/v1/host"])
 @pytest.mark.parametrize(
     "headers",
     [
@@ -125,3 +126,29 @@ def test_new_dataset_definition_appears_and_changes_revision(client: TestClient)
     assert "engine_discovery_probe" not in before["datasets"]
     assert "engine_discovery_probe" in after["datasets"]
     assert after["catalog_revision"] != before["catalog_revision"]
+
+
+@pytest.mark.parametrize(
+    ("configured", "reported"),
+    [(None, None), ("", None), ("sha256:" + "0123456789abcdef" * 4, "sha256:" + "0123456789abcdef" * 4)],
+    ids=["unset", "empty", "set"],
+)
+def test_host_reports_its_target_image_digest_and_catalog(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path, configured: str | None, reported: str | None
+) -> None:
+    for name, value in {
+        "ENGINE_API_TOKEN": TOKEN,
+        "ENGINE_REDIS_URL": redis_url,
+        "ENGINE_TARGET": "this-host",
+        "ENGINE_PACKAGE_DIR": str(tmp_path),
+    }.items():
+        monkeypatch.setenv(name, value)
+    if configured is None:
+        monkeypatch.delenv("ENGINE_IMAGE_DIGEST", raising=False)
+    else:
+        monkeypatch.setenv("ENGINE_IMAGE_DIGEST", configured)
+    client = TestClient(create_app_from_environment())
+    host = client.get("/api/v1/host", headers=AUTHORIZED)
+    catalog = client.get("/api/v1/datasets", headers=AUTHORIZED).json()
+    assert host.status_code == 200
+    assert host.json() == {"target": "this-host", "image_digest": reported, **catalog}

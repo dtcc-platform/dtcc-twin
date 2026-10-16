@@ -209,8 +209,9 @@ Core's lossless Protobuf contract.
 
 Remote hosts are configured explicitly with stable target identifiers and their
 Engine HTTP addresses. They do not register dynamically. Use a Celery queue for
-each configured compute target. Each host's worker consumes its designated
-queue and enforces the configured concurrent-job count.
+each configured compute target. Each host's worker consumes only its designated
+queue, refusing to start with any other, and enforces the configured
+concurrent-job count.
 
 Requests select automatic placement, local execution, or a named remote target.
 
@@ -463,12 +464,16 @@ Engine records a failure for a job whose claimant is gone and can no longer
 record an outcome. A job whose pool process is lost fails with
 `WorkerLostError`, which Celery reports in the worker's main process. When a
 worker starts, each job that an earlier run of the same worker claimed and left
-without an outcome fails with `WorkerRestarted`. This needs every worker to have
-a stable node name that no other running worker uses, and to start under it
-only after its earlier run and that run's processes have stopped. A job whose
-worker is lost and not started again keeps the state last recorded, as does a
-job whose lost process still appears to exist, because Engine cannot tell
-whether the work stopped.
+without an outcome fails with `WorkerRestarted`. This needs each worker to run
+as `celery@<target identifier>`, a node name that no other running worker uses,
+and to start under it only after its earlier run and that run's processes have
+stopped. A worker refuses to start under another node name. As a best effort,
+it also refuses to start while a running worker answers to its node name; a
+late or lost answer, a broker error, or two workers that start at once escape
+that check, so it does not replace stopping the earlier run. Both checks come
+before the worker checks any claim. A job whose worker is lost and not started
+again keeps the state last recorded, as does a job whose lost process still
+appears to exist, because Engine cannot tell whether the work stopped.
 
 Engine's record of a job that never finishes expires 31 days after the job's
 submission or, once a delivery claimed it, after the claim. The job is then
