@@ -1,5 +1,6 @@
 import { Link, Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { SubNav } from "@/components/common/sub-nav";
+import { PageLayout } from "@/components/layout/page-layout";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   beforeLoad: ({ context }) => {
@@ -10,15 +11,16 @@ export const Route = createFileRoute("/_authenticated/admin")({
 
 function AdminLayout() {
   return (
-    <main className="mx-auto flex max-w-5xl flex-col gap-6 p-8">
+    <PageLayout className="max-w-5xl">
       <h1 className="text-4xl font-semibold tracking-tight">Admin</h1>
       <SubNav>
         <Link to="/admin" activeOptions={{ exact: true }}>
           Dashboard
         </Link>
         <Link to="/admin/users">Users</Link>
+        <Link to="/admin/dev">Dev</Link>
       </SubNav>
       <Outlet />
-    </main>
+    </PageLayout>
   );
 }

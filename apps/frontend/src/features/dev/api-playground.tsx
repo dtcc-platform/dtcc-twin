@@ -16,15 +16,15 @@ export function ApiPlayground() {
   const create = useMutation(accountMutations.create());
 
   return (
-    <div className="mx-auto max-w-6xl p-8">
-      <h1 className="my-4 text-4xl font-semibold tracking-tight">Users, settings and items API</h1>
-      <p className="text-muted-foreground">
+    <section className="flex flex-col">
+      <h2 className="text-xl font-semibold">Users, settings and items API</h2>
+      <p className="text-sm text-muted-foreground">
         Valid calls go through <code className={code}>src/api/accounts.ts</code>,{" "}
         <code className={code}>settings.ts</code> and <code className={code}>items.ts</code>; invalid ones use the raw{" "}
         <code className={code}>api</code> client to send what the typed options would not allow.
       </p>
 
-      <h2 className={heading}>Valid calls</h2>
+      <h3 className={heading}>Valid calls</h3>
       <div className={calls}>
         <Call title="List users" request="GET /api/admin/users?limit=5" outcome={list}>
           {list.data?.items.length ? (
@@ -73,13 +73,13 @@ export function ApiPlayground() {
         )}
       </div>
 
-      <h2 className={heading}>Invalid calls</h2>
+      <h3 className={heading}>Invalid calls</h3>
       <div className={calls}>
         {invalidCalls.map((call) => (
           <InvalidCall key={call.title} {...call} />
         ))}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -330,7 +330,7 @@ function RunButton({ pending, onRun }: { pending: boolean; onRun: () => void }) 
   );
 }
 
-const heading = "mt-8 mb-3 text-2xl font-semibold tracking-tight";
+const heading = "mt-8 mb-3 text-lg font-semibold";
 const calls = "grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-4";
 const picker = "flex flex-wrap items-center gap-1.5 text-sm";
 const hint = "text-sm text-muted-foreground";

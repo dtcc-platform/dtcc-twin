@@ -12,6 +12,7 @@ src/
   api/client/            axios client, ApiError, session refresh, query client
   features/<name>/       one feature, its folders laid out as it shows on screen
   components/common/     components shared across features, such as FloatingCard, TextField and DataTable
+  components/layout/     the frame of pages away from the map (PageLayout)
   components/ui/         shadcn components
   components/fallbacks/  the pages the router falls back to (not found, route error)
   hooks/, lib/           shared hooks and utilities
@@ -27,7 +28,8 @@ src/
 ## Auth and routing
 
 - `authQueries.me()` is the source of truth: the logged-in user, or `null`.
-- Routes under `routes/_authenticated/` need a login. `_authenticated.tsx` checks `me` in `beforeLoad`, sends a logged-out visitor to `/`, and passes the user down as `context.user`.
+- Logging in and registering happen in `AuthDialog`, over the map. `/?auth=login` or `?auth=register` opens it while nobody is logged in, and `?redirect=` says where to go afterwards; the account button at the top right links there, and becomes the account menu once someone logs in.
+- Routes under `routes/_authenticated/` need a login. `_authenticated.tsx` checks `me` in `beforeLoad`, sends a logged-out visitor to `/?auth=login&redirect=<the page>`, and passes the user down as `context.user`.
 - Logging in drops every cached query, so nothing the previous user saw can show. Logging out only sets `me` to `null`.
 - An unknown URL renders `components/fallbacks/not-found.tsx`, and a route whose `beforeLoad`, loader or render throws renders `route-error.tsx` beside it, which shows the message and retries with `router.invalidate()`. Both are router-wide defaults set in `main.tsx`.
 - The theme comes from the user's settings. `localStorage` keeps a copy that `index.html` applies before the first paint.

@@ -17,7 +17,8 @@
 
 ### Routing
 
-- Pages that need a login go under `src/routes/_authenticated/`.
+- `/` is the map. Every other page sits in `PageLayout` from `src/components/layout/`, which leads back to the map.
+- Pages that need a login go under `src/routes/_authenticated/`. There are no login pages: a logged-out visitor lands on `/?auth=login`, where the login dialog opens, and returns to the page after logging in.
 - Redirect in `beforeLoad`, never by rendering `<Navigate>`. A page for one role checks `context.user.role` there.
 - Admin pages go under `src/routes/_authenticated/admin/`; `admin.tsx` checks the role for all of them.
 - State that should survive a reload or the back button (page, filters) goes in the URL through `validateSearch`.
@@ -39,7 +40,7 @@
 
 ### Add a page
 
-1. Create `src/routes/<path>.tsx`, or `src/routes/_authenticated/<path>.tsx` if it needs a login. The Vite plugin regenerates `routeTree.gen.ts` on the next dev start or build; commit it.
+1. Create `src/routes/<path>.tsx`, or `src/routes/_authenticated/<path>.tsx` if it needs a login, and render it in `PageLayout`. The Vite plugin regenerates `routeTree.gen.ts` on the next dev start or build; commit it.
 2. Declare search params with `validateSearch`.
 
 ### Call a new endpoint
