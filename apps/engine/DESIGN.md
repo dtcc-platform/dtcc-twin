@@ -686,6 +686,13 @@ not claims of passing runtime tests or a verified release combination.
    earlier `STARTED` write. This investigation is not acceptance evidence for
    the gate: verify its races, terminal outcomes, retention, and failures with
    real Redis and prefork workers.
+6. **Runtime availability of a Dataset needs a Core interface.** At the pinned
+   commit, Core describes a Dataset but cannot say whether it can run on a
+   host: credentials, data, hardware, and provider access are found missing
+   only when it runs, and some credentials are request parameters. Until Core
+   provides such an interface, Engine reports each Dataset's runtime
+   availability on each target as unknown, and a remote-only capability cannot
+   be verified.
 
 Reference checkouts remain unmodified during Engine work. Missing shared
 capabilities require separately proposed Core or Sim changes. The implementation
