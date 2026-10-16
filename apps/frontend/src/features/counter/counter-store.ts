@@ -25,12 +25,8 @@ export function createCounterStore(initialCount: number) {
 
 export const CounterStoreContext = createContext<CounterStore | null>(null);
 
-function useCounterStore<T>(selector: (state: CounterState) => T): T {
+export function useCounterStore<T>(selector: (state: CounterState) => T): T {
   const store = useContext(CounterStoreContext);
   if (!store) throw new Error("Missing CounterStoreProvider");
   return useStore(store, selector);
 }
-
-export const useCount = () => useCounterStore((state) => state.count);
-
-export const useCounterActions = () => useCounterStore((state) => state.actions);

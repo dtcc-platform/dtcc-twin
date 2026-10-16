@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, createFileRoute } from "@tanstack/react-router";
 import { authQueries } from "@/api/auth";
-import { SubNav } from "@/components/layout/sub-nav";
+import { SubNav } from "@/components/common/sub-nav";
 
 export const Route = createFileRoute("/_authenticated/account")({ component: AccountLayout });
 

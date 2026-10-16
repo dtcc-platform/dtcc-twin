@@ -42,13 +42,13 @@ function prefersDark() {
   return darkScheme.matches;
 }
 
-/** Undefined until the server answers. Nobody logged in means `system`. */
+/** Undefined until the server answers. Nobody logged in means `light`. */
 function useServerPreference(): Theme | undefined {
   const me = useQuery(authQueries.me());
   const settings = useQuery({ ...settingsQueries.detail(), enabled: Boolean(me.data) });
 
   // Checked before settings: logging out keeps the previous user's settings cached (see forgetUser).
-  if (me.data === null) return "system";
+  if (me.data === null) return "light";
   return settings.data?.theme;
 }
 
@@ -56,7 +56,7 @@ export function useTheme(): ResolvedTheme {
   const serverPreference = useServerPreference();
   const osPrefersDark = useSyncExternalStore(subscribeToScheme, prefersDark);
 
-  const preference = serverPreference ?? storedPreference ?? "system";
+  const preference = serverPreference ?? storedPreference ?? "light";
   if (preference === "system") return osPrefersDark ? "dark" : "light";
   return preference;
 }

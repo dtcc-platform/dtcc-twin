@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { keyMutations } from "@/api/keys";
+import { TextField } from "@/components/common/text-field";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,8 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { FieldError, FieldGroup } from "@/components/ui/field";
-import { showSubmitError } from "@/features/auth/show-submit-error";
-import { TextField } from "@/features/auth/text-field";
+import { showSubmitError } from "@/lib/show-submit-error";
 
 const defaultValues = { name: "", description: "" };
 

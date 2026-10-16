@@ -5,8 +5,8 @@ import { useForm } from "react-hook-form";
 import { authMutations } from "@/api/auth";
 import { Button } from "@/components/ui/button";
 import { FieldError, FieldGroup } from "@/components/ui/field";
-import { showSubmitError } from "./show-submit-error.ts";
-import { TextField } from "./text-field.tsx";
+import { showSubmitError } from "@/lib/show-submit-error";
+import { TextField } from "@/components/common/text-field";
 
 export function LoginForm({ onLoggedIn }: { onLoggedIn: () => void }) {
   const login = useMutation(authMutations.login());

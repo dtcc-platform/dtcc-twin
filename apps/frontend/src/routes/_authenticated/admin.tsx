@@ -1,5 +1,5 @@
 import { Link, Outlet, createFileRoute, redirect } from "@tanstack/react-router";
-import { SubNav } from "@/components/layout/sub-nav";
+import { SubNav } from "@/components/common/sub-nav";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   beforeLoad: ({ context }) => {

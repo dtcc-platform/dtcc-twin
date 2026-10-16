@@ -6,8 +6,8 @@ import { ApiError } from "@/api/client/api-error";
 import { authMutations } from "@/api/auth";
 import { Button } from "@/components/ui/button";
 import { FieldDescription, FieldError, FieldGroup } from "@/components/ui/field";
-import { showSubmitError } from "./show-submit-error.ts";
-import { TextField } from "./text-field.tsx";
+import { showSubmitError } from "@/lib/show-submit-error";
+import { TextField } from "@/components/common/text-field";
 
 /** Registering logs the new user in. */
 export function RegisterForm({ onRegistered }: { onRegistered: () => void }) {

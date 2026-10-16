@@ -11,17 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as RegisterRouteImport } from './routes/register'
 import { Route as AuthenticatedAccountRouteImport } from './routes/_authenticated/account'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
-import { Route as AuthenticatedItemsRouteImport } from './routes/_authenticated/items'
 import { Route as AuthenticatedAccountIndexRouteImport } from './routes/_authenticated/account/index'
 import { Route as AuthenticatedAccountKeysRouteImport } from './routes/_authenticated/account/keys'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin/index'
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
-import { Route as AuthenticatedDevCountersRouteImport } from './routes/_authenticated/dev/counters'
-import { Route as AuthenticatedDevPlaygroundRouteImport } from './routes/_authenticated/dev/playground'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -32,16 +27,6 @@ const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RegisterRoute = RegisterRouteImport.update({
-  id: '/register',
-  path: '/register',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AuthenticatedAccountRoute = AuthenticatedAccountRouteImport.update({
   id: '/account',
   path: '/account',
@@ -50,11 +35,6 @@ const AuthenticatedAccountRoute = AuthenticatedAccountRouteImport.update({
 const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
   id: '/admin',
   path: '/admin',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedItemsRoute = AuthenticatedItemsRouteImport.update({
-  id: '/items',
-  path: '/items',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedAccountIndexRoute =
@@ -79,42 +59,20 @@ const AuthenticatedAdminUsersRoute = AuthenticatedAdminUsersRouteImport.update({
   path: '/users',
   getParentRoute: () => AuthenticatedAdminRoute,
 } as any)
-const AuthenticatedDevCountersRoute =
-  AuthenticatedDevCountersRouteImport.update({
-    id: '/dev/counters',
-    path: '/dev/counters',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedDevPlaygroundRoute =
-  AuthenticatedDevPlaygroundRouteImport.update({
-    id: '/dev/playground',
-    path: '/dev/playground',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
   '/account': typeof AuthenticatedAccountRouteWithChildren
   '/admin': typeof AuthenticatedAdminRouteWithChildren
-  '/items': typeof AuthenticatedItemsRoute
   '/account/keys': typeof AuthenticatedAccountKeysRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
-  '/dev/counters': typeof AuthenticatedDevCountersRoute
-  '/dev/playground': typeof AuthenticatedDevPlaygroundRoute
   '/account/': typeof AuthenticatedAccountIndexRoute
   '/admin/': typeof AuthenticatedAdminIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
-  '/items': typeof AuthenticatedItemsRoute
   '/account/keys': typeof AuthenticatedAccountKeysRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
-  '/dev/counters': typeof AuthenticatedDevCountersRoute
-  '/dev/playground': typeof AuthenticatedDevPlaygroundRoute
   '/account': typeof AuthenticatedAccountIndexRoute
   '/admin': typeof AuthenticatedAdminIndexRoute
 }
@@ -122,15 +80,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteWithChildren
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
   '/_authenticated/account': typeof AuthenticatedAccountRouteWithChildren
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
-  '/_authenticated/items': typeof AuthenticatedItemsRoute
   '/_authenticated/account/keys': typeof AuthenticatedAccountKeysRoute
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
-  '/_authenticated/dev/counters': typeof AuthenticatedDevCountersRoute
-  '/_authenticated/dev/playground': typeof AuthenticatedDevPlaygroundRoute
   '/_authenticated/account/': typeof AuthenticatedAccountIndexRoute
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
 }
@@ -138,42 +91,22 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/login'
-    | '/register'
     | '/account'
     | '/admin'
-    | '/items'
     | '/account/keys'
     | '/admin/users'
-    | '/dev/counters'
-    | '/dev/playground'
     | '/account/'
     | '/admin/'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/login'
-    | '/register'
-    | '/items'
-    | '/account/keys'
-    | '/admin/users'
-    | '/dev/counters'
-    | '/dev/playground'
-    | '/account'
-    | '/admin'
+  to: '/' | '/account/keys' | '/admin/users' | '/account' | '/admin'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
-    | '/login'
-    | '/register'
     | '/_authenticated/account'
     | '/_authenticated/admin'
-    | '/_authenticated/items'
     | '/_authenticated/account/keys'
     | '/_authenticated/admin/users'
-    | '/_authenticated/dev/counters'
-    | '/_authenticated/dev/playground'
     | '/_authenticated/account/'
     | '/_authenticated/admin/'
   fileRoutesById: FileRoutesById
@@ -181,8 +114,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
-  LoginRoute: typeof LoginRoute
-  RegisterRoute: typeof RegisterRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -201,20 +132,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/register': {
-      id: '/register'
-      path: '/register'
-      fullPath: '/register'
-      preLoaderRoute: typeof RegisterRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/_authenticated/account': {
       id: '/_authenticated/account'
       path: '/account'
@@ -227,13 +144,6 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AuthenticatedAdminRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/items': {
-      id: '/_authenticated/items'
-      path: '/items'
-      fullPath: '/items'
-      preLoaderRoute: typeof AuthenticatedItemsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/account/': {
@@ -263,20 +173,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/users'
       preLoaderRoute: typeof AuthenticatedAdminUsersRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
-    }
-    '/_authenticated/dev/counters': {
-      id: '/_authenticated/dev/counters'
-      path: '/dev/counters'
-      fullPath: '/dev/counters'
-      preLoaderRoute: typeof AuthenticatedDevCountersRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/dev/playground': {
-      id: '/_authenticated/dev/playground'
-      path: '/dev/playground'
-      fullPath: '/dev/playground'
-      preLoaderRoute: typeof AuthenticatedDevPlaygroundRouteImport
-      parentRoute: typeof AuthenticatedRoute
     }
   }
 }
@@ -310,17 +206,11 @@ const AuthenticatedAdminRouteWithChildren =
 interface AuthenticatedRouteChildren {
   AuthenticatedAccountRoute: typeof AuthenticatedAccountRouteWithChildren
   AuthenticatedAdminRoute: typeof AuthenticatedAdminRouteWithChildren
-  AuthenticatedItemsRoute: typeof AuthenticatedItemsRoute
-  AuthenticatedDevCountersRoute: typeof AuthenticatedDevCountersRoute
-  AuthenticatedDevPlaygroundRoute: typeof AuthenticatedDevPlaygroundRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAccountRoute: AuthenticatedAccountRouteWithChildren,
   AuthenticatedAdminRoute: AuthenticatedAdminRouteWithChildren,
-  AuthenticatedItemsRoute: AuthenticatedItemsRoute,
-  AuthenticatedDevCountersRoute: AuthenticatedDevCountersRoute,
-  AuthenticatedDevPlaygroundRoute: AuthenticatedDevPlaygroundRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
@@ -330,8 +220,6 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
-  LoginRoute: LoginRoute,
-  RegisterRoute: RegisterRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

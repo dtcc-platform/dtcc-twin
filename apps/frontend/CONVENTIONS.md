@@ -6,7 +6,7 @@
 
 - Every Effect must be justified under [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect). Derive values during render and react to events in their handlers
 - Server data lives in TanStack Query only. Never copy it into `useState` or a store. Only do it for valid exceptions (use it as default state in an edit form).
-- Component state first. A Zustand store only when several components share client state, created per instance and handed down through context rather than as a global singleton, with its actions grouped under `actions`. See `src/features/counter/`.
+- Component state first. A Zustand store only when several components share client state, created per instance and handed down through context rather than as a global singleton, with its actions grouped under `actions`. Components select from it through its one hook, `use<Name>Store((state) => …)`; no per-field hooks. See `src/features/counter/`.
 
 ### API
 
@@ -19,7 +19,6 @@
 
 - Pages that need a login go under `src/routes/_authenticated/`.
 - Redirect in `beforeLoad`, never by rendering `<Navigate>`. A page for one role checks `context.user.role` there.
-- Pages for development, not for users, go under `src/routes/_authenticated/dev/`, admin-only.
 - Admin pages go under `src/routes/_authenticated/admin/`; `admin.tsx` checks the role for all of them.
 - State that should survive a reload or the back button (page, filters) goes in the URL through `validateSearch`.
 - The router's `defaultNotFoundComponent` and `defaultErrorComponent` in `main.tsx` cover every route; a route with something better to say sets its own `notFoundComponent` or `errorComponent`.
@@ -31,6 +30,8 @@
 
 ### Code
 
+- A feature's folders follow what you see on screen. Its root holds its top component, if it has one, and the state and logic its parts share; each part you can see gets a folder named after it, holding its component and everything shown inside it or used only by it, nested the same way.
+- Code used by several features goes outside them: components in `src/components/common/`, hooks in `src/hooks/`, the rest in `src/lib/`.
 - Import through `@/` from outside the current feature folder; relative imports only for files next to each other.
 - Style with Tailwind utilities; merge a `className` prop with `cn()` from `@/lib/utils`.
 
@@ -39,8 +40,7 @@
 ### Add a page
 
 1. Create `src/routes/<path>.tsx`, or `src/routes/_authenticated/<path>.tsx` if it needs a login. The Vite plugin regenerates `routeTree.gen.ts` on the next dev start or build; commit it.
-2. Declare search params with `validateSearch` (see `_authenticated/items.tsx`).
-3. Link it from `src/components/layout/site-header.tsx` if it belongs in the navigation.
+2. Declare search params with `validateSearch`.
 
 ### Call a new endpoint
 
