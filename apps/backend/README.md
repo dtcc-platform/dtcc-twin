@@ -53,7 +53,7 @@ test/                     e2e specs and their helpers
 
 ## DTCC Engine
 
-DTCC Engine runs Datasets as jobs. `/api/datasets` lists them, and `/api/jobs` submits, follows and downloads a user's jobs. The browser never calls the engine: its one shared token gives access to every job, so only the backend holds it.
+DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, and `/api/jobs` submits, follows and downloads a user's jobs. The browser never calls the engine: its one shared token gives access to every job, so only the backend holds it.
 
 - **Configuration:** `ENGINE_URL` and `ENGINE_API_TOKEN`. Left empty, the backend still boots, warns once, and answers the engine routes with 503; health is unaffected. To run both locally, start `pnpm dev:engine` and set `ENGINE_URL=http://127.0.0.1:8000` and `ENGINE_API_TOKEN=local-dev-engine-token` in `.env`.
 - **Failures:** `EngineClient` logs why a call failed and throws `EngineUnavailableError`, a 503 unless the caller catches it. The engine's rejections of a job's parameters become a 400.

@@ -7,13 +7,13 @@ import {
   type DatasetList,
   type DatasetNameParams,
 } from "@repo/contracts";
-import { Roles } from "../../common/decorators/auth.decorators.js";
+import { Public } from "../../common/decorators/auth.decorators.js";
 import { Serialize } from "../../common/decorators/serialize.decorator.js";
 import { DatasetsService } from "./datasets.service.js";
 
-// DTCC Engine's Datasets, which any logged-in user can run.
+// DTCC Engine's Datasets. The catalogue is public so visitors can browse it; running one is a job, which needs a login.
 @Controller("datasets")
-@Roles("user")
+@Public()
 export class DatasetsController {
   constructor(private readonly datasets: DatasetsService) {}
 

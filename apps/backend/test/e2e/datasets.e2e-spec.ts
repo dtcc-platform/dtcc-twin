@@ -42,10 +42,13 @@ describe("Datasets (e2e)", () => {
     user = request.agent(app.getHttpServer()).set(await authHeader("user"));
   });
 
-  it("needs a logged-in user", async () => {
-    const response = await request(app.getHttpServer()).get("/api/datasets").expect(401);
+  // The catalogue is public, so a visitor can browse it before logging in; running a Dataset needs a login.
+  it("answers without a login", async () => {
+    const anonymous = request(app.getHttpServer());
 
-    expect(errorResponseSchema.parse(response.body).error.code).toBe("UNAUTHORIZED");
+    const list = datasetListSchema.parse((await anonymous.get("/api/datasets").expect(200)).body);
+    expect(list.items).toHaveLength(3);
+    await anonymous.get("/api/datasets/smoke").expect(200);
   });
 
   describe("GET /api/datasets", () => {
