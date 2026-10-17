@@ -1,10 +1,11 @@
 """Tests across hosts: the entry service and a remote host, one Redis, and package directories of their own.
 
 Each target's worker runs in a process of its own, as the worker service does, because Celery keeps a worker's reserved
-and active jobs per process. The remote host's API also runs in a process of its own, and the entry's API reaches it
-over HTTP, as it would another host.
+and active jobs per process. Each host's API also runs in a process of its own, and the entry's API reaches the remote
+one over HTTP, as it would another host.
 """
 
+import gzip
 import os
 import socket
 import subprocess
@@ -13,7 +14,8 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -24,12 +26,13 @@ from celery import Celery
 from fastapi.testclient import TestClient
 
 from dtcc_engine.api import create_app, dataset_catalog, installed_versions
-from dtcc_engine.jobs import Jobs
+from dtcc_engine.jobs import RECORD_LIFETIME, RETENTION, Jobs, record_key
 
 BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
 TOKEN = "test-token"
 AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
 DIGEST = "sha256:" + "0123456789abcdef" * 4
+CHUNK = 64 * 1024
 
 
 def wait_for(condition: Callable[[], bool], timeout: float = 120.0) -> None:
@@ -84,12 +87,13 @@ def run_worker_process(redis_url: str, tmp_path_factory: pytest.TempPathFactory)
 def run_api_process(redis_url: str, tmp_path_factory: pytest.TempPathFactory) -> Callable[..., Any]:
     """Run a target's Engine API in a process of its own on a free local port until the context ends; yield its address.
 
-    Its log is in a temporary directory, which a failure to start reports.
+    Its remote targets are given as `ENGINE_REMOTE_TARGETS` is. Its log is in a temporary directory, which a failure to
+    start reports.
     """
     logs = tmp_path_factory.mktemp("api-logs")
 
     @contextmanager
-    def run(target: str, package_dir: Path, image_digest: str | None = None) -> Iterator[str]:
+    def run(target: str, package_dir: Path, image_digest: str | None = None, remote_targets: str = "") -> Iterator[str]:
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
@@ -100,6 +104,7 @@ def run_api_process(redis_url: str, tmp_path_factory: pytest.TempPathFactory) ->
             "ENGINE_TARGET": target,
             "ENGINE_PACKAGE_DIR": str(package_dir),
             "ENGINE_IMAGE_DIGEST": image_digest or "",
+            "ENGINE_REMOTE_TARGETS": remote_targets,
         }
         command = ["uvicorn", "dtcc_engine.api:create_app_from_environment", "--factory", "--port", str(port)]
         log = logs / f"{target}.log"
@@ -130,18 +135,21 @@ def hosts(
     run_worker_process: Callable[..., AbstractContextManager[None]],
     run_api_process: Callable[..., AbstractContextManager[str]],
 ) -> Iterator[dict[str, Any]]:
-    """The entry host, target `entry`, and a remote host, target `remote`, each with its worker, in one deployment.
+    """The entry host, target `entry`, and a remote host, target `remote`, each with its worker and API, in one deployment.
 
-    Yields the remote host's address and each target's jobs; the entry's are its API's.
+    Yields each host's address and the entry's package directory, and each target's jobs, as its host's API has them.
     """
     entry_packages, remote_packages = tmp_path_factory.mktemp("entry"), tmp_path_factory.mktemp("remote")
     with (
         run_worker_process("entry", entry_packages, DIGEST),
         run_worker_process("remote", remote_packages, DIGEST),
         run_api_process("remote", remote_packages, DIGEST) as remote_address,
+        run_api_process("entry", entry_packages, DIGEST, f"remote={remote_address}") as entry_address,
     ):
         yield {
+            "entry_address": entry_address,
             "remote_address": remote_address,
+            "entry_packages": entry_packages,
             "entry": Jobs(redis_url, "entry", entry_packages, DIGEST),
             "remote": Jobs(redis_url, "remote", remote_packages, DIGEST),
         }
@@ -330,3 +338,268 @@ def test_host_is_sent_the_shared_token_and_no_other_credential(
     monkeypatch.setenv("NETRC", str(netrc))
     list_targets(Jobs(redis_url, "authenticating", tmp_path), {"recording": address})
     assert received == [("/api/v1/host", f"Bearer {TOKEN}")]
+
+
+def fetch(address: str, path: str, method: str = "GET", **options: Any) -> requests.Response:
+    """Send a request with the shared token to an Engine API process."""
+    return requests.request(method, f"{address}{path}", headers=AUTHORIZED, timeout=60, **options)
+
+
+def completed_job(jobs: Jobs) -> str:
+    """Run a `smoke` job on the jobs' target, and return its ID once it completes."""
+    job_id = jobs.submit("smoke", {"bounds": BOUNDS})
+    wait_for(lambda: jobs.status(job_id)["state"] == "completed")
+    return job_id
+
+
+def recorded_job(jobs: Jobs, target: str, outcome: str | None) -> str:
+    """Record a job of a target as its worker would, queued or with an outcome, without running it; return its ID."""
+    job_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    fields = {"dataset": "smoke", "target": target, "submitted_at": now, "queued_at": now, "execution_gate": "waiting"}
+    if outcome is not None:
+        fields.update({"execution_gate": "started", "outcome": outcome, "finished_at": now})
+    with jobs.records.pipeline() as pipeline:
+        pipeline.hset(record_key(job_id), mapping=fields)
+        pipeline.expire(record_key(job_id), RECORD_LIFETIME)
+        pipeline.execute()
+    return job_id
+
+
+@contextmanager
+def serve(answer: Callable[[BaseHTTPRequestHandler], None]) -> Iterator[str]:
+    """Answer each GET and HEAD request on a free local port until the context ends; yield the address."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            answer(self)
+
+        do_HEAD = do_GET
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture(scope="module")
+def remote_job(hosts: dict[str, Any]) -> str:
+    """A completed job of the remote target, whose package its host keeps."""
+    return completed_job(hosts["remote"])
+
+
+def test_remote_job_is_polled_and_downloaded_through_the_entry(hosts: dict[str, Any], remote_job: str) -> None:
+    entry, remote = hosts["entry_address"], hosts["remote"]
+    kept = set(hosts["entry_packages"].iterdir())
+    polled = fetch(entry, f"/api/v1/jobs/{remote_job}")
+    downloaded = fetch(entry, f"/api/v1/jobs/{remote_job}/package")
+    package = remote.package_path(remote_job).read_bytes()
+    # The entry reports the job as its host does, and a download does not extend the package's retention.
+    assert polled.json() == remote.status(remote_job) == fetch(entry, f"/api/v1/jobs/{remote_job}").json()
+    assert polled.json()["package"]["available"] is True
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"] == "application/zip"
+    assert downloaded.headers["content-disposition"] == f'attachment; filename="{remote_job}.dtccpkg"'
+    assert downloaded.headers["content-length"] == str(len(package))
+    assert downloaded.content == package
+    # The entry streams the package through and keeps no copy.
+    assert set(hosts["entry_packages"].iterdir()) == kept
+
+
+def test_remote_package_its_host_no_longer_has_is_unavailable(hosts: dict[str, Any]) -> None:
+    job_id = completed_job(hosts["remote"])
+    hosts["remote"].package_path(job_id).unlink()
+    polled = fetch(hosts["entry_address"], f"/api/v1/jobs/{job_id}")
+    downloaded = fetch(hosts["entry_address"], f"/api/v1/jobs/{job_id}/package")
+    assert polled.json()["package"]["available"] is False
+    assert downloaded.status_code == 409
+    assert downloaded.json() == {"detail": f"Job '{job_id}' has no package on its host"}
+
+
+@pytest.mark.parametrize(
+    ("host", "token", "detail"),
+    [
+        ("closed", TOKEN, "The job's host could not be reached"),
+        ("remote", "other-token", "The job's host rejected the token"),
+        ("elsewhere", TOKEN, "The job's host answered HTTP 404"),
+        ("unconfigured", TOKEN, "The job's target 'remote' is not configured on this Engine"),
+    ],
+    ids=["unreachable", "rejected-token", "other-target", "unconfigured"],
+)
+def test_remote_package_whose_host_does_not_deliver_it_is_unknown(
+    hosts: dict[str, Any],
+    remote_job: str,
+    tmp_path: Path,
+    run_api_process: Callable[..., AbstractContextManager[str]],
+    host: str,
+    token: str,
+    detail: str,
+) -> None:
+    with ExitStack() as stack:
+        if host == "closed":
+            remote_targets = {"remote": closed_address()}
+        elif host == "elsewhere":
+            # The host of another target, which does not serve the remote target's packages.
+            remote_targets = {"remote": stack.enter_context(run_api_process("elsewhere", tmp_path))}
+        elif host == "unconfigured":
+            remote_targets = {}
+        else:
+            remote_targets = {"remote": hosts["remote_address"]}
+        client = TestClient(create_app(token, hosts["entry"], remote_targets))
+        headers = {"Authorization": f"Bearer {token}"}
+        polled = client.get(f"/api/v1/jobs/{remote_job}", headers=headers)
+        downloaded = client.get(f"/api/v1/jobs/{remote_job}/package", headers=headers)
+    # Everything else the entry reads from the shared records.
+    owned = hosts["remote"].status(remote_job)
+    assert polled.json() == {**owned, "package": {**owned["package"], "available": None}}
+    assert (downloaded.status_code, downloaded.json()) == (503, {"detail": detail})
+
+
+def redirect(request: BaseHTTPRequestHandler) -> None:
+    request.send_response(307)
+    request.send_header("Location", "/elsewhere")
+    request.send_header("Content-Length", "0")
+    request.end_headers()
+
+
+def fail_with_details(request: BaseHTTPRequestHandler) -> None:
+    body = b"secret details"
+    request.send_response(500)
+    request.send_header("Content-Length", str(len(body)))
+    request.end_headers()
+    if request.command == "GET":
+        request.wfile.write(body)
+
+
+@pytest.mark.parametrize(
+    ("answer", "status_code"), [(redirect, 307), (fail_with_details, 500)], ids=["redirect", "server-error"]
+)
+def test_host_answer_that_is_not_a_package_is_not_passed_on(
+    redis_url: str, tmp_path: Path, answer: Callable[[BaseHTTPRequestHandler], None], status_code: int
+) -> None:
+    received: list[tuple[str, str, str | None]] = []
+
+    def record_and_answer(request: BaseHTTPRequestHandler) -> None:
+        received.append((request.command, request.path, request.headers.get("Authorization")))
+        answer(request)
+
+    entry = Jobs(redis_url, "entry", tmp_path)
+    job_id = recorded_job(entry, "stubbed", "completed")
+    with serve(record_and_answer) as address:
+        client = TestClient(create_app(TOKEN, entry, {"stubbed": address}))
+        polled = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+        downloaded = client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert polled.json()["package"]["available"] is None
+    assert downloaded.status_code == 503
+    assert downloaded.json() == {"detail": f"The job's host answered HTTP {status_code}"}
+    # Each is asked once, with the shared token, and a redirect is not followed.
+    path = f"/api/v1/host/jobs/{job_id}/package"
+    assert received == [("HEAD", path, f"Bearer {TOKEN}"), ("GET", path, f"Bearer {TOKEN}")]
+
+
+def test_package_its_host_stops_sending_is_not_delivered_whole(
+    redis_url: str, tmp_path: Path, run_api_process: Callable[..., AbstractContextManager[str]]
+) -> None:
+    def send_half(request: BaseHTTPRequestHandler) -> None:
+        request.send_response(200)
+        request.send_header("Content-Length", str(2 * CHUNK))
+        request.end_headers()
+        request.wfile.write(b"x" * CHUNK)
+
+    job_id = recorded_job(Jobs(redis_url, "entry", tmp_path), "stubbed", "completed")
+    with serve(send_half) as address, run_api_process("entry", tmp_path, None, f"stubbed={address}") as entry:
+        # The client sees the download fail, not a shorter archive.
+        with pytest.raises(requests.exceptions.ChunkedEncodingError):
+            fetch(entry, f"/api/v1/jobs/{job_id}/package")
+
+
+def test_package_its_host_sends_compressed_is_delivered_as_the_archive(
+    redis_url: str, tmp_path: Path, run_api_process: Callable[..., AbstractContextManager[str]]
+) -> None:
+    archive = b"package " * CHUNK
+
+    def send_compressed(request: BaseHTTPRequestHandler) -> None:
+        body = gzip.compress(archive)
+        request.send_response(200)
+        request.send_header("Content-Encoding", "gzip")
+        request.send_header("Content-Length", str(len(body)))
+        request.end_headers()
+        request.wfile.write(body)
+
+    job_id = recorded_job(Jobs(redis_url, "entry", tmp_path), "stubbed", "completed")
+    with serve(send_compressed) as address, run_api_process("entry", tmp_path, None, f"stubbed={address}") as entry:
+        downloaded = fetch(entry, f"/api/v1/jobs/{job_id}/package")
+    # Not the host's encoding of the archive, nor that encoding's length.
+    assert (downloaded.status_code, downloaded.content) == (200, archive)
+
+
+def test_download_the_client_abandons_releases_its_hosts_connection(
+    redis_url: str, tmp_path: Path, run_api_process: Callable[..., AbstractContextManager[str]]
+) -> None:
+    released = threading.Event()
+
+    def send_slowly(request: BaseHTTPRequestHandler) -> None:
+        request.send_response(200)
+        request.send_header("Content-Length", str(1000 * CHUNK))
+        request.end_headers()
+        try:
+            for _ in range(1000):
+                request.wfile.write(b"x" * CHUNK)
+                time.sleep(0.05)
+        except OSError:
+            released.set()
+
+    job_id = recorded_job(Jobs(redis_url, "entry", tmp_path), "stubbed", "completed")
+    with serve(send_slowly) as address, run_api_process("entry", tmp_path, None, f"stubbed={address}") as entry:
+        with fetch(entry, f"/api/v1/jobs/{job_id}/package", stream=True) as response:
+            assert response.status_code == 200
+            next(response.iter_content(CHUNK))
+        assert released.wait(30)
+        assert fetch(entry, "/api/v1/health").status_code == 200
+
+
+def test_host_serves_its_own_packages_and_forwards_none(hosts: dict[str, Any], remote_job: str) -> None:
+    path = f"/api/v1/host/jobs/{remote_job}/package"
+    package = hosts["remote"].package_path(remote_job).read_bytes()
+    served = fetch(hosts["remote_address"], path)
+    described = fetch(hosts["remote_address"], path, "HEAD")
+    elsewhere = fetch(hosts["entry_address"], path)
+    assert (served.status_code, served.content) == (200, package)
+    assert (described.status_code, described.content) == (200, b"")
+    assert described.headers["content-length"] == str(len(package))
+    assert elsewhere.status_code == 404
+    assert elsewhere.json() == {"detail": f"Job '{remote_job}' did not run on this host"}
+
+
+def test_host_has_no_package_for_an_unfinished_or_unknown_job(hosts: dict[str, Any]) -> None:
+    queued = recorded_job(hosts["remote"], "remote", None)
+    unfinished = fetch(hosts["remote_address"], f"/api/v1/host/jobs/{queued}/package")
+    unknown_id = str(uuid.uuid4())
+    unknown = fetch(hosts["remote_address"], f"/api/v1/host/jobs/{unknown_id}/package")
+    entry = fetch(hosts["entry_address"], f"/api/v1/jobs/{queued}/package")
+    assert (unfinished.status_code, entry.status_code) == (409, 409)
+    assert (unknown.status_code, unknown.json()) == (404, {"detail": f"Job '{unknown_id}' is unknown or expired"})
+
+
+def test_remote_package_past_its_retention_is_unknown_though_its_file_remains(hosts: dict[str, Any]) -> None:
+    remote = hosts["remote"]
+    job_id = completed_job(remote)
+    # Moves the recorded finish time back instead of waiting 30 days.
+    expired = (datetime.now(UTC) - RETENTION - timedelta(seconds=1)).isoformat()
+    remote.records.hset(record_key(job_id), "finished_at", expired)
+    paths = [
+        (hosts["entry_address"], f"/api/v1/jobs/{job_id}"),
+        (hosts["entry_address"], f"/api/v1/jobs/{job_id}/package"),
+        (hosts["remote_address"], f"/api/v1/host/jobs/{job_id}/package"),
+    ]
+    assert remote.package_path(job_id).is_file()
+    for address, path in paths:
+        refused = fetch(address, path)
+        assert (refused.status_code, refused.json()) == (404, {"detail": f"Job '{job_id}' is unknown or expired"})

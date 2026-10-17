@@ -19,10 +19,11 @@ import dtcc_sim  # noqa: F401  Importing Sim registers its Dataset Definitions w
 import requests
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, ValidationError
 from redis import RedisError
+from starlette.types import Receive, Scope, Send
 
 from dtcc_engine.jobs import (
     TARGET_PATTERN,
@@ -143,6 +144,31 @@ def host_summary(host: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class ForwardedPackage(StreamingResponse):
+    """A job's package streamed through from its host's Engine, whose response it closes however the download ends.
+
+    Args:
+        upstream: The host's response with the package, requested with `stream=True`.
+        job_id: The job's ID, which names the downloaded file.
+    """
+
+    def __init__(self, upstream: requests.Response, job_id: str) -> None:
+        headers = {"Content-Disposition": f'attachment; filename="{job_id}.dtccpkg"'}
+        # The chunks are decoded, so an encoded body's length is not theirs.
+        if "Content-Length" in upstream.headers and "Content-Encoding" not in upstream.headers:
+            headers["Content-Length"] = upstream.headers["Content-Length"]
+        chunks = upstream.iter_content(FileResponse.chunk_size)
+        super().__init__(chunks, media_type="application/zip", headers=headers)
+        self.upstream = upstream
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Also when the client disconnects, which cancels the stream once its current read ends.
+            self.upstream.close()
+
+
 def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None = None) -> FastAPI:
     """Create the Engine HTTP application.
 
@@ -211,6 +237,50 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
         if host.target != target:
             return {"host": None, "host_error": "The host answers as another target"}
         return {"host": host_summary(host.model_dump()), "host_error": None}
+
+    def host_package(job: dict[str, Any], method: str) -> requests.Response:
+        """Request the package of another target's job from its host; not redirected, and streamed for a GET.
+
+        Raises:
+            HTTPException: `503` if the job's target is not configured or its host could not be reached.
+        """
+        address = remote_targets.get(job["target"])
+        if address is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"The job's target '{job['target']}' is not configured on this Engine",
+            )
+        try:
+            return requests.request(
+                method,
+                f"{address}/api/v1/host/jobs/{job['job_id']}/package",
+                auth=bearer_token,
+                timeout=HOST_TIMEOUT,
+                allow_redirects=False,
+                stream=True,
+            )
+        except requests.RequestException:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="The job's host could not be reached"
+            ) from None
+
+    def package_on_host(job: dict[str, Any]) -> bool | None:
+        """Return whether another target's host can deliver the job's package, or None if it does not answer so."""
+        try:
+            answer = host_package(job, "HEAD")
+        except HTTPException:
+            return None
+        answer.close()
+        return {status.HTTP_200_OK: True, status.HTTP_409_CONFLICT: False}.get(answer.status_code)
+
+    def local_package(job: dict[str, Any]) -> FileResponse:
+        if job["package"] is None or not job["package"]["available"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Job '{job['job_id']}' has no package to download; its state is '{job['state']}'",
+            )
+        path = jobs.package_path(job["job_id"])
+        return FileResponse(path, media_type="application/zip", filename=f"{job['job_id']}.dtccpkg")
 
     # Generated documentation would be served without the token; health is the only public route.
     app = FastAPI(title="DTCC Engine", version=version("dtcc-engine"), docs_url=None, redoc_url=None, openapi_url=None)
@@ -295,7 +365,10 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
 
     @app.get("/api/v1/jobs/{job_id}", dependencies=[Depends(require_token)])
     def job_status(job_id: str) -> dict[str, Any]:
-        return find_job(job_id)
+        job = find_job(job_id)
+        if job["package"] is not None and job["target"] != jobs.target:
+            job["package"]["available"] = package_on_host(job)
+        return job
 
     @app.post("/api/v1/jobs/{job_id}/cancel", dependencies=[Depends(require_token)])
     def cancel_job(job_id: str) -> dict[str, str]:
@@ -319,14 +392,36 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
         return {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}", "result": result}
 
     @app.get("/api/v1/jobs/{job_id}/package", dependencies=[Depends(require_token)])
-    def download_package(job_id: str) -> FileResponse:
+    def download_package(job_id: str) -> Response:
         job = find_job(job_id)
-        if job["package"] is None or not job["package"]["available"]:
+        # A job that has not completed has no package on any host.
+        if job["target"] == jobs.target or job["package"] is None:
+            return local_package(job)
+        # Streamed from the job's host without asking for its status first, and stored nowhere here.
+        upstream = host_package(job, "GET")
+        if upstream.status_code == status.HTTP_200_OK:
+            return ForwardedPackage(upstream, job_id)
+        upstream.close()
+        if upstream.status_code == status.HTTP_409_CONFLICT:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Job '{job_id}' has no package to download; its state is '{job['state']}'",
+                status_code=status.HTTP_409_CONFLICT, detail=f"Job '{job_id}' has no package on its host"
             )
-        return FileResponse(jobs.package_path(job_id), media_type="application/zip", filename=f"{job_id}.dtccpkg")
+        detail = (
+            "The job's host rejected the token"
+            if upstream.status_code == status.HTTP_401_UNAUTHORIZED
+            else f"The job's host answered HTTP {upstream.status_code}"
+        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+
+    @app.api_route("/api/v1/host/jobs/{job_id}/package", methods=["GET", "HEAD"], dependencies=[Depends(require_token)])
+    def serve_host_package(job_id: str) -> FileResponse:
+        # Host-local delivery: this host's packages only, and never forwarded.
+        job = find_job(job_id)
+        if job["target"] != jobs.target:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' did not run on this host"
+            )
+        return local_package(job)
 
     return app
 

@@ -263,6 +263,8 @@ def change_record(jobs: Jobs, job_id: str, changes: dict[str, str | None]) -> No
         ("GET", "/api/v1/jobs/some-job"),
         ("GET", "/api/v1/jobs/some-job/package"),
         ("POST", "/api/v1/jobs/some-job/cancel"),
+        ("GET", "/api/v1/host/jobs/some-job/package"),
+        ("HEAD", "/api/v1/host/jobs/some-job/package"),
     ],
 )
 def test_job_routes_reject_missing_tokens(client: TestClient, method: str, path: str) -> None:

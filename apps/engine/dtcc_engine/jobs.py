@@ -442,7 +442,11 @@ class Jobs:
             "progress": meta["result"] if state == "running" and meta["status"] == "PROGRESS" else None,
             "error": error,
             "package": (
-                {"available": self.package_path(job_id).is_file(), "expires_at": (finished_at + RETENTION).isoformat()}
+                {
+                    # Another target's package is on its host, which only the API can ask.
+                    "available": self.package_path(job_id).is_file() if record["target"] == self.target else None,
+                    "expires_at": (finished_at + RETENTION).isoformat(),
+                }
                 if state == "completed"
                 else None
             ),

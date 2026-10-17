@@ -342,6 +342,20 @@ archive through the remote host's Engine HTTP API. No shared filesystem between
 hosts is required, and forwarding a download does not require a second stored
 copy at the entry host.
 
+Each host serves its own packages through a host-local route, which never
+forwards a request to another host. A completed job's status says whether its
+package can be downloaded; for a job of a remote target, the entry asks that
+target's host, and reports `null` when the host does not answer. A download
+through the entry streams the package from the job's host without asking for
+the job's status first, stores nothing at the entry, follows no redirects, and
+sends the shared token only to the configured address. A host without the
+package makes the download a `409`, as a local one is; a host that cannot be
+reached, rejects the token, or answers otherwise, and a target that is not
+configured, make it a `503`, without the host's answer. The entry closes its
+request to the host when the download ends, whether it completed, failed, or
+the consumer disconnected, and a stream that fails midway fails the download
+rather than end it as a shorter archive.
+
 Completed packages expire 30 days after job completion, measured as 30 periods
 of 24 hours using UTC timestamps. Downloads do not extend that period. Under
 normal operation, job-result metadata must remain available throughout the
