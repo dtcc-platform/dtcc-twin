@@ -32,7 +32,7 @@ export const engineRejectionSchema = z.object({
 export type EngineRejection = z.infer<typeof engineRejectionSchema>["detail"];
 
 export const engineJobSchema = z.object({
-  state: z.enum(["unconfirmed", "queued", "running", "completed", "failed"]),
+  state: z.enum(["unconfirmed", "queued", "running", "completed", "failed", "cancelled"]),
   progress: z.object({ percent: z.number(), message: z.string().nullish(), phase: z.string().nullish() }).nullable(),
   error: z.object({ type: z.string() }).nullable(),
   package: z.object({ available: z.boolean() }).nullable(),

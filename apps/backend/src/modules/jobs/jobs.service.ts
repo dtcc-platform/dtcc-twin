@@ -48,7 +48,7 @@ export class JobsService {
 
   /** check the job status, will probably change to cron later */
   private async refresh(job: StoredJob): Promise<StoredJob> {
-    if (job.state === "completed" || job.state === "failed") return job;
+    if (job.state === "completed" || job.state === "failed" || job.state === "cancelled") return job;
 
     let engineJob: EngineJob | null;
     try {
@@ -92,6 +92,8 @@ function changesFrom(engineJob: EngineJob | null): JobChanges {
         progress: null,
         error: engineJob.errorType ? `The job failed (${engineJob.errorType})` : "The job failed",
       };
+    case "cancelled":
+      return { state: "cancelled", progress: null, error: null };
     case "completed":
       // Only without a package: with one, the job is completed by storing it.
       return { state: "failed", progress: null, error: "The engine has no package for this job" };

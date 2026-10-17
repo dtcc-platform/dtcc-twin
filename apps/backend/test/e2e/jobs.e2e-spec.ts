@@ -211,6 +211,17 @@ describe("Jobs (e2e)", () => {
       expect(await read(ada, job.id)).toEqual(failed);
     });
 
+    it("marks a job the engine cancelled as cancelled, and stops asking the engine", async () => {
+      const job = await submit(ada);
+      engine.cancelJob(lastEngineJobId());
+
+      const cancelled = await read(ada, job.id);
+      expect(cancelled).toMatchObject({ state: "cancelled", progress: null, error: null, completedAt: null });
+
+      engine.forgetJob(lastEngineJobId());
+      expect(await read(ada, job.id)).toEqual(cancelled);
+    });
+
     it("marks a job the engine no longer has as failed", async () => {
       const job = await submit(ada);
       engine.forgetJob(lastEngineJobId());
@@ -327,8 +338,10 @@ describe("Jobs (e2e)", () => {
       engine.setJob(lastEngineJobId(), "running");
       const failed = await submit(ada);
       engine.failJob(lastEngineJobId(), "RuntimeError");
+      const cancelled = await submit(ada);
+      engine.cancelJob(lastEngineJobId());
 
-      for (const job of [queued, running, failed]) {
+      for (const job of [queued, running, failed, cancelled]) {
         const response = await ada.get(`/api/jobs/${job.id}/package`).expect(409);
         expect(errorResponseSchema.parse(response.body).error.code).toBe("CONFLICT");
       }

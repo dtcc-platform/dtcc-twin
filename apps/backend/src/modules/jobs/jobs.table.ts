@@ -17,7 +17,7 @@ export const jobs = snakeCase.table(
     parameters: jsonb().$type<Record<string, unknown>>().notNull(),
     // DTCC Engine's id for the job: the only way to ask the engine about it, which lists no jobs.
     engineJobId: uuid().notNull().unique(),
-    state: text({ enum: ["queued", "running", "completed", "failed"] })
+    state: text({ enum: ["queued", "running", "completed", "failed", "cancelled"] })
       .notNull()
       .default("queued"),
     progress: jsonb().$type<JobProgress>(),

@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 
 /** A DTCC Engine job state, as the engine reports it. */
-export type StubJobState = "unconfirmed" | "queued" | "running" | "completed" | "failed";
+export type StubJobState = "unconfirmed" | "queued" | "running" | "completed" | "failed" | "cancelled";
 
 /** The body of the engine's `GET /api/v1/jobs/{id}`, as apps/engine/dtcc_engine/jobs.py builds it. */
 export type StubJobStatus = {
@@ -227,6 +227,17 @@ export async function startStubEngine(token = "stub-engine-token") {
         progress: null,
         finished_at: finished().finishedAt,
         error: { type: errorType },
+        package: null,
+      });
+    },
+
+    /** Cancels a job, as the engine's cancel route does before execution starts. */
+    cancelJob(jobId: string): void {
+      update(jobId, {
+        state: "cancelled",
+        progress: null,
+        finished_at: finished().finishedAt,
+        error: null,
         package: null,
       });
     },

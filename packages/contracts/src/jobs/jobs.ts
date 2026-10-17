@@ -2,7 +2,7 @@ import { z } from "zod";
 import { offsetPage } from "../common/pagination.js";
 import { datasetNameParamsSchema } from "../datasets/datasets.js";
 
-export const jobStateSchema = z.enum(["queued", "running", "completed", "failed"]);
+export const jobStateSchema = z.enum(["queued", "running", "completed", "failed", "cancelled"]);
 export type JobState = z.infer<typeof jobStateSchema>;
 
 export const jobProgressSchema = z.object({
