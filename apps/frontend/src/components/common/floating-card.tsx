@@ -1,4 +1,4 @@
-import { ChevronDownIcon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronDownIcon, XIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -7,18 +7,25 @@ import { cn } from "@/lib/utils";
 type FloatingCardProps = {
   title: string;
   onClose: () => void;
+  /** Shows a back button before the title, for a card that has stepped into one of its items. */
+  onBack?: () => void;
   children?: ReactNode;
   className?: string;
 };
 
-export function FloatingCard({ title, onClose, children, className }: FloatingCardProps) {
+export function FloatingCard({ title, onClose, onBack, children, className }: FloatingCardProps) {
   return (
     <Collapsible
       defaultOpen
       render={<section aria-label={title} />}
       className={cn("flex max-h-full min-h-0 flex-col rounded-3xl border bg-card shadow-md", className)}
     >
-      <header className="flex items-center gap-1 py-2 pr-2 pl-4">
+      <header className={cn("flex items-center gap-1 py-2 pr-2", onBack ? "pl-2" : "pl-4")}>
+        {onBack && (
+          <Button variant="ghost" size="icon" aria-label="Back" onClick={onBack}>
+            <ArrowLeftIcon />
+          </Button>
+        )}
         <h2 className="flex-1 truncate font-medium">{title}</h2>
         <CollapsibleTrigger
           render={(props, state) => (

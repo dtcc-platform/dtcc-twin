@@ -5,6 +5,7 @@ import { AreaDraw } from "@/features/area/box/area-draw";
 import { AreaSizeLabel } from "@/features/area/box/area-size-label";
 import { AreaStoreContext, createAreaStore } from "@/features/area/area-store";
 import { BoundsInspector } from "@/features/area/bounds-inspector/bounds-inspector";
+import { DatasetsPanel } from "@/features/datasets/datasets-panel";
 import { HintBar } from "@/features/workspace/hint-bar/hint-bar";
 import { MapView } from "@/features/workspace/map/map-view";
 import { Toolbar } from "@/features/workspace/toolbar/toolbar";
@@ -63,8 +64,8 @@ export function Workspace() {
             )}
           >
             {right === "bookmarks" && <FloatingCard title="Bookmarks" onClose={closeRight} />}
-            {right === "datasets" && <FloatingCard title="Datasets" onClose={closeRight} />}
-            {right === "simulations" && <FloatingCard title="Simulations" onClose={closeRight} />}
+            {right === "datasets" && <DatasetsPanel kind="datasets" onClose={closeRight} />}
+            {right === "simulations" && <DatasetsPanel kind="simulations" onClose={closeRight} />}
             {right === "downloads" && <FloatingCard title="Downloads" onClose={closeRight} />}
             {right === "upload" && <FloatingCard title="Upload" onClose={closeRight} />}
           </div>
