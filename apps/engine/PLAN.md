@@ -65,6 +65,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 30. `ENGINE_TARGET` cannot name a Celery node, for example because it holds a space, or `ENGINE_IMAGE_DIGEST` is malformed: the API and the worker refuse to start, rather than write claims that cannot be read back or report a digest that can never match. Pinned in Task 25 (`test_target_identifier_that_cannot_name_a_node_is_refused`, `test_malformed_image_digest_is_refused`).
 31. A remote host's worker holds its limit or has jobs waiting, does not answer, consumes another queue as well or none, or runs another image, or the host's HTTP service cannot be reached, rejects the token, or redirects: `GET /api/v1/targets` reports each target's state from its worker's own answer through the broker, `busy`, `unknown`, `unavailable`, or `incompatible`, and its host-local discovery or why it is missing; a host whose HTTP service answers is not thereby ready, the shared token, and no other credential such as a `.netrc` entry's, goes only to the configured address and not to a redirect's location, and no answer repeats a job's arguments. Pinned in Task 26 (`test_target_whose_worker_holds_its_limit_or_has_jobs_waiting_is_busy`, `test_target_whose_api_answers_but_whose_worker_does_not_is_unknown`, `test_worker_that_does_not_consume_exactly_its_queue_is_unavailable`, `test_worker_is_compatible_when_its_image_digest_matches_this_hosts`, `test_host_whose_discovery_cannot_be_read_is_reported_with_the_reason`, `test_redirect_from_a_host_is_not_followed`, `test_host_is_sent_the_shared_token_and_no_other_credential`) and checked through the worker service in Task 26, Step 6.
 32. `ENGINE_REMOTE_TARGETS` names the local target or one target twice, or gives an address with credentials, a query or a fragment, even an empty one, a scheme other than `http` or `https`, or a form that Python's URL parser rejects: the API refuses to start, and neither its error nor what it was raised from repeats the address. Pinned in Task 26 (`test_remote_targets_that_cannot_be_used_are_refused_without_repeating_their_addresses`).
+33. A remote target's job completes, and its host keeps its package, has lost it, or cannot deliver it because the host cannot be reached, rejects the token, redirects, answers another status, or serves another target, or the target is not configured; or the host sends the package compressed or stops sending midway, or the client abandons the download: the entry's status reports the package as available, unavailable, or unknown, `null`; its download streams the host's package unchanged, decoded if the host encoded it, and keeps no copy, or answers `409` or `503` without the host's answer; a stream that fails midway fails the download; an abandoned download closes the entry's request to the host; a host's host-local route serves only its own target's packages and never forwards; and a remote job past its retention is unknown at the entry and at its host, though its file remains. Pinned in Task 27 (`test_remote_job_is_polled_and_downloaded_through_the_entry`, `test_remote_package_its_host_no_longer_has_is_unavailable`, `test_remote_package_whose_host_does_not_deliver_it_is_unknown`, `test_host_answer_that_is_not_a_package_is_not_passed_on`, `test_package_its_host_stops_sending_is_not_delivered_whole`, `test_package_its_host_sends_compressed_is_delivered_as_the_archive`, `test_download_the_client_abandons_releases_its_hosts_connection`, `test_host_serves_its_own_packages_and_forwards_none`, `test_remote_package_past_its_retention_is_unknown_though_its_file_remains`).
 
 ---
 
@@ -2552,7 +2553,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 3: Remote targets and delivery
 
-Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for changes, which were made the same day; its second review, of 2026-10-15 and 2026-10-16, accepted it, and Step 6.5's wording was narrowed after it. The plan is committed in `2e6eb02`. Task 25 was executed 2026-10-16 and committed in `37c31f1`. Its results: with the tests written, `engine:check tests/test_discovery.py tests/test_targets.py` gave 25 failed and 30 passed in 121.6 s, each as Step 2 expects: `/api/v1/host` answered `404` where the four token cases expect `401` and the three host cases `200`, the 8 target identifiers and 6 image digests raised no `ValueError`, and the four worker cases ended in `TimeoutExpired` after 30 s. With the implementation, `engine:check` gave 159 passed in 72.6 s. `engine` and `engine-worker` were stopped and development Redis was running; database 0 held 5 job records, one claimed by `celery@engine-worker`, which had an outcome, so Step 6.1 listed none. With `pnpm dev:engine`, the worker's banner named `celery@local` and its queue `local`. A `smoke` job completed with the claim `celery@local c130156e67cc42d6b4e6678f4f64d594 32`. `/api/v1/host` answered target `local`, `image_digest` null, and the versions, catalog revision, and 28 Datasets of `/api/v1/datasets`, and `401` without the token. With `city_volume_mesh` `running`, a second worker exited with 1 after 5 s, having logged `Unrecoverable error: RuntimeError('Another running worker answers as celery@local, so this one does not start')`. The job was still `running` without a finish time when it had exited, so the attempt was conclusive; it completed after 115 s in the worker, and its 68,525-byte package downloaded. Under `celery@engine-worker`, a worker exited with 1, having logged that a worker of target `local` must run as `celery@local`; with `--queues other`, one exited with 1, having logged that it must consume only the queue `local`. The running worker logged no error; stopped, it logged a warm shutdown, and both containers exited with 0. Prettier passed for `compose.yaml`, `DESIGN.md`, and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` failed once, on two backend e2e tests in `auth.e2e-spec.ts` that each log in twice and timed out at 5 s, at a load average of about 6; its rerun passed. Both reviews of the execution, of 2026-10-16, accepted it; the worker module's docstring now gives the launch command with `--hostname`, which Codex's review found missing. Task 26 was expanded on 2026-10-16; its first review asked for changes, which were made the same day, its second review asked for two more, to Step 6 and to wording, and its third for Step 6's stops to wait for the worker without a deadline; each was made the same day. Gemini's second and third reviews and Codex's fourth accepted it. The plan is committed in `9d423b1`. Task 26 was executed 2026-10-17. Its results: with the tests and the skeleton written, `engine:check tests/test_discovery.py tests/test_targets.py tests/test_hosts.py` gave 40 failed and 56 passed in 47.2 s, each as Step 2 expects: `/api/v1/targets` answered `404` where the four token cases expect `401` and the 11 listings `200`, the 17 remote-target values raised no `ValueError`, and the eight direct observations raised `NotImplementedError`. With the implementation, `engine:check` gave 200 passed in 129.6 s; the image has `requests` 2.34.2, and its dependency layers came from Docker's build cache, which the reviews' builds of the same `pyproject.toml` had filled. `engine` and `engine-worker` were stopped, having exited with 0 after Task 25, and the queue `local` was empty, so no job had to finish first. With `pnpm dev:engine`, the targets listed `local` `ready`, with no reason; `worker` with `image_digest` null, the versions of `/api/v1/datasets`, `job_limit` 1, `reserved` 0, and `queues` `["local"]`; `waiting` 0; and `host` with `image_digest` null and the versions, catalog revision, and 28 Dataset names of `/api/v1/datasets`, sorted, with `host_error` null; and `401` without the token. Step 6's two `celery` commands need the image's path, `/opt/conda/envs/engine/bin/celery`, as earlier tasks' do, because `exec` does not activate the environment; they were corrected. `inspect engine_worker` answered `celery@local` with the same `worker`. With `city_volume_mesh` `running` and `smoke` `queued` when they were read right after the listing, the target was `busy`, with `reserved` 1 and `waiting` 1, and the answer did not contain the bounds. `city_volume_mesh` then failed after 8 min 34 s, with `TimeoutError` in Core's lidar download: `compute.dtcc.chalmers.se:8000` sent a 74 MB lidar file to this machine at about 650 KB/s, and each of the download's four attempts timed out. Engine's code was not involved, and the busy listing stands, since the job was running when it was taken. `smoke` completed, and the target was then `ready`, with `reserved` and `waiting` 0. Stopped with `--timeout -1`, the worker logged a warm shutdown and exited with 0, and the target was `unknown`, with the reason "Its worker did not answer within 0.5 s", `worker` null, `waiting` 0, and `host` as before; started again, it was `ready`. Both containers were then stopped with `--timeout -1` and exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Tasks 27 to 31 are outlined under Expansion and are expanded one at a time. An expanded task is not an accepted one until review accepts it, and an accepted plan is not an executed task.
+Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for changes, which were made the same day; its second review, of 2026-10-15 and 2026-10-16, accepted it, and Step 6.5's wording was narrowed after it. The plan is committed in `2e6eb02`. Task 25 was executed 2026-10-16 and committed in `37c31f1`. Its results: with the tests written, `engine:check tests/test_discovery.py tests/test_targets.py` gave 25 failed and 30 passed in 121.6 s, each as Step 2 expects: `/api/v1/host` answered `404` where the four token cases expect `401` and the three host cases `200`, the 8 target identifiers and 6 image digests raised no `ValueError`, and the four worker cases ended in `TimeoutExpired` after 30 s. With the implementation, `engine:check` gave 159 passed in 72.6 s. `engine` and `engine-worker` were stopped and development Redis was running; database 0 held 5 job records, one claimed by `celery@engine-worker`, which had an outcome, so Step 6.1 listed none. With `pnpm dev:engine`, the worker's banner named `celery@local` and its queue `local`. A `smoke` job completed with the claim `celery@local c130156e67cc42d6b4e6678f4f64d594 32`. `/api/v1/host` answered target `local`, `image_digest` null, and the versions, catalog revision, and 28 Datasets of `/api/v1/datasets`, and `401` without the token. With `city_volume_mesh` `running`, a second worker exited with 1 after 5 s, having logged `Unrecoverable error: RuntimeError('Another running worker answers as celery@local, so this one does not start')`. The job was still `running` without a finish time when it had exited, so the attempt was conclusive; it completed after 115 s in the worker, and its 68,525-byte package downloaded. Under `celery@engine-worker`, a worker exited with 1, having logged that a worker of target `local` must run as `celery@local`; with `--queues other`, one exited with 1, having logged that it must consume only the queue `local`. The running worker logged no error; stopped, it logged a warm shutdown, and both containers exited with 0. Prettier passed for `compose.yaml`, `DESIGN.md`, and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` failed once, on two backend e2e tests in `auth.e2e-spec.ts` that each log in twice and timed out at 5 s, at a load average of about 6; its rerun passed. Both reviews of the execution, of 2026-10-16, accepted it; the worker module's docstring now gives the launch command with `--hostname`, which Codex's review found missing. Task 26 was expanded on 2026-10-16; its first review asked for changes, which were made the same day, its second review asked for two more, to Step 6 and to wording, and its third for Step 6's stops to wait for the worker without a deadline; each was made the same day. Gemini's second and third reviews and Codex's fourth accepted it. The plan is committed in `9d423b1`. Task 26 was executed 2026-10-17. Its results: with the tests and the skeleton written, `engine:check tests/test_discovery.py tests/test_targets.py tests/test_hosts.py` gave 40 failed and 56 passed in 47.2 s, each as Step 2 expects: `/api/v1/targets` answered `404` where the four token cases expect `401` and the 11 listings `200`, the 17 remote-target values raised no `ValueError`, and the eight direct observations raised `NotImplementedError`. With the implementation, `engine:check` gave 200 passed in 129.6 s; the image has `requests` 2.34.2, and its dependency layers came from Docker's build cache, which the reviews' builds of the same `pyproject.toml` had filled. `engine` and `engine-worker` were stopped, having exited with 0 after Task 25, and the queue `local` was empty, so no job had to finish first. With `pnpm dev:engine`, the targets listed `local` `ready`, with no reason; `worker` with `image_digest` null, the versions of `/api/v1/datasets`, `job_limit` 1, `reserved` 0, and `queues` `["local"]`; `waiting` 0; and `host` with `image_digest` null and the versions, catalog revision, and 28 Dataset names of `/api/v1/datasets`, sorted, with `host_error` null; and `401` without the token. Step 6's two `celery` commands need the image's path, `/opt/conda/envs/engine/bin/celery`, as earlier tasks' do, because `exec` does not activate the environment; they were corrected. `inspect engine_worker` answered `celery@local` with the same `worker`. With `city_volume_mesh` `running` and `smoke` `queued` when they were read right after the listing, the target was `busy`, with `reserved` 1 and `waiting` 1, and the answer did not contain the bounds. `city_volume_mesh` then failed after 8 min 34 s, with `TimeoutError` in Core's lidar download: `compute.dtcc.chalmers.se:8000` sent a 74 MB lidar file to this machine at about 650 KB/s, and each of the download's four attempts timed out. Engine's code was not involved, and the busy listing stands, since the job was running when it was taken. `smoke` completed, and the target was then `ready`, with `reserved` and `waiting` 0. Stopped with `--timeout -1`, the worker logged a warm shutdown and exited with 0, and the target was `unknown`, with the reason "Its worker did not answer within 0.5 s", `worker` null, `waiting` 0, and `host` as before; started again, it was `ready`. Both containers were then stopped with `--timeout -1` and exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Both reviews of the execution, of 2026-10-17, accepted it, and it is committed in `666dc12`. Task 27 was expanded on 2026-10-17; its first review asked for one change, to the length a compressed package is forwarded with, which was made the same day, and Gemini's accepted it; both second reviews accepted the revision. Tasks 28 to 31 are outlined under Expansion and are expanded one at a time. An expanded task is not an accepted one until review accepts it, and an accepted plan is not an executed task.
 
 **Scope:** configured remote targets, automatic local-first routing, explicit targets, per-host job limits, all-hosts-busy queueing, the compute-targets operation (target identifiers, versions, local capabilities, observed availability), aggregated discovery at the entry service that reports target availability and includes remote-only capabilities without executing them locally, and package transfer from a remote Engine HTTP service to the entry service without a shared filesystem. Remote discovery and delivery use the shared token.
 
@@ -2577,7 +2578,7 @@ Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for c
 - Observation: one call per target, aimed at its node name, to an inspect command that Engine's worker registers. It answers the worker's image digest, versions, job limit, reserved count, and consumed queues, never job arguments; the node name it is aimed at identifies the target (Task 26). Each call uses a broker connection of its own and a 0.5 s timeout; the waiting count comes from Kombu's passive queue declaration. A target that does not answer is unknown, not stopped; one whose worker does not consume exactly its target's queue is unavailable. No cache.
 - Compatibility: the worker's reported image digest equals the entry's. A remote target needs both present; the local target is compared when both are set, so a development deployment without digests runs locally only.
 - Routing: DESIGN.md's table, in which an unknown observation counts as unavailable.
-- Delivery: each host serves its own packages through a host-local route that never forwards. Status asks the owning host whether a completed remote job's package is available, and reports `null` when that host does not answer. The download streams from the owning host without asking for the status first, stores nothing at the entry, follows no redirects, and sends the shared token only to configured addresses. The HTTP client is `requests`, declared at 2.34.2.
+- Delivery: each host serves its own packages through a host-local route that never forwards (Task 27). Status asks the owning host whether a completed remote job's package is available, and reports `null` when that host does not answer. The download streams from the owning host without asking for the status first, stores nothing at the entry, follows no redirects, and sends the shared token only to configured addresses. The HTTP client is `requests`, declared at 2.34.2.
 - Execution environment: the claim records the worker's versions and image digest in fields of their own.
 - Runtime availability: unknown until Core provides an interface (Blockers).
 
@@ -4082,6 +4083,606 @@ Expected: as in Task 17, Step 7.
 - [x] **Step 8: Stop for review**
 
 Record Task 26's results in Increment 3's status, including Step 6's observations, leave the changes uncommitted, and report Steps 2, 4, 6, and 7. Suggested commit message: `Feature: Observed engine workers and listed the compute targets`.
+
+### Task 27: Deliver remote packages through the entry
+
+A job runs on its target's host, which keeps the package (Task 11), while its record is in the central Redis that every host reads. This task makes a remote job's package available through the entry service. Each host serves its own packages through a host-local route; the entry's status asks the job's host whether its package can be downloaded, and the entry's download streams it from that host without storing it (Remote execution, Retention, and Authentication rows). Submission still accepts only the local target until Task 28, so the tests run a remote job by submitting it through the remote target's `Jobs`, which writes the shared record as routing will.
+
+**Interfaces verified for the task** (2026-10-17, in the development image's Starlette 1.8.0, FastAPI 0.141.1, Uvicorn 0.54.0, requests 2.34.2, and urllib3 2.8.0 source, and in a prototype in a Compose project of its own):
+
+- Starlette's `StreamingResponse` iterates a synchronous iterator in the thread pool, one item per call. Uvicorn's h11 protocol, which the image uses because it has no `httptools`, reports ASGI spec 2.3, so Starlette listens for the client's disconnect beside the stream and cancels the stream when it comes; the cancellation waits for the read in progress, because anyio does not abandon a thread that is cancelled. Starlette then runs the response's `background` task, but an error raised by the iterator propagates and skips it. In the prototype, without an explicit close, the remote host's connection was still open 30 s after the client disconnected.
+- `FileResponse` answers a `HEAD` request with its headers, including `content-length`, and no body; FastAPI's `api_route` serves both methods through one handler.
+- `requests` with `stream=True` returns once the headers arrive, and `iter_content` reads the body as it is consumed, each read bounded by the read timeout. urllib3 2.8.0 enforces the declared `Content-Length`, so a body that ends early raises `ChunkedEncodingError`. `Response.close()` closes the connection of a body that was not read to its end. requests sends `Accept-Encoding: gzip, deflate, zstd`, and `iter_content` decodes an encoded body, whose `Content-Length` is the encoded length; the review of 2026-10-17 found that the entry's Uvicorn refused such a download as "Too much data for declared Content-Length".
+- When the stream raises midway, Uvicorn closes the connection without completing the response, so the client's download fails, with or without a declared length (prototype).
+- Importing Sim initializes PETSc through dolfinx and petsc4py, which replaces Python's ignored `SIGPIPE` with a handler that aborts the process: in the development image, after `import dtcc_engine.api`, a write to a closed socket ended the process with exit code 15 (`MPI_Abort`). An API process survived a client that disconnected after the first chunk of a 20 MB download, because asyncio notices the reset connection before it writes again. The tests' stub host, which writes from a thread on a blocking socket, sends with `MSG_NOSIGNAL`. In eight outages of the prototype's own Redis, four graceful restarts and four kills, two with the worker idle and six while its pool process asked Redis every 0.1 s whether to finish, the worker reconnected each time, and its connections failed with Python errors, never the abort; with `PETSC_OPTIONS=-no_signal_handler`, the write to a closed socket raised `BrokenPipeError` again. The remaining risk, a blocking write to a connection its peer has reset, is outside this task and is raised separately with the user.
+
+**Decisions** (proposed with the task):
+
+- Host-local delivery is `GET` and `HEAD /api/v1/host/jobs/{job_id}/package`, with the token. It serves this host's packages only: for a job of another target it answers `404`, "did not run on this host", and never forwards. For its own jobs it answers as the public route does for a local job: the package, `404` for an unknown or expired job, `409` without a package, and `503` when the job's state is unavailable.
+- Status: a completed job of another target has its `package.available` from its host's host-local route, asked with `HEAD`: `true` for `200`, `false` for `409`, and `null` when the target is not configured, or its host cannot be reached, rejects the token, or answers anything else. `Jobs.status` reports `null` for another target's job, whose package only the API can ask about. The field becomes `bool | null`, which the `engine-integration` branch must handle. Each status of a completed remote job asks its host once; there is no cache.
+- Download: for a completed job of another target, the public route requests the host-local route with `GET`, without asking for the status first, with the token as the request's own authentication (Task 26), `HOST_TIMEOUT` to connect and for each read, no redirects, and `stream=True`. `200` is streamed through as `application/zip`, with the attachment name and, when the host sent the body without a `Content-Encoding`, its `Content-Length`, because requests decodes an encoded body; `409` becomes `409`, "has no package on its host"; `401` becomes `503`, "The job's host rejected the token"; any other status `503`, "The job's host answered HTTP <status>"; a failed connection or a timeout `503`, "The job's host could not be reached"; and a target that is not configured `503`. No answer of the host's is passed on. A job that has not completed has no package on any host, so it is refused from its record, as a local one is. An expired job is unknown at the entry before its host is asked, and at its host though its file may remain.
+- Streaming: `ForwardedPackage`, a `StreamingResponse`, reads the host's body in `FileResponse`'s chunks and closes the host's response in a `finally` around the whole response, so that it is closed when the download completes, fails, or the client disconnects. Starlette's `background` task is not used, because an error skips it. An error midway propagates, so the client's download fails instead of ending as a shorter archive. The entry writes nothing to disk, and does not validate the archive: its host validated it with Core before offering it (Task 11).
+- Tests: `hosts` in `tests/test_hosts.py` gains the entry's API process, with the remote target configured, so that a download crosses two real HTTP servers. Stub hosts on free local ports answer with a redirect, a server error with a body, half a declared body, a gzipped body with its encoded length, or a slow body, and record what they are sent. Hosts that cannot deliver, and the stubs that do not stream, are asked through an in-process entry client. Records of a stub's target are written as its worker would write them. No expectation changes; the token test covers the host-local route.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/api.py`
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/tests/test_hosts.py`
+- Modify: `apps/engine/tests/test_jobs.py`
+- Modify: `apps/engine/DESIGN.md` (Package creation, delivery, and retention)
+- Modify: `apps/engine/PLAN.md` (Increment 3 status)
+
+**Interfaces:**
+
+- Consumes: from Task 26, `HOST_TIMEOUT`, the remote targets, the authentication callable `bearer_token`, and the fixtures `run_worker_process`, `run_api_process`, and `hosts`; from Tasks 10 to 12, `Jobs.status`, `Jobs.package_path`, the public package route, `RETENTION`, `RECORD_LIFETIME`, and `record_key`. From Starlette: `StreamingResponse` and `FileResponse`; from requests: `requests.request` with `stream=True`, `iter_content`, and `Response.close`.
+- Produces: the route `GET` and `HEAD /api/v1/host/jobs/{job_id}/package`; `ForwardedPackage`; `package.available` `null` for a remote job whose host does not answer; in `tests/test_hosts.py`, the entry's API process in `hosts`, `run_api_process`'s `remote_targets`, and the helpers `fetch`, `completed_job`, `recorded_job`, and `serve`.
+
+- [ ] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_hosts.py`, replace the module docstring's second paragraph, from "Each target's worker runs" to "as it would another host.", with:
+
+```python
+Each target's worker runs in a process of its own, as the worker service does, because Celery keeps a worker's reserved
+and active jobs per process. Each host's API also runs in a process of its own, and the entry's API reaches the remote
+one over HTTP, as it would another host.
+```
+
+Add `import gzip` before `import os`. Replace `from contextlib import AbstractContextManager, contextmanager` with `from contextlib import AbstractContextManager, ExitStack, contextmanager`, and add `from datetime import UTC, datetime, timedelta` after it. Replace `from dtcc_engine.jobs import Jobs` with `from dtcc_engine.jobs import RECORD_LIFETIME, RETENTION, Jobs, record_key`, and add `CHUNK = 64 * 1024` after the line that defines `DIGEST`. Replace the fixture `run_api_process` with:
+
+```python
+@pytest.fixture(scope="module")
+def run_api_process(redis_url: str, tmp_path_factory: pytest.TempPathFactory) -> Callable[..., Any]:
+    """Run a target's Engine API in a process of its own on a free local port until the context ends; yield its address.
+
+    Its remote targets are given as `ENGINE_REMOTE_TARGETS` is. Its log is in a temporary directory, which a failure to
+    start reports.
+    """
+    logs = tmp_path_factory.mktemp("api-logs")
+
+    @contextmanager
+    def run(target: str, package_dir: Path, image_digest: str | None = None, remote_targets: str = "") -> Iterator[str]:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        environment = {
+            **os.environ,
+            "ENGINE_API_TOKEN": TOKEN,
+            "ENGINE_REDIS_URL": redis_url,
+            "ENGINE_TARGET": target,
+            "ENGINE_PACKAGE_DIR": str(package_dir),
+            "ENGINE_IMAGE_DIGEST": image_digest or "",
+            "ENGINE_REMOTE_TARGETS": remote_targets,
+        }
+        command = ["uvicorn", "dtcc_engine.api:create_app_from_environment", "--factory", "--port", str(port)]
+        log = logs / f"{target}.log"
+        with log.open("w") as output:
+            process = subprocess.Popen([sys.executable, "-m", *command], env=environment, stdout=output, stderr=output)
+        address = f"http://127.0.0.1:{port}"
+        try:
+            deadline = time.monotonic() + 120
+            while True:
+                try:
+                    requests.get(f"{address}/api/v1/health", timeout=1).raise_for_status()
+                    break
+                except requests.RequestException:
+                    assert process.poll() is None and time.monotonic() < deadline, log.read_text()
+                    time.sleep(0.2)
+            yield address
+        finally:
+            process.terminate()
+            process.wait(timeout=60)
+
+    return run
+
+
+```
+
+Replace the fixture `hosts` with:
+
+```python
+@pytest.fixture(scope="module")
+def hosts(
+    redis_url: str,
+    tmp_path_factory: pytest.TempPathFactory,
+    run_worker_process: Callable[..., AbstractContextManager[None]],
+    run_api_process: Callable[..., AbstractContextManager[str]],
+) -> Iterator[dict[str, Any]]:
+    """The entry host, target `entry`, and a remote host, target `remote`, each with its worker and API, in one deployment.
+
+    Yields each host's address and the entry's package directory, and each target's jobs, as its host's API has them.
+    """
+    entry_packages, remote_packages = tmp_path_factory.mktemp("entry"), tmp_path_factory.mktemp("remote")
+    with (
+        run_worker_process("entry", entry_packages, DIGEST),
+        run_worker_process("remote", remote_packages, DIGEST),
+        run_api_process("remote", remote_packages, DIGEST) as remote_address,
+        run_api_process("entry", entry_packages, DIGEST, f"remote={remote_address}") as entry_address,
+    ):
+        yield {
+            "entry_address": entry_address,
+            "remote_address": remote_address,
+            "entry_packages": entry_packages,
+            "entry": Jobs(redis_url, "entry", entry_packages, DIGEST),
+            "remote": Jobs(redis_url, "remote", remote_packages, DIGEST),
+        }
+
+
+```
+
+Add at the end of the file:
+
+```python
+
+
+def fetch(address: str, path: str, method: str = "GET", **options: Any) -> requests.Response:
+    """Send a request with the shared token to an Engine API process."""
+    return requests.request(method, f"{address}{path}", headers=AUTHORIZED, timeout=60, **options)
+
+
+def completed_job(jobs: Jobs) -> str:
+    """Run a `smoke` job on the jobs' target, and return its ID once it completes."""
+    job_id = jobs.submit("smoke", {"bounds": BOUNDS})
+    wait_for(lambda: jobs.status(job_id)["state"] == "completed")
+    return job_id
+
+
+def recorded_job(jobs: Jobs, target: str, outcome: str | None) -> str:
+    """Record a job of a target as its worker would, queued or with an outcome, without running it; return its ID."""
+    job_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    fields = {"dataset": "smoke", "target": target, "submitted_at": now, "queued_at": now, "execution_gate": "waiting"}
+    if outcome is not None:
+        fields.update({"execution_gate": "started", "outcome": outcome, "finished_at": now})
+    with jobs.records.pipeline() as pipeline:
+        pipeline.hset(record_key(job_id), mapping=fields)
+        pipeline.expire(record_key(job_id), RECORD_LIFETIME)
+        pipeline.execute()
+    return job_id
+
+
+@contextmanager
+def serve(answer: Callable[[BaseHTTPRequestHandler], None]) -> Iterator[str]:
+    """Answer each GET and HEAD request on a free local port until the context ends; yield the address."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            answer(self)
+
+        do_HEAD = do_GET
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture(scope="module")
+def remote_job(hosts: dict[str, Any]) -> str:
+    """A completed job of the remote target, whose package its host keeps."""
+    return completed_job(hosts["remote"])
+
+
+def test_remote_job_is_polled_and_downloaded_through_the_entry(hosts: dict[str, Any], remote_job: str) -> None:
+    entry, remote = hosts["entry_address"], hosts["remote"]
+    kept = set(hosts["entry_packages"].iterdir())
+    polled = fetch(entry, f"/api/v1/jobs/{remote_job}")
+    downloaded = fetch(entry, f"/api/v1/jobs/{remote_job}/package")
+    package = remote.package_path(remote_job).read_bytes()
+    # The entry reports the job as its host does, and a download does not extend the package's retention.
+    assert polled.json() == remote.status(remote_job) == fetch(entry, f"/api/v1/jobs/{remote_job}").json()
+    assert polled.json()["package"]["available"] is True
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"] == "application/zip"
+    assert downloaded.headers["content-disposition"] == f'attachment; filename="{remote_job}.dtccpkg"'
+    assert downloaded.headers["content-length"] == str(len(package))
+    assert downloaded.content == package
+    # The entry streams the package through and keeps no copy.
+    assert set(hosts["entry_packages"].iterdir()) == kept
+
+
+def test_remote_package_its_host_no_longer_has_is_unavailable(hosts: dict[str, Any]) -> None:
+    job_id = completed_job(hosts["remote"])
+    hosts["remote"].package_path(job_id).unlink()
+    polled = fetch(hosts["entry_address"], f"/api/v1/jobs/{job_id}")
+    downloaded = fetch(hosts["entry_address"], f"/api/v1/jobs/{job_id}/package")
+    assert polled.json()["package"]["available"] is False
+    assert downloaded.status_code == 409
+    assert downloaded.json() == {"detail": f"Job '{job_id}' has no package on its host"}
+
+
+@pytest.mark.parametrize(
+    ("host", "token", "detail"),
+    [
+        ("closed", TOKEN, "The job's host could not be reached"),
+        ("remote", "other-token", "The job's host rejected the token"),
+        ("elsewhere", TOKEN, "The job's host answered HTTP 404"),
+        ("unconfigured", TOKEN, "The job's target 'remote' is not configured on this Engine"),
+    ],
+    ids=["unreachable", "rejected-token", "other-target", "unconfigured"],
+)
+def test_remote_package_whose_host_does_not_deliver_it_is_unknown(
+    hosts: dict[str, Any],
+    remote_job: str,
+    tmp_path: Path,
+    run_api_process: Callable[..., AbstractContextManager[str]],
+    host: str,
+    token: str,
+    detail: str,
+) -> None:
+    with ExitStack() as stack:
+        if host == "closed":
+            remote_targets = {"remote": closed_address()}
+        elif host == "elsewhere":
+            # The host of another target, which does not serve the remote target's packages.
+            remote_targets = {"remote": stack.enter_context(run_api_process("elsewhere", tmp_path))}
+        elif host == "unconfigured":
+            remote_targets = {}
+        else:
+            remote_targets = {"remote": hosts["remote_address"]}
+        client = TestClient(create_app(token, hosts["entry"], remote_targets))
+        headers = {"Authorization": f"Bearer {token}"}
+        polled = client.get(f"/api/v1/jobs/{remote_job}", headers=headers)
+        downloaded = client.get(f"/api/v1/jobs/{remote_job}/package", headers=headers)
+    # Everything else the entry reads from the shared records.
+    owned = hosts["remote"].status(remote_job)
+    assert polled.json() == {**owned, "package": {**owned["package"], "available": None}}
+    assert (downloaded.status_code, downloaded.json()) == (503, {"detail": detail})
+
+
+def redirect(request: BaseHTTPRequestHandler) -> None:
+    request.send_response(307)
+    request.send_header("Location", "/elsewhere")
+    request.send_header("Content-Length", "0")
+    request.end_headers()
+
+
+def fail_with_details(request: BaseHTTPRequestHandler) -> None:
+    body = b"secret details"
+    request.send_response(500)
+    request.send_header("Content-Length", str(len(body)))
+    request.end_headers()
+    if request.command == "GET":
+        request.wfile.write(body)
+
+
+@pytest.mark.parametrize(
+    ("answer", "status_code"), [(redirect, 307), (fail_with_details, 500)], ids=["redirect", "server-error"]
+)
+def test_host_answer_that_is_not_a_package_is_not_passed_on(
+    redis_url: str, tmp_path: Path, answer: Callable[[BaseHTTPRequestHandler], None], status_code: int
+) -> None:
+    received: list[tuple[str, str, str | None]] = []
+
+    def record_and_answer(request: BaseHTTPRequestHandler) -> None:
+        received.append((request.command, request.path, request.headers.get("Authorization")))
+        answer(request)
+
+    entry = Jobs(redis_url, "entry", tmp_path)
+    job_id = recorded_job(entry, "stubbed", "completed")
+    with serve(record_and_answer) as address:
+        client = TestClient(create_app(TOKEN, entry, {"stubbed": address}))
+        polled = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+        downloaded = client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert polled.json()["package"]["available"] is None
+    assert downloaded.status_code == 503
+    assert downloaded.json() == {"detail": f"The job's host answered HTTP {status_code}"}
+    # Each is asked once, with the shared token, and a redirect is not followed.
+    path = f"/api/v1/host/jobs/{job_id}/package"
+    assert received == [("HEAD", path, f"Bearer {TOKEN}"), ("GET", path, f"Bearer {TOKEN}")]
+
+
+def test_package_its_host_stops_sending_is_not_delivered_whole(
+    redis_url: str, tmp_path: Path, run_api_process: Callable[..., AbstractContextManager[str]]
+) -> None:
+    def send_half(request: BaseHTTPRequestHandler) -> None:
+        request.send_response(200)
+        request.send_header("Content-Length", str(2 * CHUNK))
+        request.end_headers()
+        request.wfile.write(b"x" * CHUNK)
+
+    job_id = recorded_job(Jobs(redis_url, "entry", tmp_path), "stubbed", "completed")
+    with serve(send_half) as address, run_api_process("entry", tmp_path, None, f"stubbed={address}") as entry:
+        # The client sees the download fail, not a shorter archive.
+        with pytest.raises(requests.exceptions.ChunkedEncodingError):
+            fetch(entry, f"/api/v1/jobs/{job_id}/package")
+
+
+def test_package_its_host_sends_compressed_is_delivered_as_the_archive(
+    redis_url: str, tmp_path: Path, run_api_process: Callable[..., AbstractContextManager[str]]
+) -> None:
+    archive = b"package " * CHUNK
+
+    def send_compressed(request: BaseHTTPRequestHandler) -> None:
+        body = gzip.compress(archive)
+        request.send_response(200)
+        request.send_header("Content-Encoding", "gzip")
+        request.send_header("Content-Length", str(len(body)))
+        request.end_headers()
+        request.wfile.write(body)
+
+    job_id = recorded_job(Jobs(redis_url, "entry", tmp_path), "stubbed", "completed")
+    with serve(send_compressed) as address, run_api_process("entry", tmp_path, None, f"stubbed={address}") as entry:
+        downloaded = fetch(entry, f"/api/v1/jobs/{job_id}/package")
+    # Not the host's encoding of the archive, nor that encoding's length.
+    assert (downloaded.status_code, downloaded.content) == (200, archive)
+
+
+def test_download_the_client_abandons_releases_its_hosts_connection(
+    redis_url: str, tmp_path: Path, run_api_process: Callable[..., AbstractContextManager[str]]
+) -> None:
+    released = threading.Event()
+
+    def send_slowly(request: BaseHTTPRequestHandler) -> None:
+        request.send_response(200)
+        request.send_header("Content-Length", str(1000 * CHUNK))
+        request.end_headers()
+        try:
+            for _ in range(1000):
+                # Without SIGPIPE, which PETSc, initialized when Sim is imported, turns into an abort of the tests.
+                request.connection.sendall(b"x" * CHUNK, socket.MSG_NOSIGNAL)
+                time.sleep(0.05)
+        except OSError:
+            released.set()
+
+    job_id = recorded_job(Jobs(redis_url, "entry", tmp_path), "stubbed", "completed")
+    with serve(send_slowly) as address, run_api_process("entry", tmp_path, None, f"stubbed={address}") as entry:
+        with fetch(entry, f"/api/v1/jobs/{job_id}/package", stream=True) as response:
+            assert response.status_code == 200
+            next(response.iter_content(CHUNK))
+        assert released.wait(30)
+        assert fetch(entry, "/api/v1/health").status_code == 200
+
+
+def test_host_serves_its_own_packages_and_forwards_none(hosts: dict[str, Any], remote_job: str) -> None:
+    path = f"/api/v1/host/jobs/{remote_job}/package"
+    package = hosts["remote"].package_path(remote_job).read_bytes()
+    served = fetch(hosts["remote_address"], path)
+    described = fetch(hosts["remote_address"], path, "HEAD")
+    elsewhere = fetch(hosts["entry_address"], path)
+    assert (served.status_code, served.content) == (200, package)
+    assert (described.status_code, described.content) == (200, b"")
+    assert described.headers["content-length"] == str(len(package))
+    assert elsewhere.status_code == 404
+    assert elsewhere.json() == {"detail": f"Job '{remote_job}' did not run on this host"}
+
+
+def test_host_has_no_package_for_an_unfinished_or_unknown_job(hosts: dict[str, Any]) -> None:
+    queued = recorded_job(hosts["remote"], "remote", None)
+    unfinished = fetch(hosts["remote_address"], f"/api/v1/host/jobs/{queued}/package")
+    unknown_id = str(uuid.uuid4())
+    unknown = fetch(hosts["remote_address"], f"/api/v1/host/jobs/{unknown_id}/package")
+    entry = fetch(hosts["entry_address"], f"/api/v1/jobs/{queued}/package")
+    assert (unfinished.status_code, entry.status_code) == (409, 409)
+    assert (unknown.status_code, unknown.json()) == (404, {"detail": f"Job '{unknown_id}' is unknown or expired"})
+
+
+def test_remote_package_past_its_retention_is_unknown_though_its_file_remains(hosts: dict[str, Any]) -> None:
+    remote = hosts["remote"]
+    job_id = completed_job(remote)
+    # Moves the recorded finish time back instead of waiting 30 days.
+    expired = (datetime.now(UTC) - RETENTION - timedelta(seconds=1)).isoformat()
+    remote.records.hset(record_key(job_id), "finished_at", expired)
+    paths = [
+        (hosts["entry_address"], f"/api/v1/jobs/{job_id}"),
+        (hosts["entry_address"], f"/api/v1/jobs/{job_id}/package"),
+        (hosts["remote_address"], f"/api/v1/host/jobs/{job_id}/package"),
+    ]
+    assert remote.package_path(job_id).is_file()
+    for address, path in paths:
+        refused = fetch(address, path)
+        assert (refused.status_code, refused.json()) == (404, {"detail": f"Job '{job_id}' is unknown or expired"})
+```
+
+In `apps/engine/tests/test_jobs.py`, add to the paths of `test_job_routes_reject_missing_tokens`, after `("POST", "/api/v1/jobs/some-job/cancel"),`:
+
+```python
+        ("GET", "/api/v1/host/jobs/some-job/package"),
+        ("HEAD", "/api/v1/host/jobs/some-job/package"),
+```
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reasons**
+
+Run: `pnpm engine:check tests/test_hosts.py tests/test_jobs.py`
+Expected: 16 failed and 92 passed, in under a minute, each as follows. The host-local route does not exist, so it answers `404` "Not Found" where the two token cases expect `401`, where `test_host_serves_its_own_packages_and_forwards_none` expects the package, where `test_host_has_no_package_for_an_unfinished_or_unknown_job` expects `409`, and where `test_remote_package_past_its_retention_is_unknown_though_its_file_remains` expects "unknown or expired". The entry reads a remote job's package as missing from its own disk: `available` is `false` where `test_remote_job_is_polled_and_downloaded_through_the_entry` expects `true` and the four cases of `test_remote_package_whose_host_does_not_deliver_it_is_unknown` and the two of `test_host_answer_that_is_not_a_package_is_not_passed_on` expect `null`, and its download answers `409` with the local detail where `test_remote_package_its_host_no_longer_has_is_unavailable` expects the host's, where `test_package_its_host_sends_compressed_is_delivered_as_the_archive` and `test_download_the_client_abandons_releases_its_hosts_connection` expect `200`, and where `test_package_its_host_stops_sending_is_not_delivered_whole` expects `ChunkedEncodingError`. Stop and report if a test fails in another way.
+
+- [ ] **Step 3: Serve each host's packages, and deliver remote ones through the entry**
+
+In `apps/engine/dtcc_engine/jobs.py`, in `Jobs.status`, replace the package's dictionary, `{"available": self.package_path(job_id).is_file(), "expires_at": (finished_at + RETENTION).isoformat()}`, with:
+
+```python
+                {
+                    # Another target's package is on its host, which only the API can ask.
+                    "available": self.package_path(job_id).is_file() if record["target"] == self.target else None,
+                    "expires_at": (finished_at + RETENTION).isoformat(),
+                }
+```
+
+In `apps/engine/dtcc_engine/api.py`, replace `from fastapi.responses import FileResponse, JSONResponse` with `from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse`, and add `from starlette.types import Receive, Scope, Send` after `from redis import RedisError`. Add before `create_app`:
+
+```python
+class ForwardedPackage(StreamingResponse):
+    """A job's package streamed through from its host's Engine, whose response it closes however the download ends.
+
+    Args:
+        upstream: The host's response with the package, requested with `stream=True`.
+        job_id: The job's ID, which names the downloaded file.
+    """
+
+    def __init__(self, upstream: requests.Response, job_id: str) -> None:
+        headers = {"Content-Disposition": f'attachment; filename="{job_id}.dtccpkg"'}
+        # The chunks are decoded, so an encoded body's length is not theirs.
+        if "Content-Length" in upstream.headers and "Content-Encoding" not in upstream.headers:
+            headers["Content-Length"] = upstream.headers["Content-Length"]
+        chunks = upstream.iter_content(FileResponse.chunk_size)
+        super().__init__(chunks, media_type="application/zip", headers=headers)
+        self.upstream = upstream
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Also when the client disconnects, which cancels the stream once its current read ends.
+            self.upstream.close()
+
+
+```
+
+In `create_app`, add after `remote_host`:
+
+```python
+    def host_package(job: dict[str, Any], method: str) -> requests.Response:
+        """Request the package of another target's job from its host; not redirected, and streamed for a GET.
+
+        Raises:
+            HTTPException: `503` if the job's target is not configured or its host could not be reached.
+        """
+        address = remote_targets.get(job["target"])
+        if address is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"The job's target '{job['target']}' is not configured on this Engine",
+            )
+        try:
+            return requests.request(
+                method,
+                f"{address}/api/v1/host/jobs/{job['job_id']}/package",
+                auth=bearer_token,
+                timeout=HOST_TIMEOUT,
+                allow_redirects=False,
+                stream=True,
+            )
+        except requests.RequestException:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="The job's host could not be reached"
+            ) from None
+
+    def package_on_host(job: dict[str, Any]) -> bool | None:
+        """Return whether another target's host can deliver the job's package, or None if it does not answer so."""
+        try:
+            answer = host_package(job, "HEAD")
+        except HTTPException:
+            return None
+        answer.close()
+        return {status.HTTP_200_OK: True, status.HTTP_409_CONFLICT: False}.get(answer.status_code)
+
+    def local_package(job: dict[str, Any]) -> FileResponse:
+        if job["package"] is None or not job["package"]["available"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Job '{job['job_id']}' has no package to download; its state is '{job['state']}'",
+            )
+        path = jobs.package_path(job["job_id"])
+        return FileResponse(path, media_type="application/zip", filename=f"{job['job_id']}.dtccpkg")
+
+```
+
+Replace the route `job_status` with:
+
+```python
+    @app.get("/api/v1/jobs/{job_id}", dependencies=[Depends(require_token)])
+    def job_status(job_id: str) -> dict[str, Any]:
+        job = find_job(job_id)
+        if job["package"] is not None and job["target"] != jobs.target:
+            job["package"]["available"] = package_on_host(job)
+        return job
+
+```
+
+Replace the route `download_package` with:
+
+```python
+    @app.get("/api/v1/jobs/{job_id}/package", dependencies=[Depends(require_token)])
+    def download_package(job_id: str) -> Response:
+        job = find_job(job_id)
+        # A job that has not completed has no package on any host.
+        if job["target"] == jobs.target or job["package"] is None:
+            return local_package(job)
+        # Streamed from the job's host without asking for its status first, and stored nowhere here.
+        upstream = host_package(job, "GET")
+        if upstream.status_code == status.HTTP_200_OK:
+            return ForwardedPackage(upstream, job_id)
+        upstream.close()
+        if upstream.status_code == status.HTTP_409_CONFLICT:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=f"Job '{job_id}' has no package on its host"
+            )
+        detail = (
+            "The job's host rejected the token"
+            if upstream.status_code == status.HTTP_401_UNAUTHORIZED
+            else f"The job's host answered HTTP {upstream.status_code}"
+        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+
+    @app.api_route("/api/v1/host/jobs/{job_id}/package", methods=["GET", "HEAD"], dependencies=[Depends(require_token)])
+    def serve_host_package(job_id: str) -> FileResponse:
+        # Host-local delivery: this host's packages only, and never forwarded.
+        job = find_job(job_id)
+        if job["target"] != jobs.target:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' did not run on this host"
+            )
+        return local_package(job)
+
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 216 passed: the 200 earlier tests and the 16 new cases.
+
+- [ ] **Step 5: Document remote delivery**
+
+In `apps/engine/DESIGN.md`, in Package creation, delivery, and retention, add after the paragraph that ends "a second stored copy at the entry host.":
+
+```markdown
+Each host serves its own packages through a host-local route, which never
+forwards a request to another host. A completed job's status says whether its
+package can be downloaded; for a job of a remote target, the entry asks that
+target's host, and reports `null` when the host does not answer. A download
+through the entry streams the package from the job's host without asking for
+the job's status first, stores nothing at the entry, follows no redirects, and
+sends the shared token only to the configured address. A host without the
+package makes the download a `409`, as a local one is; a host that cannot be
+reached, rejects the token, or answers otherwise, and a target that is not
+configured, make it a `503`, without the host's answer. The entry closes its
+request to the host when the download ends, whether it completed, failed, or
+the consumer disconnected, and a stream that fails midway fails the download
+rather than end it as a shorter archive.
+```
+
+Run: `npx --yes prettier@3.9.6 --check apps/engine/DESIGN.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 6: Serve a package through the development engine's host-local route**
+
+This step stops and starts the development worker, so it needs the development engine to itself: submit nothing else while it runs, and clear no job. Start its Redis, if it is not running: `docker compose --profile engine up -d --wait engine-redis`.
+
+If the worker is running, through `pnpm dev:engine` or otherwise (`docker compose --profile engine ps --status running --services` lists `engine-worker`), wait until it has no job queued or running before anything stops or rebuilds it, as in Task 26, Step 6: `docker compose --profile engine exec -T engine-redis redis-cli -n 0 LLEN local` answers 0, and `docker compose --profile engine exec -T engine-worker /opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect active --destination celery@local` lists none; an answer that does not come is not an empty list. Then stop the engine and the worker without a deadline: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Expected: `docker compose --profile engine ps -a engine-worker` shows that the worker exited with 0. Never kill the worker, and start or rebuild nothing while it runs; if it does not exit, stop and report it, as any other exit code.
+
+Start `pnpm dev:engine` and wait until the worker logs that it is ready. Send each request below with `-H "Authorization: Bearer local-dev-engine-token"`.
+
+1. Submit `smoke` on `[319891, 6399790, 320091, 6399990]` and poll it until it is `completed`. Expected: `package.available` is `true`.
+2. Download its package from `GET /api/v1/jobs/<job id>/package` and from `GET /api/v1/host/jobs/<job id>/package` into two files. Expected: both `200`, and `cmp` finds the files identical. `curl -s -I` on the host-local route: `200`, with the file's size as `content-length`. Without the token: `401`.
+3. `GET /api/v1/host/jobs/<a new UUID>/package`. Expected: `404`, "unknown or expired".
+
+Stop the engine and the worker: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Redis keeps running, with the development jobs and packages. A remote job is not checked here: the development engine has one host, and Task 31 checks two in a Compose project of their own.
+
+- [ ] **Step 7: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [ ] **Step 8: Stop for review**
+
+Record Task 27's results in Increment 3's status, including Step 6's observations, leave the changes uncommitted, and report Steps 2, 4, 6, and 7. Suggested commit message: `Feature: Delivered remote packages through the entry`.
 
 ## Increment 4: Lifecycle behavior
 
