@@ -6,6 +6,7 @@ import { FloatingCard } from "@/components/common/floating-card";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { catalogue, type CatalogueKind } from "./catalogue.ts";
+import { DatasetForm } from "./dataset-form.tsx";
 
 const titles: Record<CatalogueKind, string> = { datasets: "Datasets", simulations: "Simulations" };
 const emptyTexts: Record<CatalogueKind, string> = {
@@ -28,7 +29,10 @@ export function DatasetsPanel({ kind, onClose }: { kind: CatalogueKind; onClose:
           setSelectedName(null);
         }}
       >
-        <p className="text-sm text-muted-foreground">{selected.description}</p>
+        <div className="flex flex-col gap-5">
+          <p className="text-sm text-muted-foreground">{selected.description}</p>
+          <DatasetForm key={selected.name} dataset={selected} />
+        </div>
       </FloatingCard>
     );
   }

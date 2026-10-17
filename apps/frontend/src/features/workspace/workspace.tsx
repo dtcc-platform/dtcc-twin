@@ -13,7 +13,7 @@ import { TopBar } from "@/features/workspace/top-bar/top-bar";
 import { cn } from "@/lib/utils";
 import { WorkspaceStoreContext, createWorkspaceStore } from "./workspace-store";
 
-const column = "pointer-events-none flex w-72 flex-col gap-2 *:pointer-events-auto";
+const column = "pointer-events-none flex w-88 flex-col gap-2 *:pointer-events-auto";
 
 export function Workspace() {
   const [store] = useState(createWorkspaceStore);
