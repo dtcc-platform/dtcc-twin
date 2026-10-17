@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,7 @@ from typing import Any
 import pytest
 import requests
 from celery import Celery
+from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister
 from fastapi.testclient import TestClient
 
 from dtcc_engine.api import create_app, dataset_catalog, installed_versions
@@ -603,3 +605,129 @@ def test_remote_package_past_its_retention_is_unknown_though_its_file_remains(ho
     for address, path in paths:
         refused = fetch(address, path)
         assert (refused.status_code, refused.json()) == (404, {"detail": f"Job '{job_id}' is unknown or expired"})
+
+
+def states(listed: dict[str, dict[str, Any]]) -> list[str]:
+    return [target["state"] for target in listed.values()]
+
+
+def ready(listed: dict[str, dict[str, Any]]) -> bool:
+    return all(state == "ready" for state in states(listed))
+
+
+def submit_through(address: str, target: str | None) -> str:
+    """Submit a `smoke` job through an Engine API process, to `target` or by automatic placement; return its ID."""
+    request = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}, "target": target}
+    response = fetch(address, "/api/v1/jobs", "POST", json=request)
+    assert response.status_code == 202, response.text
+    return response.json()["job_id"]
+
+
+@pytest.mark.parametrize(
+    ("requested", "target"), [(None, "entry"), ("remote", "remote")], ids=["automatic", "requested"]
+)
+def test_job_submitted_through_the_entry_runs_on_its_target_and_is_delivered_through_the_entry(
+    hosts: dict[str, Any], requested: str | None, target: str
+) -> None:
+    entry = hosts["entry_address"]
+    wait_for_targets(hosts["entry"], {"remote": hosts["remote_address"]}, ready)
+    job_id = submit_through(entry, requested)
+    wait_for(lambda: fetch(entry, f"/api/v1/jobs/{job_id}").json()["state"] == "completed")
+    job = fetch(entry, f"/api/v1/jobs/{job_id}").json()
+    assert (job["target"], job["package"]["available"]) == (target, True)
+    # The package is on the host whose worker ran the job.
+    assert fetch(entry, f"/api/v1/jobs/{job_id}/package").content == hosts[target].package_path(job_id).read_bytes()
+
+
+def test_automatic_placement_follows_the_configured_order_of_the_remote_targets(
+    redis_url: str, tmp_path: Path, hosts: dict[str, Any]
+) -> None:
+    # No worker serves this API's own target, so it places jobs on the hosts' targets, as remote ones, in their order.
+    workerless = Jobs(redis_url, "workerless", tmp_path, DIGEST)
+    for order in (["entry", "remote"], ["remote", "entry"]):
+        wait_for_targets(hosts["entry"], {"remote": hosts["remote_address"]}, ready)
+        client = TestClient(create_app(TOKEN, workerless, {target: hosts[f"{target}_address"] for target in order}))
+        request = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}}
+        response = client.post("/api/v1/jobs", json=request, headers=AUTHORIZED)
+        assert response.status_code == 202, response.text
+        job_id = response.json()["job_id"]
+        assert workerless.status(job_id)["target"] == order[0]
+        wait_for(lambda: workerless.status(job_id)["state"] == "completed")
+
+
+def test_jobs_pass_a_busy_target_and_queue_on_one_when_none_is_ready(hosts: dict[str, Any]) -> None:
+    entry, remote, address = hosts["entry"], hosts["remote"], hosts["entry_address"]
+    remote_targets = {"remote": hosts["remote_address"]}
+    held = {"bounds": BOUNDS, "release_key": f"engine-test:release:{uuid.uuid4()}"}
+    try:
+        entry.submit("engine_held_probe", held)
+        wait_for_targets(entry, remote_targets, lambda listed: states(listed) == ["busy", "ready"])
+        passed = submit_through(address, None)
+        assert entry.status(passed)["target"] == "remote"
+        wait_for(lambda: entry.status(passed)["state"] == "completed")
+        remote.submit("engine_held_probe", held)
+        wait_for_targets(entry, remote_targets, lambda listed: states(listed) == ["busy", "busy"])
+        queued = {requested: submit_through(address, requested) for requested in (None, "remote")}
+        held_back = {requested: entry.status(job_id) for requested, job_id in queued.items()}
+    finally:
+        entry.records.set(held["release_key"], 1)
+    # With every target busy, automatic placement queues on this host's, and a requested target queues its job.
+    assert {requested: (job["target"], job["state"]) for requested, job in held_back.items()} == {
+        None: ("entry", "queued"),
+        "remote": ("remote", "queued"),
+    }
+    wait_for(lambda: all(entry.status(job_id)["state"] == "completed" for job_id in queued.values()))
+
+
+@pytest.fixture
+def held_probe() -> Iterator[None]:
+    """Register `engine_held_probe` in this process for a test, with the arguments that `target_worker.py` gives it,
+    so that an API in this process accepts its jobs, which only the workers run."""
+
+    class HeldProbeArgs(DatasetBaseArgs):
+        release_key: str
+
+    class HeldProbeDataset(DatasetDescriptor):
+        name = "engine_held_probe"
+        description = "Dataset defined by an Engine test that runs until a test releases it"
+        ArgsModel = HeldProbeArgs
+
+        def build(self, args):
+            raise NotImplementedError
+
+    try:
+        yield
+    finally:
+        unregister("engine_held_probe")
+
+
+def test_concurrent_submissions_run_no_more_jobs_on_a_host_than_its_limit(
+    hosts: dict[str, Any], held_probe: None
+) -> None:
+    entry, remote_targets = hosts["entry"], {"remote": hosts["remote_address"]}
+    app = create_app(TOKEN, entry, remote_targets)
+    release = f"engine-test:release:{uuid.uuid4()}"
+    request = {"dataset": "engine_held_probe", "parameters": {"bounds": BOUNDS, "release_key": release}}
+    wait_for_targets(entry, remote_targets, ready)
+    try:
+        # The submissions observe the targets at about the same time, so several see the same capacity.
+        with ThreadPoolExecutor(6) as pool:
+            responses = list(
+                pool.map(lambda _: TestClient(app).post("/api/v1/jobs", json=request, headers=AUTHORIZED), range(6))
+            )
+        assert [response.status_code for response in responses] == [202] * 6
+        job_ids = [response.json()["job_id"] for response in responses]
+
+        def each_target_runs_a_job() -> bool:
+            jobs = [entry.status(job_id) for job_id in job_ids]
+            return {job["target"] for job in jobs if job["state"] == "running"} == {job["target"] for job in jobs}
+
+        wait_for(each_target_runs_a_job)
+        held = [entry.status(job_id) for job_id in job_ids]
+    finally:
+        entry.records.set(release, 1)
+    # Each target's worker, whose limit is 1, runs one of the jobs placed on it, and the others wait in its queue.
+    for target in {job["target"] for job in held}:
+        placed = sorted(job["state"] for job in held if job["target"] == target)
+        assert placed == ["queued"] * (len(placed) - 1) + ["running"]
+    wait_for(lambda: all(entry.status(job_id)["state"] == "completed" for job_id in job_ids))

@@ -343,25 +343,32 @@ class Jobs:
         """Return where the job's package is stored once the job completes."""
         return self.package_dir / f"{job_id}.dtccpkg"
 
-    def submit(self, dataset_name: str, parameters: dict[str, Any]) -> str:
+    def submit(self, dataset_name: str, parameters: dict[str, Any], target: str | None = None) -> str:
         """Record and queue a job that runs a Dataset with parameters the caller has validated; return its ID.
+
+        Args:
+            dataset_name: The Dataset's name.
+            parameters: The Dataset's parameters.
+            target: The target whose queue the job goes to, and which its record names; this host's if None.
 
         Raises:
             redis.RedisError: If Redis cannot record the job; nothing was sent.
             UnconfirmedSubmission: If sending the job or recording its confirmation failed, or the job's record was
                 lost meanwhile; the job may be queued, and it is not sent again.
         """
+        target = target or self.target
         job_id = str(uuid4())
         key = record_key(job_id)
         submitted_at = datetime.now(UTC).isoformat()
-        acceptance = {"dataset": dataset_name, "target": self.target, "submitted_at": submitted_at}
+        acceptance = {"dataset": dataset_name, "target": target, "submitted_at": submitted_at}
         with self.records.pipeline() as pipeline:
             pipeline.hset(key, mapping={**acceptance, "execution_gate": "waiting"})
             # The record of a job that never finishes expires too.
             pipeline.expire(key, RECORD_LIFETIME)
             pipeline.execute()
         try:
-            self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=self.target)
+            self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=target)
+
             answer = self.queued_script(keys=[key], args=[datetime.now(UTC).isoformat()])
         except (redis.RedisError, OperationalError) as error:
             raise UnconfirmedSubmission(job_id) from error

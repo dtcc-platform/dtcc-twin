@@ -237,6 +237,21 @@ fewer jobs than its limit and none wait. A target whose worker does not answer
 is unknown: Engine does not conclude that the worker stopped, and routing
 treats the target as unavailable.
 
+A request names a configured target or none. Engine validates the request
+before it observes any target, and rejects an identifier that is not configured
+as invalid. Without a named target, Engine observes the local target, then the
+remote targets in configuration order, and places the job on the first one with
+capacity, observing no further; if none has capacity, on the first one that is
+available and compatible. A named target is observed alone, and takes the job
+if it is available and compatible, with capacity or without. Engine observes
+each target once per request, so a late answer leaves it unknown. A request
+that no observed target can accept is rejected as temporarily unavailable, with
+each observed target's state and reason, and is neither recorded nor queued.
+The job's record names the selected target, and its message goes to that
+target's queue. Engine validates a request with its own Dataset registry, which
+is the selected target's, because compatible targets run the same image
+(Deployment and authentication).
+
 Reported load is a placement hint. Concurrent submissions can observe the same
 capacity, so automatic placement does not guarantee immediate execution. Celery
 enforces the actual job-count limit. Engine must not add a distributed slot

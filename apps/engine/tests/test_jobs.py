@@ -1,7 +1,8 @@
 """Tests for Engine's job API against real Redis and, where a job must run, a real Celery worker.
 
-The `client` fixture's jobs stay queued, because no worker serves its target. The `served_client` fixture's worker
-runs in this process, so it also runs the Dataset Definitions that tests register.
+The `client` fixture's jobs stay queued, because no worker serves its target; the API observes that target as a worker
+holding its limit would be, so that it places jobs there. The `served_client` fixture's worker runs in this process, so
+it also runs the Dataset Definitions that tests register.
 """
 
 import threading
@@ -38,7 +39,8 @@ FINISHED = ("completed", "failed")
 
 
 @pytest.fixture
-def client(jobs: Jobs) -> TestClient:
+def client(jobs: Jobs, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr(jobs, "observe", lambda target: {"state": "busy", "reason": None})
     return TestClient(create_app(TOKEN, jobs))
 
 

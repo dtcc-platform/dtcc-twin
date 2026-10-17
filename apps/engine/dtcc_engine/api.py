@@ -273,6 +273,31 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
         answer.close()
         return {status.HTTP_200_OK: True, status.HTTP_409_CONFLICT: False}.get(answer.status_code)
 
+    def select_target(requested: str | None) -> str:
+        """Select the target a job goes to: the requested one, or by automatic placement, per DESIGN.md's routing table.
+
+        Automatic placement observes this host's target, then the remote ones in placement order, and takes the first
+        that is ready, or else the first that is busy.
+
+        Raises:
+            HTTPException: `503` if no target it observed can accept the job, naming each one's state and reason.
+        """
+        observations = {}
+        for target in [requested] if requested else [jobs.target, *remote_targets]:
+            observations[target] = jobs.observe(target)
+            if observations[target]["state"] == "ready":
+                return target
+        busy = [target for target, observed in observations.items() if observed["state"] == "busy"]
+        if busy:
+            return busy[0]
+        reasons = " ".join(
+            f"Target '{target}' is {observed['state']}: {observed['reason']}."
+            for target, observed in observations.items()
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"The job was not submitted. {reasons}"
+        )
+
     def local_package(job: dict[str, Any]) -> FileResponse:
         if job["package"] is None or not job["package"]["available"]:
             raise HTTPException(
@@ -328,10 +353,10 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Dataset '{request.dataset}' is not registered",
             )
-        if request.target not in (None, jobs.target):
+        if request.target not in (None, jobs.target, *remote_targets):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Target '{request.target}' is not accepted; this Engine runs jobs only on '{jobs.target}'",
+                detail=f"Target '{request.target}' is not configured on this Engine",
             )
         if request.parameters.get("format") is not None:
             raise HTTPException(
@@ -345,8 +370,11 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=public_errors(error.errors(), fields)
             ) from None
+        # Observed after validation, so that a request that cannot run costs no observation.
+        target = select_target(request.target)
         try:
-            job_id = jobs.submit(request.dataset, request.parameters)
+            job_id = jobs.submit(request.dataset, request.parameters, target)
+
         except RedisError:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

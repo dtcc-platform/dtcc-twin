@@ -1,5 +1,5 @@
 """Tests of compute targets: each target's identifier, image digest, and the node name and queue its worker uses; the
-remote targets of the entry service; and the observation of a target's worker.
+remote targets of the entry service; the observation of a target's worker; and the selection of a job's target.
 
 The worker checks are run through Celery's command line, as the worker service runs it, because a worker that refuses
 to start ends its process.
@@ -20,7 +20,7 @@ import pytest
 from celery.worker.control import Panel
 from fastapi.testclient import TestClient
 
-from dtcc_engine.api import create_app_from_environment
+from dtcc_engine.api import create_app, create_app_from_environment
 from dtcc_engine.jobs import Jobs, jobs_from_environment, record_key
 
 BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
@@ -318,3 +318,127 @@ def test_worker_is_compatible_when_its_image_digest_matches_this_hosts(
         assert observation["worker"]["image_digest"] == worker_digest
         if observation["state"] == "incompatible":
             assert observation["reason"] == "Its worker's image digest is missing or differs from this host's"
+
+
+# The placement order of the API that `submit_observed` submits through.
+PLACEMENT = ["placing", "first", "second"]
+
+
+def submit_observed(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path, states: dict[str, str], target: str | None
+) -> tuple[Any, str | None, list[str], dict[str, int]]:
+    """Submit a `smoke` job to `target`, or by automatic placement if None, through an API whose targets are observed
+    in these states: its own, `placing`, then the remote `first` and `second`.
+
+    Returns the response; the target that the job's record names, if the job was accepted; the targets observed, in
+    order; and how many messages each target's queue gained.
+    """
+    jobs = Jobs(redis_url, "placing", tmp_path)
+    observed: list[str] = []
+
+    def observe(observed_target: str) -> dict[str, Any]:
+        observed.append(observed_target)
+        state = states[observed_target]
+        return {"state": state, "reason": None if state in ("ready", "busy") else f"Why it is {state}"}
+
+    monkeypatch.setattr(jobs, "observe", observe)
+    client = TestClient(create_app("test-token", jobs, {"first": "http://127.0.0.1:1", "second": "http://127.0.0.1:2"}))
+    before = {queue: jobs.records.llen(queue) for queue in states}
+    request = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}, "target": target}
+    response = client.post("/api/v1/jobs", json=request, headers={"Authorization": "Bearer test-token"})
+    recorded = jobs.status(response.json()["job_id"])["target"] if response.status_code == 202 else None
+    return response, recorded, observed, {queue: jobs.records.llen(queue) - before[queue] for queue in states}
+
+
+@pytest.mark.parametrize(
+    ("states", "target", "observed"),
+    [
+        ({"placing": "ready", "first": "ready", "second": "ready"}, "placing", ["placing"]),
+        ({"placing": "busy", "first": "ready", "second": "ready"}, "first", ["placing", "first"]),
+        ({"placing": "unknown", "first": "busy", "second": "ready"}, "second", PLACEMENT),
+        ({"placing": "busy", "first": "busy", "second": "busy"}, "placing", PLACEMENT),
+        ({"placing": "incompatible", "first": "unavailable", "second": "busy"}, "second", PLACEMENT),
+    ],
+    ids=["local-ready", "local-busy", "first-ready-remote", "all-busy", "first-busy-remote"],
+)
+def test_automatic_placement_takes_the_first_ready_target_or_else_the_first_busy_one(
+    monkeypatch: pytest.MonkeyPatch,
+    redis_url: str,
+    tmp_path: Path,
+    states: dict[str, str],
+    target: str,
+    observed: list[str],
+) -> None:
+    response, recorded, observed_targets, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, None)
+    assert (response.status_code, recorded) == (202, target)
+    assert observed_targets == observed
+    assert queued == {queue: int(queue == target) for queue in states}
+
+
+def test_job_no_target_can_accept_is_rejected_with_each_ones_reason(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path
+) -> None:
+    states = {"placing": "unknown", "first": "incompatible", "second": "unavailable"}
+    records = Jobs(redis_url, "counting", tmp_path).records
+    before = len(records.keys(record_key("*")))
+    response, recorded, observed, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, None)
+    assert (response.status_code, recorded) == (503, None)
+    assert response.json()["detail"] == (
+        "The job was not submitted. Target 'placing' is unknown: Why it is unknown. "
+        "Target 'first' is incompatible: Why it is incompatible. Target 'second' is unavailable: Why it is unavailable."
+    )
+    assert observed == PLACEMENT
+    assert queued == {"placing": 0, "first": 0, "second": 0}
+    assert len(records.keys(record_key("*"))) == before
+
+
+@pytest.mark.parametrize("target", ["placing", "second"])
+@pytest.mark.parametrize("state", ["ready", "busy"])
+def test_requested_target_that_is_ready_or_busy_takes_the_job(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path, target: str, state: str
+) -> None:
+    states = {"placing": "ready", "first": "ready", "second": "ready", target: state}
+    response, recorded, observed, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, target)
+    assert (response.status_code, recorded) == (202, target)
+    assert observed == [target]
+    assert queued == {queue: int(queue == target) for queue in states}
+
+
+@pytest.mark.parametrize("target", ["placing", "second"])
+@pytest.mark.parametrize("state", ["unknown", "unavailable", "incompatible"])
+def test_requested_target_that_cannot_accept_the_job_is_rejected_and_no_other_takes_it(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path, target: str, state: str
+) -> None:
+    states = {"placing": "ready", "first": "ready", "second": "ready", target: state}
+    response, recorded, observed, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, target)
+    assert (response.status_code, recorded) == (503, None)
+    assert response.json()["detail"] == f"The job was not submitted. Target '{target}' is {state}: Why it is {state}."
+    assert observed == [target]
+    assert queued == {"placing": 0, "first": 0, "second": 0}
+
+
+def test_requested_target_that_is_not_configured_is_rejected_without_an_observation(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path
+) -> None:
+    states = {"placing": "ready", "first": "ready", "second": "ready"}
+    response, recorded, observed, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, "elsewhere")
+    assert (response.status_code, recorded) == (422, None)
+    assert response.json()["detail"] == "Target 'elsewhere' is not configured on this Engine"
+    assert observed == []
+    assert queued == {"placing": 0, "first": 0, "second": 0}
+
+
+def test_job_whose_targets_do_not_answer_is_rejected_and_not_recorded(redis_url: str, tmp_path: Path) -> None:
+    # No worker serves this API's own target or its remote one, so neither answers its observation.
+    jobs = Jobs(redis_url, "unanswered", tmp_path)
+    client = TestClient(create_app("test-token", jobs, {"absent": "http://127.0.0.1:1"}))
+    before = len(jobs.records.keys(record_key("*")))
+    unknown = "is unknown: Its worker did not answer within 0.5 s."
+    for target, reasons in (
+        (None, f"Target 'unanswered' {unknown} Target 'absent' {unknown}"),
+        ("absent", f"Target 'absent' {unknown}"),
+    ):
+        request = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}, "target": target}
+        response = client.post("/api/v1/jobs", json=request, headers={"Authorization": "Bearer test-token"})
+        assert (response.status_code, response.json().get("detail")) == (503, f"The job was not submitted. {reasons}")
+    assert len(jobs.records.keys(record_key("*"))) == before
