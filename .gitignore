@@ -23,5 +23,6 @@ __pycache__/
 .temp/
 .data/
 .playwright*
+.agents/
 
 temp/

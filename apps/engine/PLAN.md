@@ -16,7 +16,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 
 - **Increments 0 and 1** are written as executable tasks with complete code.
 - **Increments 2 to 6** are specified by scope, upstream interfaces, checks, and blockers. Each is expanded into executable tasks, in this file, when its prerequisites are verified. Expanding an increment is a plan change and is reviewed like one.
-- **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins and is expanded into Tasks 10 to 14; 2b, execution of FEniCSx simulations, moves the pins to the Sim commit that fixes them and is expanded into Tasks 15 and 16. Cancellation moves to increment 4, because Celery's revocation needs its race handling (see increment 4).
+- **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins and is expanded into Tasks 10 to 14; 2b, execution of FEniCSx simulations, moves the pins to the Sim commit that fixes them and is expanded into Tasks 15 and 16. Cancellation moves to increment 4, whose cancellation section records the decision to use an Engine start/cancel gate after investigating Celery revocation.
 - **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part and the Linux deployment, stays an outline until increments 2 to 4 provide what it verifies.
 
 ## Global Constraints
@@ -49,6 +49,18 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 14. Jobs are submitted while a long job runs on a one-process worker: each waiting job runs once, and the broker does not deliver it again after its visibility timeout. Pinned in Task 14 (`test_job_waiting_behind_a_running_job_runs_once`).
 15. The image is built after Core's `develop` has moved, or a later install step resolves Sim's dependencies again: the build fails, rather than producing an image whose Core is not the pinned commit. Pinned in Task 15, Steps 1 and 2 (the build's commit check).
 16. A simulation job runs on the worker service, whose main process initialized PETSc before forking the pool process that runs it: the job completes, and its package loads with its fields. Pinned in Task 16, Step 1 (`test_fenicsx_solve_runs_in_a_prefork_pool_process`), and checked with Sim's Datasets in Step 3.
+17. A consumer cancels a job that waits behind a running one, or that no worker has received yet, even if a worker starts or restarts afterwards: `200` with `cancelled`, the Dataset never runs, and the job reports `cancelled` without a package, although Celery stored `STARTED` when a worker received it. Pinned in Task 18 (`test_job_cancelled_before_a_worker_runs_never_runs`, `test_delivery_after_cancellation_never_runs`) and checked through the worker service in Task 19, Step 4.
+18. A consumer cancels a job whose delivery claimed it: `409` with `execution_started`, and the job runs to its end and delivers its package. A cancellation racing the start ends in exactly one of three ways: cancelled and never run, refused and run, or `already_finished`. Pinned in Task 18 (`test_started_job_cannot_be_cancelled_and_completes`, `test_cancel_racing_the_start_either_prevents_the_run_or_is_refused`).
+19. The broker delivers a finished job's message again: the Dataset does not run again, and the job keeps its outcome, finish time, record expiry, and package, although Celery stores `STARTED` over a failure. Pinned in Task 17 (`test_job_delivered_again_after_it_finished_does_not_run_again`, `test_job_delivered_again_does_not_run_again`).
+20. Redis loses a job's record while the job runs: whether the job completes or fails, the worker does not recreate a partial record. Pinned in Task 17 (`test_record_lost_while_the_job_runs_is_not_recreated`).
+21. A cancellation's answer is lost: `503`, which does not say the cancellation failed, and polling shows `cancelled`. Pinned in Task 18 (`test_lost_cancel_answer_leaves_the_outcome_to_polling`).
+22. A job's record has no gate, as every record from before Task 17 does, or its fields contradict each other: status, download, and cancellation answer `503`, nothing changes the record, and no delivery runs the job. Pinned in Tasks 17 and 18 (`test_unusable_record_is_reported_unavailable_and_never_runs`, `test_cancel_of_an_unusable_record_is_unavailable_and_changes_nothing`).
+23. A Dataset's provider rejects a request whose URL holds the provider key, in its query, its path, or its user information, or whose target does not parse: the failed job reports Core's Dataset, operation, failure class, status code, and transience, and neither the target nor the message, so no part of the key. Pinned in Task 20 (`test_upstream_failure_reports_cores_metadata_without_credentials`).
+24. A job's pool process is killed: the job fails with `WorkerLostError` and a finish time, and the worker runs the next job. Pinned in Task 21 (`test_job_whose_pool_process_is_lost_fails_and_the_worker_runs_on`).
+25. A worker is killed while it runs a job and is started again: the job fails with `WorkerRestarted`; a job that another worker claimed keeps running; a record whose claim or acceptance fields are unusable stays as it was and does not keep the worker from starting; a worker that does not return leaves its job running. Pinned in Task 21 (`test_worker_started_again_fails_the_jobs_its_earlier_run_left`) and checked through the worker service in Task 21, Step 6.
+26. A job never finishes, because its message was lost, its submission was never queued, or its worker never returned: its record expires 31 days after its submission or its claim, and the job is then unknown; a record lost while its job is sent is not recreated when the broker confirms the message. Pinned in Task 22 (`test_job_records_outlast_the_package_retention`, `test_claim_restarts_the_lifetime_of_the_record`, `test_confirmation_does_not_recreate_a_record_lost_meanwhile`).
+27. A host's package directory holds packages of expired, failed, cancelled, unknown, and running jobs, and a staging directory that a killed export left: when the worker starts, it deletes the staging directory and the packages no job can deliver, and every hour after, those packages again; it keeps the running job's package, and a staging directory made while it runs, however old. A worker started again deletes at start the package of a job its earlier run left after the export, once it has recorded the job's failure. Pinned in Task 23 (`test_worker_deletes_the_packages_no_job_can_deliver`) and in the branch review's change (`test_worker_started_again_deletes_the_package_its_earlier_run_left`).
+28. The API, the worker, and Redis are restarted one at a time while jobs run and wait, in a Compose project of their own: an API or worker restart, or a graceful Redis restart, loses, fails, and repeats no job; status answers `503` while Redis is down; and after Redis is killed and returns to a snapshot saved before them, the jobs accepted after it are unknown rather than failed. Pinned in Task 24 (`test_restarted_api_serves_the_jobs_the_earlier_one_accepted`, `test_job_queued_while_no_worker_runs_runs_when_a_worker_starts`) and checked in Task 24, Step 3.
 
 ---
 
@@ -761,6 +773,8 @@ Status: expanded into Tasks 10 to 14. Tasks 10 to 13 were executed 2026-09-30; T
 **Blockers:** none known; `smoke` and `traffic_simulation` round-trip at the current pins.
 
 **Design** (for Tasks 10 to 13):
+
+These describe the implemented 2a behavior. Increment 4's [cancellation design](#cancellation) supersedes Celery's authority over recorded terminal outcomes and the separate finalization writes when implemented; the historical decisions below are retained for context.
 
 - One module, `dtcc_engine/jobs.py`, holds what the HTTP API and the worker share: a `Jobs` object for one compute target, created from `ENGINE_REDIS_URL`, `ENGINE_TARGET`, and `ENGINE_PACKAGE_DIR`. `api.py` validates requests and maps outcomes to HTTP; `worker.py` is only the entry point of the Celery command.
 - Celery owns the execution state, which Engine translates: `PENDING` with an Engine record is `queued`, or `unconfirmed` if the broker never confirmed the job's message; `STARTED` and `PROGRESS` are `running`, `SUCCESS` is `completed`, and `FAILURE` is `failed`. 2a produces no other state: it exposes no cancellation and configures no retries. Increment 4 translates cancellation.
@@ -2174,7 +2188,7 @@ Ruling (2026-09-30, increment review): the review of the whole increment gave th
 
 ## Increment 2b: Simulation execution
 
-Status: executed 2026-10-01, in Tasks 15 and 16, expanded the same day. Task 15 is committed in `9e1607a`. Its results: with the commit check added and the installation unchanged, the build failed at the check with `dtcc-core and dtcc-sim are ['afe1c28b71e545750b890d8db58113c74188475e', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339'], not ['2289d11f85049e13d5042e5cb3e5627c6568765f', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339']`, because pip resolved Sim's Core requirement to the head of Core's `develop`, `afe1c28`, both when installing Sim and again when installing the Engine's dependencies. With Core installed at its pin and Sim without its dependencies, the check passed, `engine:check` gave 64 passed in 12.3 s, and the development image's `direct_url.json` files recorded Core `2289d11f85049e13d5042e5cb3e5627c6568765f` and Sim `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, `pip check` among them, and its token checks passed; the production image recorded the same two commits. `pnpm check` passed. Task 16 is committed in `c56913c`. Its results: `engine:check tests/test_simulation.py` gave 1 passed in 6.0 s. With `pnpm dev:engine` running the API and the worker, the four jobs, submitted together, completed one at a time: `city_volume_mesh` 13.5 s after submission, `urban_heat_simulation` 18.7 s, `urban_wind_simulation` 755 s, of which the worker ran it for 737 s, and `air_quality_field` 785 s, of which 30 s, while the air quality provider returned two 500 errors. Each downloaded package had the stored file's SHA-256, and Core read each as a `VolumeMesh` from the Dataset it was submitted to, with one value per vertex in every field: `city_volume_mesh`, 68.5 KB, 1,645 vertices and no fields; `urban_heat_simulation`, 79.4 KB, `temperature` (`degC`, 1); `urban_wind_simulation`, 131.9 KB, `velocity` (`m/s`, 3), `pressure` (`m^2/s^2`, 1), and `speed` (`m/s`, 1); and `air_quality_field`, 129.9 KB, 2,599 vertices, `NO2` (`µg/m3`, 1) from 3 observations, with `z_offset` 10.13 among its request parameters. While the wind job ran, `inspect ping` got a `pong` from the worker 4 s and 6.4 minutes after the job started. The wind solve did not converge: it stopped at its `max_steps`, 2000, with a relative change of 1.0 and a CFL number of 60,132, its velocity solves reported `KSP_DIVERGED_NANORINF` from step 132, and its fields, all finite, give speeds up to 85,630 m/s for a 5 m/s inlet. The same Dataset, run on the same box in a new process in the `engine` container, outside any pool, diverged the same way in 733 s, from step 305, with speeds up to 276,600 m/s, so the divergence does not come from the pool; the job is `completed` because Sim returns a result ([dtcc-sim#12](https://github.com/dtcc-platform/dtcc-sim/issues/12)). Stopped while idle, the worker logged a warm shutdown and exited with 0. `engine:check` then gave 65 passed in 14.5 s; in the full run, billiard warns that the test process is multi-threaded when the new test's pool forks, which it does not when the test runs alone. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed.
+Status: executed 2026-10-01, in Tasks 15 and 16, expanded the same day. Task 15 is committed in `9e1607a`. Its results: with the commit check added and the installation unchanged, the build failed at the check with `dtcc-core and dtcc-sim are ['afe1c28b71e545750b890d8db58113c74188475e', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339'], not ['2289d11f85049e13d5042e5cb3e5627c6568765f', '0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339']`, because pip resolved Sim's Core requirement to the head of Core's `develop`, `afe1c28`, both when installing Sim and again when installing the Engine's dependencies. With Core installed at its pin and Sim without its dependencies, the check passed, `engine:check` gave 64 passed in 12.3 s, and the development image's `direct_url.json` files recorded Core `2289d11f85049e13d5042e5cb3e5627c6568765f` and Sim `0c9d1c4c9f00530a2ab89c82d8dfa6e17686a339`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, `pip check` among them, and its token checks passed; the production image recorded the same two commits. `pnpm check` passed. Task 16 is committed in `c56913c`. Its results: `engine:check tests/test_simulation.py` gave 1 passed in 6.0 s. With `pnpm dev:engine` running the API and the worker, the four jobs, submitted together, completed one at a time: `city_volume_mesh` 13.5 s after submission, `urban_heat_simulation` 18.7 s, `urban_wind_simulation` 755 s, of which the worker ran it for 737 s, and `air_quality_field` 785 s, of which 30 s, while the air quality provider returned two 500 errors. Each downloaded package had the stored file's SHA-256, and Core read each as a `VolumeMesh` from the Dataset it was submitted to, with one value per vertex in every field: `city_volume_mesh`, 68.5 KB, 1,645 vertices and no fields; `urban_heat_simulation`, 79.4 KB, `temperature` (`degC`, 1); `urban_wind_simulation`, 131.9 KB, `velocity` (`m/s`, 3), `pressure` (`m^2/s^2`, 1), and `speed` (`m/s`, 1); and `air_quality_field`, 129.9 KB, 2,599 vertices, `NO2` (`µg/m3`, 1) from 3 observations, with `z_offset` 10.13 among its request parameters. While the wind job ran, `inspect ping` got a `pong` from the worker 4 s and 6.4 minutes after the job started. The wind solve did not converge: it stopped at its `max_steps`, 2000, with a relative change of 1.0 and a CFL number of 60,132, its velocity solves reported `KSP_DIVERGED_NANORINF` from step 132, and its fields, all finite, give speeds up to 85,630 m/s for a 5 m/s inlet. The same Dataset, run on the same box in a new process in the `engine` container, outside any pool, diverged the same way in 733 s, from step 305, with speeds up to 276,600 m/s, so the divergence does not come from the pool; the job is `completed` because Sim returns a result ([dtcc-sim#12](https://github.com/dtcc-platform/dtcc-sim/issues/12)). Stopped while idle, the worker logged a warm shutdown and exited with 0. `engine:check` then gave 65 passed in 14.5 s; in the full run, billiard warns that the test process is multi-threaded when the new test's pool forks, which it does not when the test runs alone. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. On 2026-10-04 the pins moved to Sim `41055d560c66939a93e23c51f4cc71210541cb26` and Core `17c6efe44ca7622e6ef4a802627dfce3ef7f6174`, the commit in that Sim commit's `uv.lock`, by the procedure in DESIGN.md's upstream item 3, to take Sim's fix for [dtcc-sim#11](https://github.com/dtcc-platform/dtcc-sim/issues/11). Sim's package metadata still declares only Core, and `17c6efe` is reachable from Core's `develop`. Of the Core files Engine relies on, only `dtcc_core/datasets/remote.py` changed, so that remote discovery skips a name registered to a local Dataset; Engine does not use it. Sim places a station without an elevation on the mesh's ground plus `station_height_above_ground` (2 m by default), using the elevation provenance that Core `17c6efe` records, and a usable station outside the mesh is now an error. `engine:check` gave 65 passed, and the development and production images recorded both commits. With `pnpm dev:engine`, `city_volume_mesh`, `urban_heat_simulation`, and, without `z_offset`, `air_quality_field` on `[319450, 6400200, 319650, 6400400]` completed, each with matching SHA-256 digests and a package that loads with its fields: the NO2 field from 9.77 to 18.88 µg/m3. `urban_wind_simulation` completed after 16 minutes and still diverged, ending at `max_steps` with speeds up to 44,469 m/s ([dtcc-sim#12](https://github.com/dtcc-platform/dtcc-sim/issues/12)); the worker answered `inspect ping` during it and shut down warm. `engine:check:prod` gave 18 passed, and its token checks passed; `pnpm check` passed. These changes are left uncommitted for team review.
 
 **Scope:** the Simulation execution row of the acceptance table: representative FEniCSx Sim Datasets run through the worker with their numerical dependencies, and their packages preserve model fields and provenance. The pins move to Sim `0c9d1c4`, which replaces the wind solver's missing DOLFINx call and follows Core's `develop`, and to the Core commit that Sim's lock file records for it; the image enforces that pair.
 
@@ -2205,14 +2219,14 @@ Status: executed 2026-10-01, in Tasks 15 and 16, expanded the same day. Task 15 
 
 - Engine pins both Core and Sim to full commit IDs. Core's is the commit in Sim's `uv.lock` at the pinned Sim commit. Sim deliberately follows Core's `develop` ("Track Core develop and verify current Sim integration", `66769e2`); an exact Core pin in Sim would bind every consumer of Sim to it, and pip refuses two different Git commits of one package. Choosing Core from Sim's lock does not establish that the pair works; this increment's checks do, so the pair is a candidate until Tasks 15 and 16 pass.
 - The build installs Core at its pin, then Sim without its dependencies, because Sim's only one is Core. Engine's own dependencies are installed without exactly `dtcc-core` and `dtcc-sim`, so that pip does not resolve Sim's Core requirement again. One check after all installs fails the build unless Core and Sim are the pinned commits.
-- `air_quality_field` fails with its default `z_offset` wherever its stations lie below the mesh. This is Sim's to fix ([dtcc-sim#11](https://github.com/dtcc-platform/dtcc-sim/issues/11)). Engine passes `z_offset` through like any other parameter and supplies no default (Global Constraints).
+- `air_quality_field` fails with its default `z_offset` wherever its stations lie below the mesh. This is Sim's to fix ([dtcc-sim#11](https://github.com/dtcc-platform/dtcc-sim/issues/11)); Sim fixed it in `6364772`, in the pins since 2026-10-04. Engine passes `z_offset` through like any other parameter and supplies no default (Global Constraints).
 - The wind solver's emulated duration, 11 to 23 minutes on a 200 m box, says nothing about a deployment; increment 5b measures it on a native host. A long job is not delivered again: a pool process acknowledges a job when it starts it, and the worker receives a job only when a pool process is free (Task 14).
 - `urban_wind_simulation` diverges with its defaults, and Sim returns the result as if it had converged ([dtcc-sim#12](https://github.com/dtcc-platform/dtcc-sim/issues/12)). Engine reports what a Dataset returns, so such a job is `completed`; whether a simulation's values are right is Sim's. 2b is accepted for Engine's part (2026-10-02): the jobs ran with their numerical dependencies, and their packages kept their fields and provenance.
 - Automated checks stay offline, as in 2a. A test-defined Dataset that solves a small FEniCSx problem checks the prefork pool; Sim's Datasets, which download city data, run once by hand, and the results are recorded.
 
 **Checks:** the Simulation execution row in the development image: `city_volume_mesh`, `urban_heat_simulation`, `urban_wind_simulation`, and `air_quality_field` (with `z_offset`) run as jobs of the worker service, and their downloaded packages load with their fields and the Dataset that made them; a FEniCSx solve in a prefork pool process, whose parent initialized PETSc, completes (automated); the worker answers `inspect ping` while a simulation runs; the development and production images contain the pinned Core and Sim. Production acceptance on a Linux host is increment 5b's.
 
-**Blockers:** none for Engine. Upstream: `air_quality_field`'s default `z_offset` ([dtcc-sim#11](https://github.com/dtcc-platform/dtcc-sim/issues/11)); `urban_wind_simulation`'s divergence with its defaults, returned as a result ([dtcc-sim#12](https://github.com/dtcc-platform/dtcc-sim/issues/12)); the four result types canonical export does not support ([dtcc-core#135](https://github.com/dtcc-platform/dtcc-core/issues/135)).
+**Blockers:** none for Engine. Upstream: `urban_wind_simulation`'s divergence with its defaults, returned as a result ([dtcc-sim#12](https://github.com/dtcc-platform/dtcc-sim/issues/12)); the four result types canonical export does not support ([dtcc-core#135](https://github.com/dtcc-platform/dtcc-core/issues/135)).
 
 **Design:** Engine's code does not change. Its one job task runs any registered Dataset, Sim's included, and the worker service already uses the prefork pool. The increment changes the image, the spec's pinning rule, and the tests.
 
@@ -2542,15 +2556,2355 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 **Blockers:** none known beyond increment 2. Hosts are compared by platform-specific image digest, all hosts sharing one architecture, which the deployment supplies to each host's configuration; discovery's `versions` come from distribution metadata, and Git-installed Core and Sim report the same version across commits, so versions alone cannot establish compatibility.
 
-## Increment 4: Lifecycle behavior (to be expanded)
+## Increment 4: Lifecycle behavior
+
+Status: executed 2026-10-13 to 2026-10-15, in Tasks 17 to 24. The cancellation design and one-time development transition below were agreed on 2026-10-13, and the cancellation part was expanded the same day into Tasks 17 to 19. Task 17 was executed 2026-10-13 and is committed in `66ad923`. Its results: `pnpm dev:engine` was stopped. With the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 21 failed and 28 passed, each failure as Step 3 expects: 7 deliveries ran where `IGNORED` was expected, 6 unusable records answered `200` and `409` and the one without a Dataset raised `KeyError: 'dataset'`, the status was `running` over a recorded outcome twice and `queued` with a finish time once, `SUCCESS` raised `TypeError` and `REVOKED` raised `KeyError`, and both prefork duplicate deliveries ran the Dataset a second time. With the implementation, `engine:check` gave 88 passed in 19.9 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 18 was executed 2026-10-13 and is committed in `d2b04c2`. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 23 failed and 49 passed, every failure from the missing route's `404 Not Found`, as Step 2 expects: 16 answers of `404` where the tests expect `200`, `409`, `503`, or, without a token, `401`, 5 status-and-result pairs of `(404, None)` where they expect a result, FastAPI's message where the unknown job's test expects "unknown or expired", and the race test's attempts, all `(404, None)`. With the implementation, `engine:check` gave 111 passed in 29.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 19 was executed 2026-10-13; the user's instruction to finish the remaining tasks gave Step 1's go-ahead. Its results: `engine` and `engine-worker` were stopped. Database 0 held 21 keys, 10 of them job records from earlier manual runs, and no queued job; database 1 held 147. After `FLUSHDB`, database 0 had 0 keys and database 1 still 147. The two containers, both of project `dtcc-twin`, were the only ones that mounted `dtcc-twin_engine-packages`, whose labels named that project and `engine-packages`; the containers and the volume were removed, and `dtcc-twin_postgres-data` remained. With `pnpm dev:engine`, cancelling `smoke` while `city_volume_mesh` ran answered `200` with `cancelled`, and cancelling `city_volume_mesh` answered `409` with `execution_started`. `city_volume_mesh` completed after 103 s in the worker, and its 68,525-byte package downloaded. `smoke` stayed `cancelled`, its download answered `409`, and when the worker received it, the worker logged that it does not run because its record is `refused`, and Celery logged the task as ignored. With the worker stopped after a warm shutdown, a `smoke` job was `queued`, and cancelling it answered `200` with `cancelled`. Started again, the worker received and skipped it the same way, a later `smoke` job completed, and the first stayed `cancelled` without a package. The two cancelled records had TTLs of 2,678,263 and 2,678,384 s. Stopped, the worker logged a warm shutdown, and both containers exited with 0. `engine:check` gave 111 passed in 29.6 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`; `pnpm check` passed. The cancellation part of increment 4 is complete. The remaining lifecycle work is being expanded into tasks one at a time, from Task 20 (Remaining lifecycle work); Tasks 20 to 24 were expanded 2026-10-13 and are not executed; with them, increment 4 is expanded in full. Their review of 2026-10-13 asked for changes to each, and they were revised 2026-10-14 (Remaining lifecycle work). Their second review, of 2026-10-15, accepted the plans of Tasks 20, 21, and 23 and asked for changes to Tasks 22 and 24, which were revised the same day. Their third review, also of 2026-10-15, accepted the plans of Tasks 20 to 23 and asked for one more change to Task 24's Redis outage check, which was revised the same day. Its fourth review, also of 2026-10-15, accepted it, so the plans of Tasks 20 to 24 are accepted. Task 20 was executed 2026-10-15. Its results: with the tests written, `engine:check tests/test_jobs.py` gave 8 failed and 66 passed, each as Step 2 expects: the two new unusable records answered `200` and `409` for status and download, and `200` for cancellation, where the tests expect `503`, and the four upstream-failure cases reported `{"type": "DatasetUpstreamError"}` without `upstream`. With the implementation, `engine:check` gave 119 passed in 30.3 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 20 is committed in `555e78b`. Task 21 was executed 2026-10-15. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_redelivery.py` gave 8 failed and 80 passed, each as Step 2 expects: the three records with unusable claims answered `200` and `409` for status and download, and `200` for cancelling the waiting job and `409` for the two started ones, where the tests expect `503`; the job whose pool process killed itself was `failed` with `{"type": None}`; and the job an earlier run left was still `running`. With the implementation, `engine:check` gave 127 passed in 35.9 s. With `pnpm dev:engine`, the worker's banner named `celery@engine-worker`, and its startup check of development database 0, which held 4 job records, logged nothing. A `city_volume_mesh` job was `running` and reported progress, with the claim `celery@engine-worker 1666740453f14f34bfeeb54b4ddd3534 32`. After `kill -s KILL engine-worker`, the worker exited with 137, and the job still reported `running`. Started again, the worker logged that the job failed with `WorkerRestarted` because that claimant is gone, and was ready 1.1 s later; the job was `failed` with `{"type": "WorkerRestarted"}` and a finish time, its download answered `409`, and its record's TTL was 2,678,392 s. Stopped, the worker logged a warm shutdown, and both containers exited with 0. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed. Task 21 is committed in `ff328cf`. Task 22 was executed 2026-10-15. Its results: with the tests written, `engine:check tests/test_jobs.py` gave 3 failed and 80 passed, each as Step 2 expects: the queued job's record had a TTL of `-1`, the claim left the shortened lifetime of 60 s, and the submission whose record was lost meanwhile answered `202`, where `503` is expected; `test_confirmation_keeps_the_outcome_and_lifetime_of_a_job_that_finished_first` passed. With the implementation, `engine:check` gave 130 passed in 35.8 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `DESIGN.md` and `PLAN.md`; `pnpm check` passed. Task 22 is committed in `c000c47`. Task 23 was executed 2026-10-15. Its results: with the test written, `engine:check tests/test_redelivery.py` gave 1 failed and 8 passed, as Step 2 expects: once the worker had started, the kept packages also held `expired`, `failed`, `cancelled`, and `unknown`. With the implementation, `engine:check` gave 131 passed in 38.5 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `DESIGN.md` and `PLAN.md`; `pnpm check` passed. Task 23 is committed in `90aa5af`. Task 24 was executed 2026-10-15. Its results: `engine:check tests/test_redelivery.py` gave 11 passed in 41.2 s, the 2 new tests passing as they pin existing behavior, and `engine:check` gave 133 passed in 44.2 s. Step 3 ran in the Compose project `dtcc-twin-engine-restart`, whose `compose ps` listed only its own three containers; the development API and worker were not running, and development Redis was left alone. API: with `city_volume_mesh` `running` and `smoke` `queued`, both kept those states after `restart engine` once health answered; both completed, their packages of 68,525 and 114,403 bytes downloaded, and the worker's log had one `succeeded` line for each and no delivery logged as not run. Worker: stopped, it logged a warm shutdown; a `smoke` job submitted meanwhile was `queued`, and it completed once after the worker started. Redis: the first attempt was conclusive. `city_volume_mesh` reported progress in `download_pointcloud` before Redis stopped; the outage ran from 09:39:03.125Z to 09:39:04.240Z by the Redis container's clock, and status answered `503` "Job state is temporarily unavailable" for both jobs, never `failed`. The worker logged the lost connection at 09:39:03.278 and `Connected to redis://engine-redis:6379/0` at 09:39:05.297; its pool process read geometries from 09:39:02.69 to 09:39:04.73, across the outage. `city_volume_mesh` finished at 09:39:05.169, after the outage, having run 4.2 s with the lidar and footprint tiles that check 1 had cached in the container. `smoke` was received after the reconnection; both jobs completed once, their packages downloaded, and no message was left unacknowledged. Celery 5.6.3 logged a pending-deprecation warning that from Celery 6 a worker cancels its running late-acknowledged tasks when the broker connection is lost, unless `worker_cancel_long_running_tasks_on_connection_loss` says otherwise. Redis lost: with automatic snapshots off, `SAVE` with no job queued or running gave a `DBSIZE` of 13; `smoke` job A completed, and with the worker stopped, `smoke` job B was `queued`. After `kill -s KILL` and a start, `DBSIZE` was 13, `EXISTS` answered 0 for both records, and both jobs answered `404` with "unknown or expired"; the five jobs of the earlier checks were `completed`, and their packages downloaded. Started, the worker deleted A's package as one no job can deliver, received no delivery of B, and the queue was empty. `down --volumes --rmi local` removed the project's containers, package volume, network, and images; `dtcc-twin_engine-packages`, `dtcc-twin_postgres-data`, and the development images remained. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; Prettier passed for `PLAN.md`; `pnpm check` passed. Increment 4 is executed. The review of the branch on 2026-10-15 found that Celery orders the bootsteps `RecordLostClaims` and `CleanPackages` at random, so a worker started again could keep the package of a job its earlier run left until the next hourly pass; `CleanPackages` now requires `RecordLostClaims`, and `jobs.py` and `test_redelivery.py` are authoritative where they differ from Task 23's listings. Before the change, Celery's order put the cleanup first in 10 of 20 processes, and the new test, `test_worker_started_again_deletes_the_package_its_earlier_run_left`, failed in 2 of 6 runs, each because the package was still there after the job had failed with `WorkerRestarted`. With the change, the check of lost claims came first in 20 of 20 processes, the test passed in 6 of 6 runs, and `engine:check` gave 134 passed in 47.5 s. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed; `pnpm check` passed.
 
 **Scope:** failure reporting, pre-execution cancellation (moved from increment 2) and the start/cancel race, running-job cancellation reported as unsupported, restart behavior without recovery promises for separate API, worker, and broker restarts, and physical cleanup of expired packages, and of packages left without a completed job, such as one kept after its job failed or one whose record has no finish time. It also handles a failed job whose worker recorded no exception type. The loss of a pool process, which Celery may record as a failure, is distinguished from the loss of the whole worker, which can leave the job's state stale. Both gaps were found in increment 2a's review.
 
-**Upstream interfaces:** Celery 5.6.3's task states, revocation, and result expiry (increment 2a), read in its source at `v5.6.3`. `control.revoke` without termination makes each worker that receives the broadcast add the ID to an in-memory revoked set (by default at most 50,000 IDs, oldest evicted first when full, entries older than 10,800 seconds purged lazily; kept across restarts only with `--statedb`) and immediately attempt to write `REVOKED` to the result backend for the ID, whatever its state (`celery/worker/control.py`, `_revoke`). The write is skipped when the stored state is `SUCCESS` (`celery/backends/base.py`, `BaseKeyValueStoreBackend._store_result`); a queued message is discarded when a worker receives it (`celery/worker/request.py`, `Request.revoked`). So `REVOKED` does not confirm cancellation: a running task keeps running and its result overwrites it; revoking a failed job overwrites `FAILURE` and restarts its expiry, while a succeeded job keeps `SUCCESS`; revoking an unknown ID creates a record; a revoke sent while no worker runs is lost. The worker's `task_revoked` signal marks an actual discard. Core's `DatasetUpstreamError` (defined in `dtcc_core.datasets.dataset`; not re-exported from `dtcc_core.datasets` at the pinned commit) and `DatasetDescriptor.serialize_upstream_error`, which converts it into JSON-safe metadata (Dataset, operation, target, failure class, status code, message, transience). Engine still decides which of that metadata a consumer sees, so that no error response exposes the API token or provider credentials.
+**Upstream interfaces:** Celery 5.6.3's task states, `Ignore`, and result expiry; Redis Lua for atomic conditional record updates, as described under Cancellation. For later failure reporting, Core's `DatasetUpstreamError` (defined in `dtcc_core.datasets.dataset`; not re-exported from `dtcc_core.datasets` at the pinned commit) and `DatasetDescriptor.serialize_upstream_error`, which converts it into JSON-safe metadata (Dataset, operation, target, failure class, status code, message, transience). Engine still decides which of that metadata a consumer sees, so that no error response exposes the API token or provider credentials.
 
 **Checks:** the Failure reporting, Cancellation, Retention, and Restart behavior rows of the acceptance table, each restart exercised separately, against the selected Celery version (upstream item 5).
 
-**Blockers:** the revocation behavior above comes from source only; it and the queued-task races must be verified with real Redis and workers before the cancellation contract is claimed.
+**Blockers:** none known. Tasks 17 to 19, the cancellation, are executed. Tasks 20 to 24, the remaining lifecycle work, are expanded. Review accepted the plans of Tasks 20 to 24 on 2026-10-15; Tasks 20 to 24 are executed. An expanded task is not an accepted one until review accepts it, and an accepted plan is not an executed task.
+
+### Cancellation
+
+**Decision and boundary:** use one atomic start/cancel gate in Engine's existing acceptance record, not Celery revoke. This is bounded coordination for permission to invoke one Dataset. Celery retains delivery, worker processes, concurrency, and task results; Core and Sim retain computation and package semantics. No automatic Dataset retries, resubmission, running-job termination, scheduler, or recovery protocol is added. Keep `task_publish_retry=False`, `task_track_started=True`, `worker_disable_prefetch=True`, instance-bound tasks, and the broker-only sender.
+
+**Source evidence:** at Celery `v5.6.3`, [`worker/control.py`](https://github.com/celery/celery/blob/v5.6.3/celery/worker/control.py) immediately attempts to write `REVOKED` when processing a revoke. [`backends/base.py`](https://github.com/celery/celery/blob/v5.6.3/celery/backends/base.py) skips later writes over an existing `SUCCESS`, but not `FAILURE`; effective result writes through [`backends/redis.py`](https://github.com/celery/celery/blob/v5.6.3/celery/backends/redis.py) restart the backend TTL. [`app/trace.py`](https://github.com/celery/celery/blob/v5.6.3/celery/app/trace.py) writes `STARTED` before the task body, and `Ignore` prevents the subsequent normal `SUCCESS` write. An ignored duplicate can therefore overwrite a failed task's Celery state with `STARTED`. These are source findings, not tests of the proposed gate.
+
+**Reported experiments:** implementation-side results supplied for review, not independently rerun as part of this change:
+
+- Immediate execution beat a revoke request.
+- Offline, restarted, and killed workers lost revocation information in the tested setups.
+- Revoking a failed job overwrote `FAILURE`; revoking an unknown ID created a Celery result.
+- A running job's progress overwrote `REVOKED`.
+- After Redis state loss, a still-running job recreated an incomplete Engine record containing only `finished_at`, which status could not read.
+
+These results justify investigating a different cancellation boundary; they do not establish that every restart loses revokes. Workers can synchronize revokes from peers at startup. [`worker/state.py`](https://github.com/celery/celery/blob/v5.6.3/celery/worker/state.py) persists revoked IDs with `--statedb`, and [`worker/components.py`](https://github.com/celery/celery/blob/v5.6.3/celery/worker/components.py) registers its save on process exit; a killed process may not save its latest state. The in-memory set has a default cap of 50,000 IDs and a 10,800-second expiry applied during set maintenance, not a guaranteed cancellation-retention interval. Worker revoke storage and Redis persistence are separate. The reports do not include the exact shutdown commands, state-file paths, or Redis snapshot settings needed to reproduce every case; those details must accompany any future reproduction rather than being inferred here. Effective Celery result writes renew that result's expiry, not Engine's finish-based public retention.
+
+**Record and transitions:** `Jobs.submit` creates the acceptance fields and `execution_gate=waiting` together before publication. An unconfirmed publication keeps its acceptance record and is cancellable while the gate is still `waiting`. The acceptance fields are the Dataset, target, and usable submission timestamp; `queued_at` is optional because publication can be unconfirmed. A missing or unknown gate, missing acceptance fields, invalid timestamps, or inconsistent gate/outcome/finish metadata makes a record unusable. Missing records are unknown, not usable empty records. There is no permanent legacy execution branch or `legacy_job` response after the development transition.
+
+Use small [Redis Lua operations](https://redis.io/docs/latest/develop/programmability/eval-intro/) to validate the existing record before changing it. The validation and conditional writes occur atomically, with no separate existence check and no WATCH/MULTI retry loop:
+
+| Operation | Required state                                              | Atomic change                                                                                                                         |
+| --------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Start     | Usable acceptance, `waiting`, no outcome or finish metadata | Change the gate to `started`; grant permission only to this delivery.                                                                 |
+| Cancel    | Usable acceptance, `waiting`, no outcome or finish metadata | Change the gate to `cancelled`; record `outcome=cancelled`, UTC `finished_at`, and the 31-day TTL.                                    |
+| Finish    | Usable acceptance, `started`, no outcome or finish metadata | Record explicit `outcome=completed` or `failed`, UTC `finished_at`, the original exception type only for failure, and the 31-day TTL. |
+
+No operation creates a missing record or overwrites an existing decision or outcome. `completed` is written only after canonical export and Core package validation. The worker's exception metadata moves into the same finish operation; it must not use an earlier unconditional `HSET`. Existing outcomes retain their timestamp and expiry. Unfinished records still have no TTL; stale-record policy remains separate work.
+
+**Execution and uncertainty:** place the start gate before Dataset invocation and outside ordinary execution/finalization. Only a confirmed winning response permits computation. Cancelled or duplicate deliveries and missing/unusable records raise `Ignore` without invoking the Dataset, installing its progress callback, finalizing the job, or touching its package. A failed or lost start response also grants no permission and causes no automatic execution retry; record diagnostics and leave uncertain lifecycle resolution separate. `started` is permission, not liveness. There is at most one start winner per surviving record, not exactly-once computation or protection against lost/rolled-back Redis state.
+
+**Terminal authority:** Engine's explicit outcome decides completed, failed, and cancelled public status before Celery metadata is interpreted. Never infer successful completion from `finished_at` or the absence of `error_type`. This supersedes the Task 11 decision that Celery is authoritative and that a recorded finish can appear as running: duplicate `STARTED` writes must not hide a recorded failure. Celery still supplies observed state and progress without an Engine outcome. Do not turn a Celery-only failure into running or invent finish metadata; pool/whole-worker loss and other incomplete states remain separate lifecycle work. A package requires Engine-confirmed completion. `REVOKED` alone cannot become cancelled. Status reads must preserve these rules when the record changes during polling.
+
+**API:** implement authenticated `POST /api/v1/jobs/{job_id}/cancel`, without a body, following the [DESIGN.md response table](DESIGN.md#cancellation). A successful response contains `job_id`, `status_url`, and `result` (`cancelled` or `already_finished`). Recorded terminal outcomes take precedence over a `started` gate. A start winner without an outcome gets `409 execution_started`; an absent or publicly expired record gets `404`; Redis errors, uncertain responses, and unusable records get `503`. A `503` does not say whether cancellation took effect: poll. No route sends a revoke.
+
+Cancelled status includes its recorded finish time and no progress, error, or package. Package download returns `409` until the job publicly expires, then `404`. All public job routes expire cancellation after 30 periods of 24 hours; the record lasts 31 days. Repeated cancellation, polling, and eventual delivery do not reset either deadline. Delivery after the record disappears still cannot compute.
+
+**One-time development transition:** the approved policy discards local job history, queued messages, Celery results, and packages when this implementation is introduced. Task 19 ran it on the development machine. Before cancellation code reaches the source mount, stop the API and warm-stop all old workers, allowing active computation to finish and confirming process exit. Keep Redis running; clear only the development Compose project's Engine DB 0. Identify the project's package volume, remove the stopped API/worker containers referencing it, and remove only that `engine-packages` volume. Then apply, rebuild, and start the new API and worker together before resuming submissions. Preserve DB 1, Postgres, and unrelated storage. Use the [README procedure](../../README.md#engine-cancellation-transition), including its stop-timeout and volume-reference requirements. This removes the need for permanent legacy handling; it is not a routine restart policy. Every consumer of these queues must enforce the gate before cancellation is exposed, including future deployments.
+
+**Verification to implement, not results:** write tests first and confirm each fails for missing behavior rather than setup/import errors. Existing test expectations may change only after the proposed change and reason are reviewed and approved. Use isolated test Redis and real prefork workers for race and delivery checks, with observable Dataset execution counts:
+
+- Cancellation wins: zero Dataset executions, confirmed cancelled status, and no package.
+- Start wins: `409`, and the original computation continues normally.
+- Concurrent and repeated cancels: one outcome and unchanged finish time/expiry.
+- Unconfirmed submission: cancellation settles a usable waiting record; any later delivery skips it.
+- Cancel without a worker, then start/restart the worker: delivery cannot compute.
+- Late delivery before public expiry, after public expiry, and after record removal: no computation or record recreation.
+- Duplicate delivery while running and after failure or completion: no second computation, changed outcome, extended expiry, or modified package. Exercise Celery's pre-body `STARTED` write.
+- Lost cancellation response: polling observes the recorded outcome; no false assertion that cancellation failed.
+- Failed/lost start response: no computation by that delivery. Redis failure never grants permission.
+- Record loss while running, followed by success or exception: finalization does not recreate it. Existing terminal records cannot be overwritten.
+- Terminal, unknown, expired, missing-gate, malformed, and inconsistent records: the specified HTTP outcomes, no accidental execution, and no uncaught status parsing errors.
+- Engine outcomes override Celery metadata; a timestamp without an explicit outcome is never treated as completion. Preserve existing submission, progress, package-validation, authentication, and retention behavior outside the deliberate terminal-authority change.
+
+After targeted checks, run the full Engine suite, production checks with token checks, and `pnpm check`. Record passed, failed, skipped, and not-run results separately. No gate tests, reset procedure, or cancellation runtime acceptance have been run for this documentation change. Worker-loss detection, stale-state retention, general state normalization, and automatic orphan/expired-package cleanup are not completed by this cancellation section.
+
+**Expansion** (2026-10-13): Task 17 adds the start gate and the recorded outcomes, Task 18 the cancel route, and Task 19 the development transition and the checks through the worker service. Before they were written, their code and tests ran in a scratch copy of the Engine, in the development image at the pinned Core and Sim, against a Redis 8 of its own. With the 2a code, 21 of Task 17's 23 new tests failed, each on the behavior it specifies; the other 2 pin 2a behavior that stays. With Task 17's code, all 23 of Task 18's tests failed on the missing route. With both, the whole suite gave 111 passed in three runs in a row, in about 30 s. The prototype also showed two defects of the 2a code: `status` raises `TypeError` when Celery's state is `SUCCESS` and the record has no finish time, and `KeyError` when it is `REVOKED`. Both become `503`.
+
+**Interfaces verified for the tasks** (2026-10-13, in the development image: Celery 5.6.3, kombu 5.6.2, redis-py 6.4.0; Redis 8):
+
+- Celery's tracer (`celery/app/trace.py`, `build_tracer`) stores `STARTED` before the task body when `task_track_started` is set and the task is not eager. `Ignore` raised in the body gives the state `IGNORED` and skips `mark_as_done`, so no result is stored. The prototype's prefork runs confirmed both: a skipped delivery leaves `STARTED`, which replaces a stored `FAILURE` but not a `SUCCESS`.
+- `Task.apply(args=..., task_id=...)` (`celery/app/task.py`) runs the same tracer in the calling process. It stores no `STARTED` and no result, because `task_store_eager_result` is false, does not raise the task's exception, because `task_eager_propagates` is false, and returns an `EagerResult` whose `state` is `IGNORED`, `SUCCESS`, or `FAILURE`. In the task, `celery.current_task.request.id` is the given `task_id`.
+- redis-py 6.4.0: `Redis.register_script(script)` returns a `Script`. Calling it with `keys=` and `args=` sends `EVALSHA` and loads the script on `NoScriptError` (`redis/commands/core.py`, `Script.__call__`). With `decode_responses=True`, a Lua string reply is a `str`.
+- Redis Lua (Redis 8, Lua 5.1): a script runs atomically; `HMGET` gives `false` for a missing field; `unpack` is available; `EXPIRE` takes seconds.
+- Kombu's Redis transport delivers a queue's messages in the order they were sent (`LPUSH`, `BRPOP`). Task 14's test relies on this already: on a one-process worker, a job sent last completes after every earlier delivery is handled.
+
+**Decisions for the tasks** (proposed with them):
+
+- `Jobs.read_record` checks the whole record in Python: the Dataset, the target, a submission time that parses with a UTC offset, a known gate, an outcome the gate allows, a finish time exactly when there is an outcome, and an error type exactly when the outcome is `failed`. Starting and cancelling call it first and then run their Lua script, which checks atomically what can still change: whether the record exists, its gate, its outcome, and its finish time. The acceptance fields never change once written: submission writes them and the gate in one `HSET` and later adds only `queued_at`. So checking them outside the script keeps each decision atomic, and the scripts parse no timestamps. The finish script checks only that the record exists, that its gate is `started`, and that it has no outcome or finish time: it relies on the acceptance fields that the claim checked, which have not changed since. DESIGN.md's Cancellation section says so.
+- `status` keeps its read order, Celery's state first and the record second. The worker records the outcome before Celery stores a terminal state, so a terminal state read first implies an outcome in the record read second, and a job that finishes between the two reads is reported with its recorded outcome. Without an outcome, `PENDING`, `STARTED`, `PROGRESS`, and `FAILURE` translate as in 2a; `SUCCESS` and every other Celery state, such as `REVOKED`, answer `503`. A failure that Celery recorded without Engine's outcome, such as a lost pool process, stays `failed` with no finish time and an error type of null; resolving it is the remaining lifecycle work.
+- The worker claims the job before it installs the progress callback, and a delivery that does not claim it, for any reason, raises `Ignore`. After the package validates, or after an exception, the finish script records the outcome. If it answers that the record is gone or no longer claimed, the task raises `Ignore`, so Celery stores no terminal state. If Redis does not answer it, the error propagates, and the outcome may or may not be recorded. A package whose outcome was not recorded stays on disk for the orphan cleanup of the remaining lifecycle work.
+- The cancel route answers `200` with `job_id`, `status_url`, and `result`; `409` with a `detail` that holds `result: execution_started` and a message; `404` with the status route's message; and `503` with a message saying that whether the job is cancelled is unknown and that the consumer should poll it.
+- Tests of the gate's decisions run the job's task in the test process with `Task.apply`. It runs the same task function without a worker, so these tests are deterministic. Tests that need Celery's `STARTED` write, a second delivery of a message, or real timing use the prefork worker of `test_redelivery.py`, whose module stays separate for the reason Task 14 gives; a job submitted last shows when earlier deliveries are done.
+- The race test cannot choose the winner. In the prototype, the start won all 10 attempts on an idle worker (7 answered `already_finished`, 3 `execution_started`). The test checks that every attempt ends in one of the three consistent outcomes; the test that cancels before any worker exists pins the cancellation winning.
+- Existing tests: `test_job_routes_reject_missing_tokens` gains the cancel route; `counting_dataset` gains `fail`; `prefork_jobs` deletes the release key when it starts, because the module now has several tests that gate jobs and each test's teardown sets the key; `test_redelivery.py`'s docstring covers its new tests. No existing expectation changes. `test_status_read_while_the_job_finishes_is_consistent` stays as it is: its simulated finish comes after both of Engine's reads, so it passes with either code; the new `test_status_read_while_the_job_finishes_reports_its_outcome` covers a finish between them.
+- The one-time development transition runs in Task 19, before `pnpm dev:engine` first serves the new code. Tasks 17 and 18 use only `pnpm engine:check`, whose database 1 the transition leaves alone. They need `pnpm dev:engine` stopped, because its API reloads mounted source and its worker does not.
+
+### Task 17: Run a job only when its delivery claims it, and record its outcome
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/dtcc_engine/api.py` (`find_job`)
+- Modify: `apps/engine/tests/test_jobs.py`
+- Modify: `apps/engine/tests/test_redelivery.py`
+- Modify: `apps/engine/PLAN.md` (Increment 4 status)
+
+**Interfaces:**
+
+- Consumes:
+  - From Tasks 10 to 14: `Jobs(redis_url, target, package_dir)`, `Jobs.submit`, `Jobs.status`, `Jobs.package_path`, `Jobs.records`, `Jobs.sender`, `Jobs.celery_app`, `record_key`, `RUN_DATASET`, `RETENTION`, and `RECORD_LIFETIME`.
+  - From the tests: the `client`, `jobs`, `prefork_jobs`, and `counting_dataset` fixtures, and `submit`, `triangle`, `wait_for`, `wait_until_completed`, `runs_key`, `BOUNDS`, `SMOKE`, and `AUTHORIZED`.
+  - From Celery: `celery.exceptions.Ignore` and `TaskRevokedError`, `celery.current_task`, and `Task.apply`. From redis-py: `Redis.register_script`.
+- Produces:
+  - `Jobs.submit` writes `execution_gate=waiting` with the acceptance fields.
+  - `Jobs.read_record(job_id)`: the record with parsed timestamps, or None; raises `JobStateUnavailable` for an unusable record.
+  - `Jobs.claim(job_id) -> bool` and `Jobs.finish(job_id, outcome, error_type="")`, through `Jobs.start_script` and `Jobs.finish_script`.
+  - `Jobs.status` takes a terminal state from the recorded outcome and raises `JobStateUnavailable` when it cannot establish the state; the status and download routes answer it with `503`.
+  - `parse_time`, `JobStateUnavailable`, `CELERY_STATES` (replacing `STATES`), `OUTCOMES`, `START`, and `FINISH` in `dtcc_engine.jobs`.
+
+- [x] **Step 1: Check that the development engine is stopped**
+
+Run: `docker compose --profile engine ps --status running --services`
+Expected: neither `engine` nor `engine-worker` is listed. If either is, stop both as step 1 of the README's transition says, and clear nothing: the transition is Task 19's. The API reloads mounted source and the worker does not, so a running pair would serve the new status code with the old worker.
+
+- [x] **Step 2: Write the tests**
+
+In `apps/engine/tests/test_jobs.py`, replace `import pytest` and `from celery import Celery` with:
+
+```python
+import pytest
+import redis
+from celery import Celery, current_task
+from celery.exceptions import TaskRevokedError
+```
+
+Add after the `failing_dataset` fixture:
+
+```python
+@pytest.fixture
+def probe_dataset(jobs: Jobs) -> Iterator[tuple[str, list[str]]]:
+    """Register a Dataset that records the ID of each job it runs for, and return its name and that list.
+
+    `fail` makes it raise; `lose_record` makes it delete its job's record first, as Redis losing its data would.
+    """
+    runs: list[str] = []
+
+    class ProbeArgs(DatasetBaseArgs):
+        fail: bool = False
+        lose_record: bool = False
+
+    class ProbeDataset(DatasetDescriptor):
+        name = "engine_probe"
+        description = "Dataset defined by an Engine test that records its runs"
+        ArgsModel = ProbeArgs
+
+        def build(self, args):
+            runs.append(current_task.request.id)
+            if args.lose_record:
+                jobs.records.delete(record_key(current_task.request.id))
+            if args.fail:
+                raise RuntimeError("probe failure")
+            return triangle()
+
+    try:
+        yield "engine_probe", runs
+    finally:
+        unregister("engine_probe")
+
+
+def deliver(jobs: Jobs, job_id: str, request: dict) -> str:
+    """Run the job's task in this process, as a worker does with a delivered message, and return Celery's state.
+
+    Unlike a worker, this stores no state in the result backend.
+    """
+    task = jobs.celery_app.tasks[RUN_DATASET]
+    return task.apply(args=[request["dataset"], request["parameters"]], task_id=job_id).state
+
+
+FINISHED_AT = "2026-10-13T12:00:00+00:00"
+# Changes that make a submitted job's record unusable; None deletes the field.
+UNUSABLE_CHANGES = {
+    "no-gate": {"execution_gate": None},
+    "unknown-gate": {"execution_gate": "paused"},
+    "no-dataset": {"dataset": None},
+    "unreadable-submission-time": {"submitted_at": "yesterday"},
+    "finish-time-without-outcome": {"finished_at": FINISHED_AT},
+    "outcome-of-a-waiting-job": {"outcome": "completed", "finished_at": FINISHED_AT},
+    "failure-without-type": {"execution_gate": "started", "outcome": "failed", "finished_at": FINISHED_AT},
+}
+
+
+def change_record(jobs: Jobs, job_id: str, changes: dict[str, str | None]) -> None:
+    for field, value in changes.items():
+        if value is None:
+            jobs.records.hdel(record_key(job_id), field)
+        else:
+            jobs.records.hset(record_key(job_id), field, value)
+```
+
+Add after `test_status_read_while_the_job_finishes_is_consistent`:
+
+```python
+def test_status_read_while_the_job_finishes_reports_its_outcome(jobs: Jobs, monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = jobs.submit("smoke", {"bounds": BOUNDS})
+    # Celery's backend is per thread, so this test reads the status in its own thread rather than through the API.
+    read_celery_state = jobs.celery_app.backend.get_task_meta
+
+    def finish_after_the_read(task_id: str, *args, **kwargs) -> dict:
+        meta = read_celery_state(task_id, *args, **kwargs)
+        # The job finishes between Engine's two reads: the worker records the outcome, then Celery stores SUCCESS.
+        outcome = {"execution_gate": "started", "outcome": "completed", "finished_at": datetime.now(UTC).isoformat()}
+        jobs.records.hset(record_key(job_id), mapping=outcome)
+        jobs.celery_app.backend.mark_as_done(job_id, None)
+        return meta
+
+    monkeypatch.setattr(jobs.celery_app.backend, "get_task_meta", finish_after_the_read)
+    job = jobs.status(job_id)
+    assert (job["state"], job["finished_at"] is not None) == ("completed", True)
+```
+
+Add at the end of the file:
+
+```python
+@pytest.mark.parametrize(("fail", "outcome"), [(False, "completed"), (True, "failed")])
+def test_job_delivered_again_does_not_run_again(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], fail: bool, outcome: str
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS, "fail": fail}}
+    job_id = submit(client, request)
+    deliver(jobs, job_id, request)
+    key = record_key(job_id)
+    record, lifetime = jobs.records.hgetall(key), jobs.records.ttl(key)
+    package = None if fail else jobs.package_path(job_id).read_bytes()
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == [job_id]
+    assert (record.get("outcome"), record.get("error_type")) == (outcome, "RuntimeError" if fail else None)
+    assert jobs.records.hgetall(key) == record
+    assert jobs.records.ttl(key) <= lifetime
+    assert (None if fail else jobs.package_path(job_id).read_bytes()) == package
+
+
+def test_delivery_of_a_job_another_delivery_claimed_does_not_run_it(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]]
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    job_id = submit(client, request)
+    # Another delivery of the same message claimed the job and is running it.
+    jobs.records.hset(record_key(job_id), "execution_gate", "started")
+    record = jobs.records.hgetall(record_key(job_id))
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == []
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+@pytest.mark.parametrize("changes", UNUSABLE_CHANGES.values(), ids=UNUSABLE_CHANGES.keys())
+def test_unusable_record_is_reported_unavailable_and_never_runs(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], changes: dict[str, str | None]
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    job_id = submit(client, request)
+    change_record(jobs, job_id, changes)
+    record = jobs.records.hgetall(record_key(job_id))
+    polled = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    downloaded = client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert (polled.status_code, downloaded.status_code) == (503, 503)
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == []
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+@pytest.mark.parametrize("fail", [False, True], ids=["completing", "failing"])
+def test_record_lost_while_the_job_runs_is_not_recreated(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], fail: bool
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS, "fail": fail, "lose_record": True}}
+    job_id = submit(client, request)
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == [job_id]
+    assert not jobs.records.exists(record_key(job_id))
+
+
+@pytest.mark.parametrize("claimed", [False, True], ids=["before-the-claim", "after-the-claim"])
+def test_claim_without_an_answer_does_not_run_the_job(
+    client: TestClient,
+    jobs: Jobs,
+    probe_dataset: tuple[str, list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+    claimed: bool,
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    job_id = submit(client, request)
+
+    def lose_the_answer(*args, **kwargs):
+        # Redis fails before it runs the claim, or runs it and its answer is lost.
+        if claimed:
+            jobs.records.hset(record_key(job_id), "execution_gate", "started")
+        raise redis.ConnectionError("connection lost before Redis answered")
+
+    monkeypatch.setattr(jobs, "start_script", lose_the_answer, raising=False)
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == []
+    assert "outcome" not in jobs.records.hgetall(record_key(job_id))
+
+
+@pytest.mark.parametrize(("fail", "outcome"), [(False, "completed"), (True, "failed")])
+def test_recorded_outcome_prevails_over_celery_state(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], fail: bool, outcome: str
+) -> None:
+    dataset, _ = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS, "fail": fail}}
+    job_id = submit(client, request)
+    deliver(jobs, job_id, request)
+    # A later delivery of the same message: Celery stores STARTED before the task can decline to run.
+    jobs.celery_app.backend.store_result(job_id, {"pid": 0, "hostname": "duplicate"}, "STARTED")
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    assert (job["state"], job["error"]) == (outcome, {"type": "RuntimeError"} if fail else None)
+    assert job["finished_at"] is not None
+    assert (job["package"] is None) == fail
+
+
+@pytest.mark.parametrize(
+    ("celery_state", "result", "state"),
+    [("STARTED", {"pid": 0, "hostname": "worker"}, "running"), ("FAILURE", RuntimeError("worker lost"), "failed")],
+)
+def test_celery_state_is_reported_without_a_recorded_outcome(
+    client: TestClient, jobs: Jobs, celery_state: str, result: object, state: str
+) -> None:
+    # A failure Celery recorded without Engine's outcome, such as a lost pool process, gets no invented finish time.
+    job_id = submit(client, SMOKE)
+    jobs.celery_app.backend.store_result(job_id, result, celery_state)
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    assert (job["state"], job["finished_at"]) == (state, None)
+
+
+@pytest.mark.parametrize(("celery_state", "result"), [("SUCCESS", None), ("REVOKED", TaskRevokedError("revoked"))])
+def test_celery_success_or_revocation_alone_is_unavailable(
+    client: TestClient, jobs: Jobs, celery_state: str, result: object
+) -> None:
+    # Engine records the outcome before Celery stores SUCCESS, and Engine sends no revoke.
+    job_id = submit(client, SMOKE)
+    jobs.celery_app.backend.store_result(job_id, result, celery_state)
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).status_code == 503
+```
+
+In `apps/engine/tests/test_redelivery.py`, replace the module docstring's first line with:
+
+```python
+"""Tests of how often a job runs when the worker receives it once or again.
+```
+
+and, in its last sentence, "The test has its own module" with "The tests have their own module". Replace `from dtcc_engine.jobs import Jobs` with:
+
+```python
+from dtcc_engine.jobs import RUN_DATASET, Jobs, record_key
+```
+
+Replace the `counting_dataset` fixture with:
+
+```python
+@pytest.fixture
+def counting_dataset(redis_url: str) -> Iterator[str]:
+    """Register a Dataset that counts its runs in Redis by label, waits for the release key if `gated`, and raises if
+    `fail`."""
+
+    class CountingProbeArgs(DatasetBaseArgs):
+        label: str
+        gated: bool = False
+        fail: bool = False
+
+    class CountingProbeDataset(DatasetDescriptor):
+        name = "engine_counting_probe"
+        description = "Dataset defined by an Engine test that counts how often it runs"
+        ArgsModel = CountingProbeArgs
+
+        def build(self, args):
+            # Runs in a pool process, so the count and the gate go through Redis.
+            client = redis.Redis.from_url(redis_url)
+            client.incr(runs_key(args.label))
+            if args.gated:
+                wait_for(lambda: client.exists(RELEASE_KEY))
+            if args.fail:
+                raise RuntimeError("probe failure")
+            return Mesh(
+                vertices=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), faces=np.array([[0, 1, 2]])
+            )
+
+    try:
+        yield "engine_counting_probe"
+    finally:
+        unregister("engine_counting_probe")
+```
+
+Add after `wait_until_completed`:
+
+```python
+def wait_until_finished(jobs: Jobs, job_id: str) -> dict:
+    wait_for(lambda: jobs.status(job_id)["state"] in ("completed", "failed"))
+    return jobs.status(job_id)
+```
+
+Add at the end of the file:
+
+```python
+@pytest.mark.parametrize("fail", [False, True], ids=["completed", "failed"])
+def test_job_delivered_again_after_it_finished_does_not_run_again(
+    prefork_jobs: Jobs, counting_dataset: str, fail: bool
+) -> None:
+    records = prefork_jobs.records
+    label = "failed" if fail else "completed"
+    parameters = {"bounds": BOUNDS, "label": label, "fail": fail}
+    job_id = prefork_jobs.submit(counting_dataset, parameters)
+    finished = wait_until_finished(prefork_jobs, job_id)
+    record, lifetime = records.hgetall(record_key(job_id)), records.ttl(record_key(job_id))
+    package = None if fail else prefork_jobs.package_path(job_id).read_bytes()
+    # The job's message again, as a broker that delivers it a second time would send it.
+    prefork_jobs.sender.send_task(RUN_DATASET, args=[counting_dataset, parameters], task_id=job_id, queue="prefork")
+    # Sent after the second delivery, so it runs after it.
+    last = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": f"after-{label}"})
+    wait_until_completed(prefork_jobs, last)
+    assert records.get(runs_key(label)) == "1"
+    assert prefork_jobs.status(job_id) == finished
+    assert records.hgetall(record_key(job_id)) == record
+    assert records.ttl(record_key(job_id)) <= lifetime
+    assert (None if fail else prefork_jobs.package_path(job_id).read_bytes()) == package
+    # The second delivery's STARTED replaced a failure in Celery's result, though not a success.
+    celery_state = prefork_jobs.celery_app.backend.get_task_meta(job_id)["status"]
+    assert celery_state == ("STARTED" if fail else "SUCCESS")
+```
+
+- [x] **Step 3: Run the tests to verify they fail for the right reasons**
+
+Run: `pnpm engine:check tests/test_jobs.py tests/test_redelivery.py`
+Expected: 21 failed and 28 passed. Each failure is on the behavior the test specifies:
+
+- the second delivery's state is `SUCCESS` or `FAILURE` rather than `IGNORED`, because the job runs again, a claimed job runs, a lost record is recreated, or a delivery without an answer to its claim runs (`test_job_delivered_again_does_not_run_again`, `test_delivery_of_a_job_another_delivery_claimed_does_not_run_it`, `test_record_lost_while_the_job_runs_is_not_recreated`, `test_claim_without_an_answer_does_not_run_the_job`);
+- an unusable record's status and download answer `200` and `409`, or, for the record without a Dataset, the status read raises `KeyError: 'dataset'` (`test_unusable_record_is_reported_unavailable_and_never_runs`);
+- the status is `running` where Engine recorded the outcome (`test_recorded_outcome_prevails_over_celery_state`), or `queued` with a finish time (`test_status_read_while_the_job_finishes_reports_its_outcome`);
+- the status read raises `TypeError` for `SUCCESS` and `KeyError: 'REVOKED'` for `REVOKED` (`test_celery_success_or_revocation_alone_is_unavailable`);
+- the second delivery after a finish runs the Dataset again, so the count is `'2'` (`test_job_delivered_again_after_it_finished_does_not_run_again`).
+
+Both cases of `test_celery_state_is_reported_without_a_recorded_outcome` pass: they pin 2a behavior that stays. Stop and report if any test fails in another way, or if another test passes.
+
+- [x] **Step 4: Gate execution and record outcomes**
+
+In `apps/engine/dtcc_engine/jobs.py`, replace the module docstring with:
+
+```python
+"""Asynchronous Dataset jobs on one compute target.
+
+A job runs one Dataset in a Celery worker and delivers its realization as a canonical Dataset
+Package. Celery owns the queue and task results; Engine keeps its own record of each job in the
+same Redis, which decides whether a delivery may run the Dataset and records how the job ended.
+"""
+```
+
+Replace `from celery import Celery, Task` with:
+
+```python
+from celery import Celery, Task
+from celery.exceptions import Ignore
+```
+
+Replace the `STATES` dictionary with:
+
+```python
+# Celery's states of a job without a recorded outcome; SUCCESS follows the outcome, so it never appears alone.
+CELERY_STATES = {"PENDING": "queued", "STARTED": "running", "PROGRESS": "running", "FAILURE": "failed"}
+# The outcomes a record can hold with each value of its execution gate.
+OUTCOMES = {"waiting": {None}, "started": {None, "completed", "failed"}, "cancelled": {"cancelled"}}
+# Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started.
+START = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'missing'
+end
+local gate, outcome, finished = unpack(redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at'))
+if gate ~= 'waiting' or outcome or finished then
+  return 'refused'
+end
+redis.call('HSET', KEYS[1], 'execution_gate', 'started')
+return 'started'
+"""
+# Records how a started job ended: ARGV is the outcome, the finish time, the record's lifetime, and the error type.
+FINISH = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'missing'
+end
+local gate, outcome, finished = unpack(redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at'))
+if gate ~= 'started' or outcome or finished then
+  return 'refused'
+end
+redis.call('HSET', KEYS[1], 'outcome', ARGV[1], 'finished_at', ARGV[2])
+if ARGV[4] ~= '' then
+  redis.call('HSET', KEYS[1], 'error_type', ARGV[4])
+end
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 'recorded'
+"""
+```
+
+Add before `class UnconfirmedSubmission`:
+
+```python
+def parse_time(value: str) -> datetime:
+    """Parse a timestamp Engine wrote.
+
+    Raises:
+        ValueError: If the value is not an ISO 8601 timestamp with a UTC offset.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.utcoffset() is None:
+        raise ValueError(f"Timestamp {value!r} has no UTC offset")
+    return parsed
+
+
+class JobStateUnavailable(Exception):
+    """Engine's record of a job is unusable, or Celery's state cannot be trusted without the record's outcome."""
+```
+
+In `Jobs.__init__`, replace the line that creates `self.records` with:
+
+```python
+        self.records = redis.Redis.from_url(redis_url, decode_responses=True)
+        self.start_script = self.records.register_script(START)
+        self.finish_script = self.records.register_script(FINISH)
+```
+
+In `Jobs.submit`, replace the call that records the job with:
+
+```python
+        self.records.hset(
+            key,
+            mapping={
+                "dataset": dataset_name,
+                "target": self.target,
+                "submitted_at": submitted_at,
+                "execution_gate": "waiting",
+            },
+        )
+```
+
+Replace `Jobs.status` with:
+
+```python
+    def read_record(self, job_id: str) -> dict[str, Any] | None:
+        """Return Engine's record of the job with its timestamps parsed, or None if the job has no record.
+
+        Raises:
+            JobStateUnavailable: If the record lacks an acceptance field or its gate, or its fields contradict each
+                other.
+            redis.RedisError: If Redis is unreachable.
+        """
+        record = self.records.hgetall(record_key(job_id))
+        if not record:
+            return None
+        try:
+            outcome = record.get("outcome")
+            consistent = (
+                outcome in OUTCOMES[record["execution_gate"]]
+                and ("finished_at" in record) == (outcome is not None)
+                and ("error_type" in record) == (outcome == "failed")
+            )
+            if not consistent:
+                raise JobStateUnavailable(job_id)
+            return {
+                "dataset": record["dataset"],
+                "target": record["target"],
+                "submitted_at": parse_time(record["submitted_at"]),
+                "queued_at": parse_time(record["queued_at"]) if "queued_at" in record else None,
+                "outcome": outcome,
+                "finished_at": parse_time(record["finished_at"]) if outcome else None,
+                "error_type": record.get("error_type"),
+            }
+        except (KeyError, ValueError) as error:
+            raise JobStateUnavailable(job_id) from error
+
+    def status(self, job_id: str) -> dict[str, Any] | None:
+        """Return the job's state, progress, error, and package, or None if the job is unknown or expired.
+
+        Raises:
+            JobStateUnavailable: If the job's state cannot be established from its record and Celery's state.
+            redis.RedisError: If Redis is unreachable, so the state is unknown for now.
+        """
+        # Read before the record: the worker records an outcome before Celery stores a terminal state.
+        meta = self.celery_app.backend.get_task_meta(job_id)
+        record = self.read_record(job_id)
+        if record is None:
+            return None
+        finished_at = record["finished_at"]
+        if finished_at is not None and datetime.now(UTC) >= finished_at + RETENTION:
+            return None
+        state = record["outcome"] or CELERY_STATES.get(meta["status"])
+        if state is None:
+            raise JobStateUnavailable(job_id)
+        if state == "queued" and record["queued_at"] is None:
+            state = "unconfirmed"
+        return {
+            "job_id": job_id,
+            "dataset": record["dataset"],
+            "target": record["target"],
+            "submitted_at": record["submitted_at"].isoformat(),
+            "finished_at": finished_at.isoformat() if finished_at else None,
+            "state": state,
+            "progress": meta["result"] if state == "running" and meta["status"] == "PROGRESS" else None,
+            "error": {"type": record["error_type"]} if state == "failed" else None,
+            "package": (
+                {"available": self.package_path(job_id).is_file(), "expires_at": (finished_at + RETENTION).isoformat()}
+                if state == "completed"
+                else None
+            ),
+        }
+```
+
+Replace `Jobs.run` with:
+
+```python
+    def run(self, task: Task, dataset_name: str, parameters: dict[str, Any]) -> None:
+        """Run a job in the worker if this delivery claims it, and record how the job ended.
+
+        The job invokes the Dataset, exports its realization, and validates the package.
+
+        Raises:
+            Ignore: If this delivery does not claim the job, or the job's record is gone or no longer claimed when the
+                job ends; Celery then stores no result.
+            Exception: Whatever the Dataset, the export, or the validation raised; the job then fails.
+        """
+        job_id = task.request.id
+        if not self.claim(job_id):
+            raise Ignore()
+        path = self.package_path(job_id)
+        previous_callback = get_progress_callback()
+        set_progress_callback(lambda progress: store_progress(task, progress))
+        try:
+            realization = datasets.get_dataset(dataset_name)(**parameters)
+            realization.export(path, canonical=True)
+            try:
+                datasets.load_model_package(path)
+            except Exception:
+                path.unlink()
+                raise
+        except Exception as error:
+            self.finish(job_id, "failed", type(error).__name__)
+            raise
+        finally:
+            set_progress_callback(previous_callback)
+        self.finish(job_id, "completed")
+
+    def claim(self, job_id: str) -> bool:
+        """Claim permission to run the job's Dataset, which only one caller gets, and only while the job is waiting.
+
+        A claim whose answer Redis did not send is not repeated: it may have been made.
+        """
+        try:
+            # Checks the acceptance fields, which never change once written; the claim checks the rest.
+            self.read_record(job_id)
+            answer = self.start_script(keys=[record_key(job_id)])
+        except (JobStateUnavailable, redis.RedisError):
+            logger.warning("Job %s does not run: its record is unusable or Redis did not answer", job_id, exc_info=True)
+            return False
+        if answer != "started":
+            logger.warning("Job %s does not run: its record is %s", job_id, answer)
+        return answer == "started"
+
+    def finish(self, job_id: str, outcome: str, error_type: str = "") -> None:
+        """Record how a claimed job ended, with its finish time, and start its record's lifetime.
+
+        Raises:
+            Ignore: If the job's record is gone or no longer claimed, so no outcome was recorded.
+            redis.RedisError: If Redis did not answer; the outcome may or may not be recorded.
+        """
+        finished_at = datetime.now(UTC).isoformat()
+        lifetime = int(RECORD_LIFETIME.total_seconds())
+        answer = self.finish_script(keys=[record_key(job_id)], args=[outcome, finished_at, lifetime, error_type])
+        if answer != "recorded":
+            logger.warning("Job %s %s, but its record is %s, so the outcome is not recorded", job_id, outcome, answer)
+            raise Ignore()
+```
+
+- [x] **Step 5: Answer an unusable record with `503`**
+
+In `apps/engine/dtcc_engine/api.py`, replace the import from `dtcc_engine.jobs` with:
+
+```python
+from dtcc_engine.jobs import Jobs, JobStateUnavailable, UnconfirmedSubmission, jobs_from_environment
+```
+
+Replace `find_job` with:
+
+```python
+    def find_job(job_id: str) -> dict[str, Any]:
+        try:
+            job = jobs.status(job_id)
+        except RedisError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job state is temporarily unavailable"
+            ) from None
+        except JobStateUnavailable:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job state cannot be established"
+            ) from None
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' is unknown or expired")
+        return job
+```
+
+- [x] **Step 6: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 88 passed: the 65 earlier tests and the 23 new ones.
+
+- [x] **Step 7: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: the production checks pass with `engine-redis` in their own Compose project, and their token checks pass; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
+
+- [x] **Step 8: Stop for review**
+
+Record Task 17's results in Increment 4's status, leave the changes uncommitted, and report Steps 1, 3, 6, and 7. Suggested commit message: `Feature: Gated engine jobs and recorded their outcomes`.
+
+### Task 18: Cancel a job that no delivery has claimed
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/dtcc_engine/api.py`
+- Modify: `apps/engine/tests/test_jobs.py`
+- Modify: `apps/engine/tests/test_redelivery.py`
+- Modify: `README.md` (job routes)
+- Modify: `apps/engine/PLAN.md` (Increment 4 status)
+
+**Interfaces:**
+
+- Consumes: from Task 17, `Jobs.read_record`, `JobStateUnavailable`, `parse_time`, `RECORD_LIFETIME`, and the record fields; the test helpers `deliver`, `probe_dataset`, `UNUSABLE_CHANGES`, `change_record`, and `wait_until_finished`.
+- Produces:
+  - `Jobs.cancel(job_id)`: `cancelled`, `already_finished`, or None; raises `ExecutionStarted`, `JobStateUnavailable`, or `redis.RedisError`. It runs `Jobs.cancel_script`, the `CANCEL` script.
+  - `ExecutionStarted` in `dtcc_engine.jobs`.
+  - `POST /api/v1/jobs/{job_id}/cancel`, authenticated, without a body, answering as DESIGN.md's table says.
+
+- [x] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_jobs.py`, replace `from collections.abc import Callable, Iterator` with:
+
+```python
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+```
+
+Replace `from fastapi.testclient import TestClient` with:
+
+```python
+from fastapi.testclient import TestClient
+from httpx import Response
+```
+
+In the parameters of `test_job_routes_reject_missing_tokens`, replace the list of routes with:
+
+```python
+    [
+        ("POST", "/api/v1/jobs"),
+        ("GET", "/api/v1/jobs/some-job"),
+        ("GET", "/api/v1/jobs/some-job/package"),
+        ("POST", "/api/v1/jobs/some-job/cancel"),
+    ],
+```
+
+Add at the end of the file:
+
+```python
+def cancel(client: TestClient, job_id: str) -> Response:
+    return client.post(f"/api/v1/jobs/{job_id}/cancel", headers=AUTHORIZED)
+
+
+def test_queued_job_is_cancelled_and_stays_cancelled(client: TestClient, jobs: Jobs) -> None:
+    job_id = submit(client, SMOKE)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        responses = list(pool.map(lambda _: cancel(client, job_id), range(8)))
+    record, lifetime = jobs.records.hgetall(record_key(job_id)), jobs.records.ttl(record_key(job_id))
+    again = cancel(client, job_id)
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    downloaded = client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    expected = {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}", "result": "cancelled"}
+    assert [(response.status_code, response.json()) for response in [*responses, again]] == [(200, expected)] * 9
+    assert (job["state"], job["finished_at"], job["progress"], job["error"], job["package"]) == (
+        "cancelled",
+        record["finished_at"],
+        None,
+        None,
+        None,
+    )
+    assert downloaded.status_code == 409
+    assert jobs.records.hgetall(record_key(job_id)) == record
+    assert RETENTION.total_seconds() < jobs.records.ttl(record_key(job_id)) <= lifetime
+
+
+def test_unconfirmed_submission_can_be_cancelled(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def lose_the_confirmation(*args, **kwargs):
+        raise OperationalError("connection lost before the broker replied")
+
+    monkeypatch.setattr(jobs.sender, "send_task", lose_the_confirmation)
+    job_id = client.post("/api/v1/jobs", json=SMOKE, headers=AUTHORIZED).json()["detail"]["job_id"]
+    response = cancel(client, job_id)
+    assert (response.status_code, response.json().get("result")) == (200, "cancelled")
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["state"] == "cancelled"
+    # The message may have been queued after all.
+    assert deliver(jobs, job_id, SMOKE) == "IGNORED"
+
+
+@pytest.mark.parametrize(
+    ("age", "status_code", "package_status_code"),
+    [(RETENTION - timedelta(minutes=1), 200, 409), (RETENTION + timedelta(seconds=1), 404, 404)],
+    ids=["within-retention", "after-retention"],
+)
+def test_cancelled_job_expires_after_the_retention(
+    client: TestClient, jobs: Jobs, age: timedelta, status_code: int, package_status_code: int
+) -> None:
+    job_id = submit(client, SMOKE)
+    assert cancel(client, job_id).status_code == 200
+    # Moves the recorded finish time back instead of waiting 30 days.
+    jobs.records.hset(record_key(job_id), "finished_at", (datetime.now(UTC) - age).isoformat())
+    polled = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    downloaded = client.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert (cancel(client, job_id).status_code, polled.status_code) == (status_code, status_code)
+    assert downloaded.status_code == package_status_code
+
+
+@pytest.mark.parametrize(("fail", "state"), [(False, "completed"), (True, "failed")])
+def test_finished_job_is_reported_already_finished(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], fail: bool, state: str
+) -> None:
+    dataset, _ = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS, "fail": fail}}
+    job_id = submit(client, request)
+    deliver(jobs, job_id, request)
+    record = jobs.records.hgetall(record_key(job_id))
+    response = cancel(client, job_id)
+    assert (response.status_code, response.json().get("result")) == (200, "already_finished")
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["state"] == state
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+def test_claimed_job_cannot_be_cancelled(client: TestClient, jobs: Jobs) -> None:
+    job_id = submit(client, SMOKE)
+    # A delivery claimed the job: it is running, or about to run.
+    jobs.records.hset(record_key(job_id), "execution_gate", "started")
+    record = jobs.records.hgetall(record_key(job_id))
+    response = cancel(client, job_id)
+    assert response.status_code == 409
+    assert response.json()["detail"]["result"] == "execution_started"
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+@pytest.mark.parametrize("changes", UNUSABLE_CHANGES.values(), ids=UNUSABLE_CHANGES.keys())
+def test_cancel_of_an_unusable_record_is_unavailable_and_changes_nothing(
+    client: TestClient, jobs: Jobs, changes: dict[str, str | None]
+) -> None:
+    job_id = submit(client, SMOKE)
+    change_record(jobs, job_id, changes)
+    record = jobs.records.hgetall(record_key(job_id))
+    assert cancel(client, job_id).status_code == 503
+    assert jobs.records.hgetall(record_key(job_id)) == record
+
+
+def test_cancel_of_an_unknown_job_is_not_found(client: TestClient) -> None:
+    response = cancel(client, str(uuid.uuid4()))
+    assert response.status_code == 404
+    assert "unknown or expired" in response.json()["detail"]
+
+
+def test_lost_cancel_answer_leaves_the_outcome_to_polling(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job_id = submit(client, SMOKE)
+
+    def cancel_then_lose_the_answer(*args, **kwargs):
+        # Redis cancels the job, and its answer is lost.
+        outcome = {"execution_gate": "cancelled", "outcome": "cancelled", "finished_at": datetime.now(UTC).isoformat()}
+        jobs.records.hset(record_key(job_id), mapping=outcome)
+        raise redis.ConnectionError("connection lost before Redis answered")
+
+    monkeypatch.setattr(jobs, "cancel_script", cancel_then_lose_the_answer, raising=False)
+    response = cancel(client, job_id)
+    assert response.status_code == 503
+    assert "poll" in response.json()["detail"]
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["state"] == "cancelled"
+
+
+@pytest.mark.parametrize("record_age", ["within-retention", "after-retention", "removed"])
+def test_delivery_after_cancellation_never_runs(
+    client: TestClient, jobs: Jobs, probe_dataset: tuple[str, list[str]], record_age: str
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    job_id = submit(client, request)
+    assert cancel(client, job_id).status_code == 200
+    if record_age == "after-retention":
+        old = (datetime.now(UTC) - RETENTION - timedelta(seconds=1)).isoformat()
+        jobs.records.hset(record_key(job_id), "finished_at", old)
+    elif record_age == "removed":
+        jobs.records.delete(record_key(job_id))
+    record, lifetime = jobs.records.hgetall(record_key(job_id)), jobs.records.ttl(record_key(job_id))
+    assert deliver(jobs, job_id, request) == "IGNORED"
+    assert runs == []
+    assert jobs.records.hgetall(record_key(job_id)) == record
+    assert jobs.records.ttl(record_key(job_id)) <= lifetime
+```
+
+In `apps/engine/tests/test_redelivery.py`, replace the module docstring's first line with:
+
+```python
+"""Tests of how often a job runs when the worker receives it once, again, or after the job was cancelled.
+```
+
+Replace the imports from `dtcc_core.model` to `dtcc_engine.jobs` with:
+
+```python
+from dtcc_core.model import Mesh
+from fastapi.testclient import TestClient
+from kombu import Connection
+
+from dtcc_engine.api import create_app
+from dtcc_engine.jobs import RUN_DATASET, Jobs, record_key
+```
+
+Replace the `BOUNDS` line with:
+
+```python
+BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
+TOKEN = "test-token"
+AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
+```
+
+Replace the `prefork_jobs` fixture with:
+
+```python
+@pytest.fixture
+def prefork_jobs(redis_url: str, tmp_path: Path, counting_dataset: str) -> Iterator[Jobs]:
+    """Jobs served by a one-process prefork worker; a gated job is released at the latest when the test ends."""
+    jobs = Jobs(redis_url, "prefork", tmp_path)
+    # An earlier test released its gated jobs.
+    jobs.records.delete(RELEASE_KEY)
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        try:
+            yield jobs
+        finally:
+            jobs.records.set(RELEASE_KEY, 1)
+```
+
+Add at the end of the file:
+
+```python
+def cancel(jobs: Jobs, job_id: str) -> tuple[int, str]:
+    """Cancel the job through the API, and return the status code and the result it reports."""
+    response = TestClient(create_app(TOKEN, jobs)).post(f"/api/v1/jobs/{job_id}/cancel", headers=AUTHORIZED)
+    body = response.json()
+    return response.status_code, body["detail"]["result"] if isinstance(body.get("detail"), dict) else body.get(
+        "result"
+    )
+
+
+def test_job_cancelled_before_a_worker_runs_never_runs(redis_url: str, tmp_path: Path, counting_dataset: str) -> None:
+    jobs = Jobs(redis_url, "late-worker", tmp_path)
+    job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "cancelled"})
+    assert cancel(jobs, job_id) == (200, "cancelled")
+    # The decision is in Redis, so a worker that starts, or starts again, after the cancellation sees it.
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        last = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "after-cancelled"})
+        wait_until_completed(jobs, last)
+    assert jobs.records.get(runs_key("cancelled")) is None
+    assert jobs.status(job_id)["state"] == "cancelled"
+    assert not jobs.package_path(job_id).exists()
+    # The skipped delivery's STARTED, which the recorded cancellation overrides.
+    assert jobs.celery_app.backend.get_task_meta(job_id)["status"] == "STARTED"
+
+
+def test_started_job_cannot_be_cancelled_and_completes(prefork_jobs: Jobs, counting_dataset: str) -> None:
+    records = prefork_jobs.records
+    job_id = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "started", "gated": True})
+    wait_for(lambda: records.get(runs_key("started")) == "1")
+    assert cancel(prefork_jobs, job_id) == (409, "execution_started")
+    records.set(RELEASE_KEY, 1)
+    wait_until_completed(prefork_jobs, job_id)
+    assert records.get(runs_key("started")) == "1"
+    assert prefork_jobs.status(job_id)["package"]["available"]
+
+
+def test_cancel_racing_the_start_either_prevents_the_run_or_is_refused(
+    prefork_jobs: Jobs, counting_dataset: str
+) -> None:
+    records = prefork_jobs.records
+    attempts = {}
+    for attempt in range(10):
+        label = f"race-{attempt}"
+        job_id = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": label})
+        attempts[label] = (job_id, cancel(prefork_jobs, job_id))
+        if attempts[label][1] != (200, "cancelled"):
+            wait_until_completed(prefork_jobs, job_id)
+    # Sent last, so every earlier delivery, run or skipped, is done when it completes.
+    last = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "race-last"})
+    wait_until_completed(prefork_jobs, last)
+    outcomes = [
+        (*answer, records.get(runs_key(label)), prefork_jobs.status(job_id)["state"])
+        for label, (job_id, answer) in attempts.items()
+    ]
+    assert set(outcomes) <= {
+        (200, "cancelled", None, "cancelled"),
+        (409, "execution_started", "1", "completed"),
+        (200, "already_finished", "1", "completed"),
+    }, outcomes
+```
+
+- [x] **Step 2: Run the tests to verify they fail for the right reason**
+
+Run: `pnpm engine:check tests/test_jobs.py tests/test_redelivery.py`
+Expected: 23 failed and 49 passed. Every failure comes from the missing route, which FastAPI answers with `404 Not Found`: the tests get `404` where they expect `200`, `409`, `503`, or, without a token, `401`, and the unknown job's test gets FastAPI's message instead of "unknown or expired". Stop and report if a test fails in another way.
+
+- [x] **Step 3: Cancel in Redis**
+
+In `apps/engine/dtcc_engine/jobs.py`, add after the `FINISH` script:
+
+```python
+# Cancels a job no delivery has claimed: ARGV is the finish time and the record's lifetime.
+CANCEL = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'missing'
+end
+local gate, outcome, finished = unpack(redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at'))
+if outcome then
+  return 'finished'
+end
+if gate == 'started' and not finished then
+  return 'started'
+end
+if gate ~= 'waiting' or finished then
+  return 'unusable'
+end
+redis.call('HSET', KEYS[1], 'execution_gate', 'cancelled', 'outcome', 'cancelled', 'finished_at', ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+return 'cancelled'
+"""
+```
+
+Add after `class JobStateUnavailable`:
+
+```python
+class ExecutionStarted(Exception):
+    """A delivery claimed the job, which has no recorded outcome yet, so it can no longer be cancelled."""
+```
+
+In `Jobs.__init__`, replace the line that registers `FINISH` with:
+
+```python
+        self.finish_script = self.records.register_script(FINISH)
+        self.cancel_script = self.records.register_script(CANCEL)
+```
+
+Add before `Jobs.run`:
+
+```python
+    def cancel(self, job_id: str) -> str | None:
+        """Cancel a job that no delivery has claimed.
+
+        Returns:
+            `cancelled` if the job is cancelled, now or before; `already_finished` if it completed or failed; None if
+            the job is unknown or expired.
+
+        Raises:
+            ExecutionStarted: If a delivery claimed the job, and it has not finished.
+            JobStateUnavailable: If the job's record is unusable.
+            redis.RedisError: If Redis did not answer; the job may or may not be cancelled.
+        """
+        # Checks the acceptance fields, which never change once written; the cancellation checks the rest.
+        if self.read_record(job_id) is None:
+            return None
+        finished_at = datetime.now(UTC).isoformat()
+        answer = self.cancel_script(keys=[record_key(job_id)], args=[finished_at, int(RECORD_LIFETIME.total_seconds())])
+        if answer == "started":
+            raise ExecutionStarted(job_id)
+        if answer == "unusable":
+            raise JobStateUnavailable(job_id)
+        # A recorded outcome never changes, so this read sees the one the cancellation found or made.
+        record = self.read_record(job_id)
+        if record is None or datetime.now(UTC) >= record["finished_at"] + RETENTION:
+            return None
+        return "cancelled" if record["outcome"] == "cancelled" else "already_finished"
+```
+
+- [x] **Step 4: Serve the cancel route**
+
+In `apps/engine/dtcc_engine/api.py`, replace the import from `dtcc_engine.jobs` with:
+
+```python
+from dtcc_engine.jobs import ExecutionStarted, Jobs, JobStateUnavailable, UnconfirmedSubmission, jobs_from_environment
+```
+
+Add before the package route, `@app.get("/api/v1/jobs/{job_id}/package", ...)`:
+
+```python
+    @app.post("/api/v1/jobs/{job_id}/cancel", dependencies=[Depends(require_token)])
+    def cancel_job(job_id: str) -> dict[str, str]:
+        try:
+            result = jobs.cancel(job_id)
+        except (RedisError, JobStateUnavailable):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Job state is unavailable, so whether the job is cancelled is unknown; poll the job",
+            ) from None
+        except ExecutionStarted:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "result": "execution_started",
+                    "message": "Execution permission has been claimed, so the job can no longer be cancelled",
+                },
+            ) from None
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' is unknown or expired")
+        return {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}", "result": result}
+```
+
+- [x] **Step 5: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 111 passed: Task 17's 88 and the 23 new ones.
+
+- [x] **Step 6: Document the route**
+
+In `README.md`, after "and download a completed job's package from `GET /api/v1/jobs/<job id>/package`.", add: "Cancel a job before a worker claims it with `POST /api/v1/jobs/<job id>/cancel`. For a job a worker has claimed, cancellation answers `409` until the job has finished, and then `200` with `already_finished`."
+
+Run: `npx --yes prettier@3.9.6 --check README.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [x] **Step 7: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [x] **Step 8: Stop for review**
+
+Record Task 18's results in Increment 4's status, leave the changes uncommitted, and report Steps 2, 5, and 7. Suggested commit message: `Feature: Added engine job cancellation before execution`.
+
+### Task 19: Move the development engine to the gate and cancel through the worker service
+
+**Files:**
+
+- Modify: `README.md` (the transition section)
+- Modify: `apps/engine/DESIGN.md` (its link to that section)
+- Modify: `apps/engine/PLAN.md` (that link, the transition's state, and Increment 4 status)
+
+**Interfaces:** consumes Tasks 17 and 18 and the README's transition procedure. Produces no code: the development engine runs the gate, with its earlier jobs and packages discarded, and the README describes the transition for developers whose engine still has jobs from before it.
+
+- [x] **Step 1: Ask before the transition**
+
+The transition deletes the development engine's job records, queued jobs, Celery results, and packages. Its policy was approved on 2026-10-13; running it now needs the user's go-ahead. Stop until the user gives it.
+
+- [x] **Step 2: Run the transition**
+
+Follow the README's procedure with these commands, from the repository root:
+
+1. `docker compose --profile engine ps -a --format '{{.Service}} {{.State}}'`. Expected: `engine` and `engine-worker` are not running (Task 17, Step 1). If either is, stop as the README's step 1 says.
+2. `docker compose --profile engine up -d --wait engine-redis`, then `docker compose --profile engine exec -T engine-redis redis-cli -n 1 DBSIZE` and the same with `-n 0`; record both sizes. Then `docker compose --profile engine exec -T engine-redis redis-cli -n 0 FLUSHDB`. Expected: `OK`; database 0 then has size 0, and database 1 has the size it had.
+3. Find the package volume from the containers that these Compose commands manage, because a project-name override (`-p`, `COMPOSE_PROJECT_NAME`, or `.env`) changes their names: `docker inspect --format '{{.Name}} {{index .Config.Labels "com.docker.compose.project"}}{{range .Mounts}}{{if eq .Destination "/var/lib/dtcc-engine/packages"}} {{.Name}}{{end}}{{end}}' $(docker compose --profile engine ps -aq engine engine-worker)`. Expected: the `engine` and `engine-worker` containers of one project, both mounting one volume, here called `<package volume>` (`dtcc-twin_engine-packages` without an override).
+4. `docker volume inspect --format '{{index .Labels "com.docker.compose.project"}} {{index .Labels "com.docker.compose.volume"}}' <package volume>`. Expected: that project and `engine-packages`. Then `docker ps -a --filter volume=<package volume> --format '{{.Names}} {{.State}}'`. Expected: only those two containers, neither running. Stop and report any other result.
+5. `docker compose --profile engine rm -f engine engine-worker`, then `docker volume rm <package volume>`.
+6. `docker volume ls --filter label=com.docker.compose.project=<that project>`. Expected: the project's `postgres-data` volume remains.
+
+- [x] **Step 3: Describe the transition as current**
+
+In `README.md`, in the transition section:
+
+- Replace the heading with `### Engine cancellation transition`.
+- Replace its first paragraph with: "A development engine whose Redis holds jobs from before [cancellation](apps/engine/DESIGN.md#cancellation) needs the one-time transition below: those jobs' records have no execution gate, so the engine neither runs nor reports them. The transition discards old job history, queued jobs, Celery results, and stored packages. It is not a routine restart procedure or a production migration."
+- In step 1, replace "**Before applying the cancellation code**" with "**Before applying the cancellation code, or at once if it is applied**".
+- Replace step 4's first sentence with "Rebuild and start the Engine API and worker together with `pnpm dev:engine`, with the cancellation code applied."
+- Delete the last paragraph's final sentence, "This transition has not been run or runtime-verified as part of the documentation change."
+
+In `apps/engine/DESIGN.md` and in this file, replace `README.md#engine-cancellation-transition-planned` with `README.md#engine-cancellation-transition`. In the Cancellation section's "One-time development transition" paragraph, replace "It has not been executed." with "Task 19 ran it on the development machine."
+
+- [x] **Step 4: Cancel through the worker service**
+
+Start `pnpm dev:engine` and wait until the worker logs that it is ready. With the development token, and the bounds `[319891, 6399790, 320091, 6399990]`:
+
+1. Submit `city_volume_mesh`, then `smoke`. While the first is `running`, cancel the second, then the first. Expected: `200` with `result` `cancelled` for `smoke`, and `409` with `execution_started` for `city_volume_mesh`. Once `city_volume_mesh` is `completed`, its package downloads; `smoke` stays `cancelled`, its download answers `409`, and the worker's log says that it does not run because its record is `refused`.
+2. Stop the worker with `docker compose --profile engine stop engine-worker`. Submit `smoke` and cancel it: `200` with `cancelled`. Start the worker with `docker compose --profile engine start engine-worker`, wait until it is ready, and submit another `smoke` job. Expected: the second completes; the first stays `cancelled`, with no package, and the worker's log says that it does not run. A Celery revoke sent while no worker ran was lost in the 2026-10-13 experiments; this checks that the gate is not.
+3. `docker compose --profile engine exec -T engine-redis redis-cli -n 0 TTL dtcc-engine:job:<a cancelled job's ID>`. Expected: between 2,592,000 and 2,678,400 seconds.
+
+Stop `pnpm dev:engine`. Expected: the worker logs a warm shutdown.
+
+- [x] **Step 5: Validate**
+
+Run: `pnpm engine:check`, `pnpm engine:check:prod`, `npx --yes prettier@3.9.6 --check README.md apps/engine/DESIGN.md apps/engine/PLAN.md`, then `pnpm check`.
+Expected: 111 passed; the production and token checks pass; the files use Prettier code style; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
+
+- [x] **Step 6: Stop for review**
+
+Record Task 19's results in Increment 4's status, including the outcome of each check in Step 4 and the database sizes from Step 2. Leave the changes uncommitted, and report Steps 2, 4, and 5. Suggested commit message: `Docs: Moved the development engine to job cancellation`.
+
+### Remaining lifecycle work
+
+**Expansion** (2026-10-13): the rest of increment 4 is expanded one task at a time, each committed and reviewed before the next is written; a later task may change once the earlier ones are reviewed. Each was first run in a scratch copy of the Engine, as Tasks 17 to 19 were. Their first review asked for changes to each, and the revisions of 2026-10-14 were run the same way: Task 20 reports neither the upstream failure's target nor its message; Task 21 validates a claim before the worker's startup check uses it; Task 22 records the broker's confirmation only on a record that still exists, and states that expiry does not stop a running job; Task 23 deletes staging directories only when the worker starts; and Task 24 runs its restarts in a Compose project of its own, against a Redis snapshot it saves. Their second review, of 2026-10-15, accepted Tasks 20, 21, and 23. The revisions of the same day answer it: Task 22's warning about a record lost while the job was sent says only that the confirmation is not recorded, since a delivery may have claimed the job before the loss; and Task 24 stops only the development API, leaving the development worker and its job running, and stops Redis only once the running job's claim is recorded. Their third review accepted Tasks 20 to 23. For Task 24 it asked that the outage check rest on the job's reported progress before the outage and its recorded finish after it, not on a stored claim or the times of Celery's log lines; the revision of the same day does so, and its fourth review accepted it. The tasks:
+
+- Task 20: a failed job reports Core's metadata of an upstream failure, without the parts that can hold a credential (Failure reporting row).
+- Task 21: a lost pool process, and a whole worker that is lost and started again, leave a recorded failure rather than a job that reports `running` for ever (Failure reporting and Restart behavior rows).
+- Task 22: records of jobs that never finish expire (stale-state retention).
+- Task 23: each host deletes expired packages and packages without a completed job (Retention row).
+- Task 24: separate API, worker, and broker restarts are checked with real Redis and workers (Restart behavior row).
+
+### Task 20: Report an upstream failure's metadata without its credentials
+
+A failed job reports only its exception type (Increment 2a). Core gives its live Datasets a typed `DatasetUpstreamError` and `DatasetDescriptor.serialize_upstream_error`, which turns one into JSON-safe metadata; Engine decides which of it a consumer sees (this increment's upstream interfaces). This task returns that metadata for a job that failed with one, without the parts that can hold a credential: the Failure reporting row's useful error information, within DESIGN.md's rule that no error response exposes the API token or provider credentials.
+
+**Interfaces verified for the task** (2026-10-13, at Core `17c6efe` and Sim `41055d5`, through `git show` in the reference checkouts):
+
+- `DatasetUpstreamError(*, dataset, operation, target, failure_class, status_code=None, message)` is a `RuntimeError` in `dtcc_core/datasets/dataset.py`; `dtcc_core.datasets` does not export it. Its `is_transient` is true for the failure classes `connection`, `timeout`, and `http_5xx`.
+- `DatasetDescriptor.serialize_upstream_error(exc)` returns `dataset`, `operation`, `target`, `failure_class`, `status_code`, `message`, and `is_transient`.
+- `DatasetDescriptor.build_upstream_error` sets the message to `f"{dataset} {operation} failed for {target}: {exc}"`, where `exc` is the requests exception, and a requests `HTTPError`'s text holds the full request URL, query included. Trafiklab's GTFS requests send the API key as the `key` query parameter (`dtcc_core/datasets/transport/trafiklab_gtfs.py`), so a message can hold it.
+- Callers pass as the target a request URL without its query parameters, built from a constant or from a Dataset's `base_url` argument, which a consumer can set (`weather.py`, `ocean.py`, `hydrology.py`, `air_quality.py`); a provider name (`transport/base.py`); or a description such as the requested bounds (`transit_vehicles.py`).
+- Sim raises no `DatasetUpstreamError` at `41055d5`.
+
+**Decisions** (proposed with the task):
+
+- A job that failed with a `DatasetUpstreamError` reports `error.upstream`: Core's serialized metadata without `message` and `target`, so its Dataset, operation, failure class, status code, and transience. Both can hold a credential: the message a request URL's query, and the target whatever a consumer gave in a Dataset's `base_url`, in its user information, path, or query; Core does not promise otherwise. Engine does not parse a target to remove credentials, because it could not show that the rest holds none, and a target that does not parse would keep the job's failure from being recorded. The Dataset and the operation already name the provider and the request. Every other failure keeps `{"type": ...}` alone. The worker's log keeps the full error (DESIGN.md, Failure reporting).
+- The worker computes the metadata, and the finish script records it with the outcome as `error_upstream`, in JSON. A record holds it only with `outcome=failed`; one that is unreadable, or that holds it with another outcome, is unusable.
+- Only the raised exception is checked, not the exceptions it was raised from: Core raises the typed error itself.
+- Existing tests: `UNUSABLE_CHANGES` gains two records, so both parametrized unusable-record tests cover them; no expectation changes.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/tests/test_jobs.py`
+- Modify: `apps/engine/PLAN.md` (Increment 4 status)
+
+**Interfaces:**
+
+- Consumes: from Task 17, the `FINISH` script, `Jobs.read_record`, `Jobs.status`, `Jobs.run`, and `Jobs.finish`; the test helpers `submit`, `deliver`, `UNUSABLE_CHANGES`, and the `client` and `jobs` fixtures. From Core: `DatasetUpstreamError` and `DatasetDescriptor.serialize_upstream_error`.
+- Produces: `public_upstream_error(error)` in `dtcc_engine.jobs`; the record field `error_upstream`, the `FINISH` script's fifth argument, and `Jobs.finish(job_id, outcome, error_type="", upstream=None)`; a failed job's `error.upstream` in its status.
+
+- [ ] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_jobs.py`, replace `from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, load_model_package, unregister` with:
+
+```python
+from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, load_model_package, unregister
+from dtcc_core.datasets.dataset import DatasetUpstreamError
+```
+
+Replace the `SMOKE` line with:
+
+```python
+SMOKE = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}}
+PROVIDER_KEY = "provider-key-5e1d"
+```
+
+In `UNUSABLE_CHANGES`, add after the `failure-without-type` entry:
+
+```python
+    "upstream-detail-without-failure": {
+        "execution_gate": "started",
+        "outcome": "completed",
+        "finished_at": FINISHED_AT,
+        "error_upstream": "{}",
+    },
+    "unreadable-upstream-detail": {
+        "execution_gate": "started",
+        "outcome": "failed",
+        "finished_at": FINISHED_AT,
+        "error_type": "DatasetUpstreamError",
+        "error_upstream": "not json",
+    },
+```
+
+Add before `deliver`:
+
+```python
+@pytest.fixture
+def upstream_failing_dataset() -> Iterator[str]:
+    """Register a Dataset that fails as Core's live Datasets do when their provider fails, and return its name.
+
+    Its message repeats a provider key, as a request URL's query can, and its target is the one requested.
+    """
+
+    class UpstreamProbeArgs(DatasetBaseArgs):
+        target: str
+
+    class UpstreamProbeDataset(DatasetDescriptor):
+        name = "engine_upstream_probe"
+        description = "Dataset defined by an Engine test whose provider fails"
+        ArgsModel = UpstreamProbeArgs
+
+        def build(self, args):
+            raise DatasetUpstreamError(
+                dataset="engine_upstream_probe",
+                operation="fetch",
+                target=args.target,
+                failure_class="http_4xx",
+                status_code=401,
+                message=f"401 Client Error: Unauthorized for url: https://provider.example/data?key={PROVIDER_KEY}",
+            )
+
+    try:
+        yield "engine_upstream_probe"
+    finally:
+        unregister("engine_upstream_probe")
+```
+
+Add at the end of the file:
+
+```python
+@pytest.mark.parametrize(
+    "target",
+    [
+        f"https://user:{PROVIDER_KEY}@provider.example:8443/data?key={PROVIDER_KEY}",
+        f"//user:{PROVIDER_KEY}@provider.example/data",
+        f"https://provider.example/{PROVIDER_KEY}/data",
+        f"https://[{PROVIDER_KEY}/data",
+    ],
+    ids=["url", "url-without-scheme", "key-in-path", "malformed-url"],
+)
+def test_upstream_failure_reports_cores_metadata_without_credentials(
+    client: TestClient, jobs: Jobs, upstream_failing_dataset: str, target: str
+) -> None:
+    request = {"dataset": upstream_failing_dataset, "parameters": {"bounds": BOUNDS, "target": target}}
+    job_id = submit(client, request)
+    assert deliver(jobs, job_id, request) == "FAILURE"
+    response = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    job = response.json()
+    assert job["error"] == {
+        "type": "DatasetUpstreamError",
+        "upstream": {
+            "dataset": "engine_upstream_probe",
+            "operation": "fetch",
+            "failure_class": "http_4xx",
+            "status_code": 401,
+            "is_transient": False,
+        },
+    }
+    assert job["finished_at"] is not None
+    assert PROVIDER_KEY not in response.text
+```
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reasons**
+
+Run: `pnpm engine:check tests/test_jobs.py`
+Expected: 8 failed and 66 passed. The four cases of `test_upstream_failure_reports_cores_metadata_without_credentials` get `{"type": "DatasetUpstreamError"}` without `upstream`. With the two new unusable records, `test_unusable_record_is_reported_unavailable_and_never_runs` gets `200` and `409` for status and download instead of `503`, and `test_cancel_of_an_unusable_record_is_unavailable_and_changes_nothing` gets `200` instead of `503`. Stop and report if a test fails in another way.
+
+- [ ] **Step 3: Record and report the metadata**
+
+In `apps/engine/dtcc_engine/jobs.py`, replace `import logging` with:
+
+```python
+import json
+import logging
+```
+
+Replace the import from `dtcc_core.common.progress` with:
+
+```python
+from dtcc_core.common.progress import get_progress_callback, set_progress_callback
+from dtcc_core.datasets.dataset import DatasetUpstreamError
+```
+
+Replace the comment above the `FINISH` script with:
+
+```python
+# Records how a started job ended: ARGV is the outcome, the finish time, the record's lifetime, the error type, and the
+# upstream failure's metadata.
+```
+
+In the `FINISH` script, add before `redis.call('EXPIRE', KEYS[1], ARGV[3])`:
+
+```python
+if ARGV[5] ~= '' then
+  redis.call('HSET', KEYS[1], 'error_upstream', ARGV[5])
+end
+```
+
+Add before `class JobStateUnavailable`:
+
+```python
+def public_upstream_error(error: DatasetUpstreamError) -> dict[str, Any]:
+    """Return Core's metadata of an upstream failure without its message and its target, which can hold credentials.
+
+    The message can repeat a request URL with its query, which can hold a provider key, and the target can be built
+    from a Dataset's base URL, which a consumer sets and which can hold a credential anywhere in it.
+    """
+    metadata = datasets.DatasetDescriptor.serialize_upstream_error(error)
+    del metadata["message"], metadata["target"]
+    return metadata
+```
+
+In `Jobs.read_record`, replace the assignment to `consistent` with:
+
+```python
+            consistent = (
+                outcome in OUTCOMES[record["execution_gate"]]
+                and ("finished_at" in record) == (outcome is not None)
+                and ("error_type" in record) == (outcome == "failed")
+                and ("error_upstream" not in record or outcome == "failed")
+            )
+```
+
+and, in the dictionary it returns, replace the `error_type` entry with:
+
+```python
+                "error_type": record.get("error_type"),
+                "error_upstream": json.loads(record["error_upstream"]) if "error_upstream" in record else None,
+```
+
+In `Jobs.status`, add before `return {`:
+
+```python
+        error = {"type": record["error_type"]} if state == "failed" else None
+        if error is not None and record["error_upstream"] is not None:
+            error["upstream"] = record["error_upstream"]
+```
+
+and replace its `error` entry with `"error": error,`. In `Jobs.run`, replace the `except Exception as error:` clause with:
+
+```python
+        except Exception as error:
+            upstream = public_upstream_error(error) if isinstance(error, DatasetUpstreamError) else None
+            self.finish(job_id, "failed", type(error).__name__, upstream)
+            raise
+```
+
+Replace `Jobs.finish` with:
+
+```python
+    def finish(self, job_id: str, outcome: str, error_type: str = "", upstream: dict[str, Any] | None = None) -> None:
+        """Record how a claimed job ended, with its finish time and error, and start its record's lifetime.
+
+        Raises:
+            Ignore: If the job's record is gone or no longer claimed, so no outcome was recorded.
+            redis.RedisError: If Redis did not answer; the outcome may or may not be recorded.
+        """
+        finished_at = datetime.now(UTC).isoformat()
+        lifetime = int(RECORD_LIFETIME.total_seconds())
+        details = json.dumps(upstream) if upstream else ""
+        answer = self.finish_script(
+            keys=[record_key(job_id)], args=[outcome, finished_at, lifetime, error_type, details]
+        )
+        if answer != "recorded":
+            logger.warning("Job %s %s, but its record is %s, so the outcome is not recorded", job_id, outcome, answer)
+            raise Ignore()
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 119 passed: the 111 earlier tests and the 8 new cases.
+
+- [ ] **Step 5: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [ ] **Step 6: Stop for review**
+
+Record Task 20's results in Increment 4's status, leave the changes uncommitted, and report Steps 2, 4, and 5. Suggested commit message: `Feature: Reported engine upstream failures without credentials`.
+
+### Task 21: Record a failure when the process or the worker run that claimed a job is lost
+
+A job's claim is the only record of who runs it. When the claimant dies, nothing records an outcome: a lost pool process leaves Celery's `FAILURE` without Engine's outcome, reported as failed with an error type of null and no finish time, and a lost worker leaves `STARTED`, reported as running for ever (the experiments of 2026-10-13). This task records who claimed each job, and records a failure when that claimant is provably gone: the pool process of this worker run no longer exists, or the same worker started again. The Failure reporting and Restart behavior rows ask for host failures to be reported without false claims that work stopped, so a worker that never returns leaves its jobs as they were.
+
+**Interfaces verified for the task** (2026-10-13, in the development image's Celery 5.6.3 source and in the prototype):
+
+- When a pool process dies, the worker's main process runs `Request.on_failure` with `WorkerLostError`: it stores `FAILURE` and sends `task_failure` with the task as sender, `task_id`, and the exception (`celery/worker/request.py`). For an ordinary exception, `task_failure` is sent in the pool process instead, where Engine has already recorded the outcome.
+- Celery's signals identify a receiver by its function, so bound methods of two objects share one identity, and the second `connect` is ignored unless it passes its own `dispatch_uid` (`celery/utils/dispatch/signal.py`, `_make_id`). The prototype first lost the receiver of every `Jobs` after the first this way.
+- `worker_ready` is sent only by the command-line worker (`celery/apps/worker.py`, `on_consumer_ready`), not by `start_worker`'s `TestWorkController`. A worker bootstep, a `bootsteps.StartStopStep` added to `app.steps["worker"]`, starts in both, with the worker as its argument; its `hostname` is the node name. The blueprint calls each step's `start` without catching what it raises (`celery/bootsteps.py`, `Blueprint.start`): in the prototype, a check that split a malformed claim raised `ValueError`, and the test worker never started.
+- The prefork pool's processes are initialized with the worker's node name (`celery/concurrency/prefork.py`, `process_initializer(app, hostname)`), which a task reads as `task.request.hostname`; the experiments' `STARTED` results from a command-line worker held `celery@<container host name>`. In `start_worker`'s test worker, the prototype's claims held the bare host name instead, so the automated restart test records its earlier run's claims itself; Step 6 checks a command-line worker.
+- A Compose service's `hostname` sets the container's host name, which Celery's default node name `celery@%h` uses.
+
+**Decisions** (proposed with the task):
+
+- The claim records `claimed_by`, "`<node name> <worker run> <pool process ID>`", in the same `HSET` that changes the gate. The worker run is a random ID that each `Jobs` instance makes, so a worker's pool processes, forked from its main process, share it, and a worker started again has a new one.
+- A claimant is gone if it is a pool process of this worker run that no longer exists, which the worker's main process checks when Celery reports `WorkerLostError` for the job; the job then fails with `WorkerLostError`. When a worker starts, every job claimed by an earlier run with the same node name, and without an outcome, fails with `WorkerRestarted`. A lost process that still appears to exist, because the pool has not reaped it yet or its ID was reused, leaves its job as it was: a failure Engine misses, never one it invents. The prototype ran the suite three times without meeting that case: Celery reports the loss after the pool has reaped the process.
+- A new Lua script records the failure, with the finish time and the record's lifetime, only if the claim it read is still the record's claim and the job has no outcome, so a claim or an outcome written meanwhile stays. A worker whose check meets a Redis error still starts, and the claims are checked when it next starts.
+- The claim is part of the record's validation: a record whose `claimed_by` does not hold a node name, a worker run, and a numeric process ID, separated by spaces, is unusable, as is a claim on a job that is not `started`. The worker's check reads each record through that validation and leaves an unusable record as it is, with a warning, so no record can keep a worker from starting, and an incomplete record gets no outcome. The Lua script still checks the claim and the outcome when it writes.
+- A job whose worker is lost and never started again keeps reporting `running`: Engine cannot prove that the work stopped. Task 22 bounds how long its record stays.
+- The development worker gets the fixed host name `engine-worker`. A deployment's workers each need a stable node name that no other running worker uses, and a worker may start under its node name only once its earlier run, with that run's pool processes, has stopped: the name tells a worker's runs apart, but does not show that an earlier run stopped. Increment 5b records it, and DESIGN.md's Restart behavior says so. Two running workers with one node name would fail each other's jobs when one restarts.
+- Existing tests: `UNUSABLE_CHANGES` gains a claim on a waiting job, a claim without its three parts, and a claim whose process ID is not a number; `counting_dataset` gains `crash`; `test_redelivery.py`'s docstring covers the new tests. No expectation changes.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/tests/test_jobs.py`
+- Modify: `apps/engine/tests/test_redelivery.py`
+- Modify: `compose.yaml` (`engine-worker`)
+- Modify: `apps/engine/DESIGN.md` (Restart behavior)
+- Modify: `apps/engine/PLAN.md` (Increment 4 status, increment 5b)
+
+**Interfaces:**
+
+- Consumes: from Tasks 17 and 20, the `START` script, `Jobs.claim`, `Jobs.run`, `Jobs.read_record`, and the record fields; the test helpers `counting_dataset`, `prefork_jobs`, `wait_until_finished`, `wait_until_completed`, `UNUSABLE_CHANGES`. From Celery: `task_failure`, `WorkerLostError`, `bootsteps.StartStopStep`, and `start_worker(..., hostname=...)`.
+- Produces: the record field `claimed_by`; `Jobs.worker_run`; `Jobs.claim(job_id, claim)`; the `LOST` script and `Jobs.lost_script`; `Jobs.record_lost_process` and `Jobs.record_lost_claims(node=None, job_ids=None)`; the worker bootstep `RecordLostClaims`; `parse_claim(claim)` and `process_alive(pid)`; `claimed_by` in what `Jobs.read_record` returns; the error types `WorkerLostError` and `WorkerRestarted`.
+
+- [ ] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_jobs.py`, in `UNUSABLE_CHANGES`, add before the `unreadable-upstream-detail` entry:
+
+```python
+    "claim-of-a-waiting-job": {"claimed_by": "celery@engine-test earlier-run 7"},
+    "claim-without-its-parts": {"execution_gate": "started", "claimed_by": "earlier-run"},
+    "claim-without-a-process-id": {"execution_gate": "started", "claimed_by": "celery@engine-test earlier-run seven"},
+```
+
+In `apps/engine/tests/test_redelivery.py`, replace the module docstring's first line with:
+
+```python
+"""Tests of how often a job runs when the worker receives it once, again, or after the job was cancelled, and of the
+outcome a job gets when the process or the worker run that claimed it is lost.
+```
+
+Replace the imports from `import time` to `from pathlib import Path` with:
+
+```python
+import os
+import signal
+import time
+import uuid
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+```
+
+Replace the import from `dtcc_engine.jobs` with:
+
+```python
+from dtcc_engine.jobs import RECORD_LIFETIME, RETENTION, RUN_DATASET, Jobs, record_key
+```
+
+Replace the `counting_dataset` fixture with:
+
+```python
+@pytest.fixture
+def counting_dataset(redis_url: str) -> Iterator[str]:
+    """Register a Dataset that counts its runs in Redis by label.
+
+    It waits for the release key if `gated`, raises if `fail`, and kills its own process if `crash`.
+    """
+
+    class CountingProbeArgs(DatasetBaseArgs):
+        label: str
+        gated: bool = False
+        fail: bool = False
+        crash: bool = False
+
+    class CountingProbeDataset(DatasetDescriptor):
+        name = "engine_counting_probe"
+        description = "Dataset defined by an Engine test that counts how often it runs"
+        ArgsModel = CountingProbeArgs
+
+        def build(self, args):
+            # Runs in a pool process, so the count and the gate go through Redis.
+            client = redis.Redis.from_url(redis_url)
+            client.incr(runs_key(args.label))
+            if args.gated:
+                wait_for(lambda: client.exists(RELEASE_KEY))
+            if args.fail:
+                raise RuntimeError("probe failure")
+            if args.crash:
+                os.kill(os.getpid(), signal.SIGKILL)
+            return Mesh(
+                vertices=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), faces=np.array([[0, 1, 2]])
+            )
+
+    try:
+        yield "engine_counting_probe"
+    finally:
+        unregister("engine_counting_probe")
+```
+
+Add at the end of the file:
+
+```python
+def claimed_job(jobs: Jobs, claimant: str) -> str:
+    """Record a job that `claimant` claimed and left running, as a worker run lost with it does; return its ID."""
+    job_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    acceptance = {"dataset": "smoke", "target": jobs.target, "submitted_at": now, "queued_at": now}
+    jobs.records.hset(record_key(job_id), mapping={**acceptance, "execution_gate": "started", "claimed_by": claimant})
+    jobs.celery_app.backend.store_result(job_id, {"pid": 7, "hostname": claimant.split()[0]}, "STARTED")
+    return job_id
+
+
+def test_job_whose_pool_process_is_lost_fails_and_the_worker_runs_on(prefork_jobs: Jobs, counting_dataset: str) -> None:
+    records = prefork_jobs.records
+    job_id = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "crashed", "crash": True})
+    wait_until_finished(prefork_jobs, job_id)
+    # Celery stores the failure just before the worker's main process records the outcome.
+    deadline = time.monotonic() + 5
+    while prefork_jobs.status(job_id)["finished_at"] is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+    job = prefork_jobs.status(job_id)
+    assert (job["state"], job["error"]) == ("failed", {"type": "WorkerLostError"})
+    assert job["finished_at"] is not None
+    assert RETENTION.total_seconds() < records.ttl(record_key(job_id)) <= RECORD_LIFETIME.total_seconds()
+    last = prefork_jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "after-crash"})
+    wait_until_completed(prefork_jobs, last)
+
+
+def test_worker_started_again_fails_the_jobs_its_earlier_run_left(
+    redis_url: str, tmp_path: Path, counting_dataset: str
+) -> None:
+    jobs = Jobs(redis_url, "restarted", tmp_path)
+    node = "celery@engine-test-restarted"
+    left = claimed_job(jobs, f"{node} earlier-run 7")
+    elsewhere = claimed_job(jobs, "celery@engine-test-elsewhere earlier-run 7")
+    # Unusable records: the worker leaves them as they are, and they do not keep it from starting.
+    unusable = [
+        claimed_job(jobs, "earlier-run"),
+        claimed_job(jobs, f"{node} earlier-run seven"),
+        claimed_job(jobs, f"{node} earlier-run 7"),
+    ]
+    jobs.records.hdel(record_key(unusable[2]), "submitted_at")
+    before = [jobs.records.hgetall(record_key(job_id)) for job_id in unusable]
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1, hostname=node):
+        last = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "after-restart"})
+        wait_until_completed(jobs, last)
+    left_job, elsewhere_job = jobs.status(left), jobs.status(elsewhere)
+    assert (left_job["state"], left_job["error"]) == ("failed", {"type": "WorkerRestarted"})
+    assert left_job["finished_at"] is not None
+    assert RETENTION.total_seconds() < jobs.records.ttl(record_key(left)) <= RECORD_LIFETIME.total_seconds()
+    # Another worker's claim: that worker may still be running the job.
+    assert (elsewhere_job["state"], elsewhere_job["finished_at"]) == ("running", None)
+    assert [jobs.records.hgetall(record_key(job_id)) for job_id in unusable] == before
+```
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reasons**
+
+Run: `pnpm engine:check tests/test_jobs.py tests/test_redelivery.py`
+Expected: 8 failed and 80 passed. The job whose pool process killed itself is `failed` with `{"type": None}`, from Celery alone; the job an earlier run left is still `running`; and the three records with unusable claims are served, `200` and `409` for status and download, and `200` for cancelling the waiting job and `409` for cancelling the two started ones, where `503` is expected. Stop and report if a test fails in another way.
+
+- [ ] **Step 3: Record claims and the failures of lost claimants**
+
+In `apps/engine/dtcc_engine/jobs.py`, replace the imports from `celery` and `celery.exceptions` with:
+
+```python
+from celery import Celery, Task, bootsteps
+from celery.exceptions import Ignore, WorkerLostError
+from celery.signals import task_failure
+```
+
+Replace the comment above the `START` script with:
+
+```python
+# Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started, and
+# records its claim: ARGV is the claim, which names the worker's node, the worker run, and the pool process.
+```
+
+and, in the script, replace the `HSET` line with:
+
+```lua
+redis.call('HSET', KEYS[1], 'execution_gate', 'started', 'claimed_by', ARGV[1])
+```
+
+Add after the `CANCEL` script:
+
+```python
+# Records the failure of a started job whose claimant is gone, unless its claim changed or it has an outcome:
+# ARGV is the claim, the error type, the finish time, and the record's lifetime.
+LOST = """
+local fields = redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at', 'claimed_by')
+local gate, outcome, finished, claim = unpack(fields)
+if gate ~= 'started' or outcome or finished or claim ~= ARGV[1] then
+  return 'refused'
+end
+redis.call('HSET', KEYS[1], 'outcome', 'failed', 'finished_at', ARGV[3], 'error_type', ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[4])
+return 'recorded'
+"""
+```
+
+Add before `public_upstream_error`:
+
+```python
+def parse_claim(claim: str) -> tuple[str, str, int]:
+    """Split a claim into the worker's node name, the worker run, and the pool process ID.
+
+    Raises:
+        ValueError: If the claim does not hold these three, separated by spaces.
+    """
+    node, worker_run, pid = claim.split(" ")
+    return node, worker_run, int(pid)
+
+
+def process_alive(pid: int) -> bool:
+    """Return whether a process with this ID exists on this host."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+```
+
+In `Jobs.__init__`, add after the line that registers `CANCEL`:
+
+```python
+        self.lost_script = self.records.register_script(LOST)
+        # Identifies this run of the worker, so that a worker started again tells its earlier run's claims from its own.
+        self.worker_run = uuid4().hex
+```
+
+and add after the `run_dataset` task:
+
+```python
+        # Celery identifies a method receiver by its function, so without its own ID only one Jobs would receive.
+        task_failure.connect(self.record_lost_process, weak=False, dispatch_uid=self.worker_run)
+        jobs = self
+
+        class RecordLostClaims(bootsteps.StartStopStep):
+            """When the worker starts, records the failure of the jobs that an earlier run of it claimed and left."""
+
+            def start(self, worker: Any) -> None:
+                try:
+                    jobs.record_lost_claims(node=worker.hostname)
+                except redis.RedisError:
+                    # The worker still starts; the claims are checked again when it next starts.
+                    logger.warning(
+                        "Could not check the jobs left by an earlier run of %s", worker.hostname, exc_info=True
+                    )
+
+        self.celery_app.steps["worker"].add(RecordLostClaims)
+```
+
+In `Jobs.read_record`, add to the conditions of `consistent`, after the `error_upstream` condition:
+
+```python
+                and ("claimed_by" not in record or record["execution_gate"] == "started")
+```
+
+after the `if not consistent:` statement, add:
+
+```python
+            if "claimed_by" in record:
+                parse_claim(record["claimed_by"])
+```
+
+and, in the dictionary it returns, add after the `error_upstream` entry:
+
+```python
+                "claimed_by": record.get("claimed_by"),
+```
+
+In `Jobs.run`, replace the line that calls `self.claim` with:
+
+```python
+        if not self.claim(job_id, f"{task.request.hostname} {self.worker_run} {os.getpid()}"):
+```
+
+Replace `Jobs.claim` with:
+
+```python
+    def claim(self, job_id: str, claim: str) -> bool:
+        """Claim permission to run the job's Dataset, which only one caller gets, and only while the job is waiting.
+
+        The claim names the worker's node, the worker run, and the pool process. A claim whose answer Redis did not send
+        is not repeated: it may have been made.
+        """
+        try:
+            # Checks the acceptance fields, which never change once written; the claim checks the rest.
+            self.read_record(job_id)
+            answer = self.start_script(keys=[record_key(job_id)], args=[claim])
+        except (JobStateUnavailable, redis.RedisError):
+            logger.warning("Job %s does not run: its record is unusable or Redis did not answer", job_id, exc_info=True)
+            return False
+        if answer != "started":
+            logger.warning("Job %s does not run: its record is %s", job_id, answer)
+        return answer == "started"
+```
+
+Add after `Jobs.finish`:
+
+```python
+    def record_lost_process(self, sender: Task, task_id: str, exception: BaseException, **kwargs: Any) -> None:
+        """Record the failure of a job whose pool process was lost, reported by Celery in the worker's main process."""
+        if sender.app is self.celery_app and isinstance(exception, WorkerLostError):
+            self.record_lost_claims(job_ids=[task_id])
+
+    def record_lost_claims(self, node: str | None = None, job_ids: list[str] | None = None) -> None:
+        """Record the failure of each started job without an outcome whose claimant is gone.
+
+        A claimant is gone if it is a pool process of this worker run that no longer exists (`WorkerLostError`), or,
+        with `node`, an earlier run of the worker with that node name (`WorkerRestarted`). Only the claim that was read
+        is replaced, so a claim or an outcome recorded meanwhile stays. An unusable record is left as it is.
+        """
+        if job_ids is None:
+            job_ids = [key.removeprefix(record_key("")) for key in self.records.scan_iter(record_key("*"))]
+        for job_id in job_ids:
+            try:
+                record = self.read_record(job_id)
+            except JobStateUnavailable:
+                logger.warning("Job %s is not checked for a lost claimant: its record is unusable", job_id)
+                continue
+            if record is None or record["claimed_by"] is None or record["outcome"] is not None:
+                continue
+            claim = record["claimed_by"]
+            claim_node, worker_run, pid = parse_claim(claim)
+            if worker_run == self.worker_run and not process_alive(pid):
+                error_type = "WorkerLostError"
+            elif claim_node == node and worker_run != self.worker_run:
+                error_type = "WorkerRestarted"
+            else:
+                continue
+            finished_at = datetime.now(UTC).isoformat()
+            lifetime = int(RECORD_LIFETIME.total_seconds())
+            answer = self.lost_script(keys=[record_key(job_id)], args=[claim, error_type, finished_at, lifetime])
+            if answer == "recorded":
+                logger.warning("Job %s failed with %s: %s, which claimed it, is gone", job_id, error_type, claim)
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 127 passed: the 119 earlier tests and the 8 new cases.
+
+- [ ] **Step 5: Give the development worker a fixed node name, and document the requirement**
+
+In `compose.yaml`, in the `engine-worker` service, add the `hostname` key and its comment after `platform: linux/amd64`:
+
+```yaml
+services:
+  engine-worker:
+    platform: linux/amd64
+    # A fixed host name gives the worker a fixed Celery node name, so that when it starts again it records the failure
+    # of the jobs its earlier run left.
+    hostname: engine-worker
+```
+
+In `apps/engine/DESIGN.md`, add to Restart behavior, after its first paragraph:
+
+```markdown
+Engine records a failure for a job whose claimant is gone and can no longer
+record an outcome. A job whose pool process is lost fails with
+`WorkerLostError`, which Celery reports in the worker's main process. When a
+worker starts, each job that an earlier run of the same worker claimed and left
+without an outcome fails with `WorkerRestarted`. This needs every worker to have
+a stable node name that no other running worker uses, and to start under it
+only after its earlier run and that run's processes have stopped. A job whose
+worker is lost and not started again keeps the state last recorded, as does a
+job whose lost process still appears to exist, because Engine cannot tell
+whether the work stopped.
+```
+
+In this file, in increment 5b's Scope, add after "the worker containers' Celery-specific health-check override;": "a stable Celery node name for each worker that no other running worker uses, under which a worker starts only after its earlier run stopped (Task 21);".
+
+Run: `npx --yes prettier@3.9.6 --check compose.yaml apps/engine/DESIGN.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 6: Lose a worker through the worker service**
+
+Start `pnpm dev:engine` and wait until the worker logs that it is ready; its banner names `celery@engine-worker`. Submit `city_volume_mesh` on `[319891, 6399790, 320091, 6399990]` and wait until it is `running`. Then:
+
+1. `docker compose --profile engine exec -T engine-redis redis-cli -n 0 HGET dtcc-engine:job:<job ID> claimed_by`. Expected: `celery@engine-worker`, a worker run ID, and a process ID.
+2. `docker compose --profile engine kill -s KILL engine-worker`. Expected: the job still reports `running`.
+3. `docker compose --profile engine start engine-worker`, and wait until it is ready. Expected: the job is `failed` with `{"type": "WorkerRestarted"}` and a finish time, its download answers `409`, and the worker logged that the job failed because its claimant is gone.
+
+Stop `pnpm dev:engine`. If the claim names a host name other than `celery@engine-worker`, or the job stays `running`, stop and report: the restart check depends on the node name.
+
+- [ ] **Step 7: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [ ] **Step 8: Stop for review**
+
+Record Task 21's results in Increment 4's status, including Step 6's observations, leave the changes uncommitted, and report Steps 2, 4, 6, and 7. Suggested commit message: `Feature: Recorded engine jobs lost with their process or worker`.
+
+### Task 22: Expire the records of jobs that never finish
+
+A record gets its lifetime, 31 days, only when its job finishes, is cancelled, or is recorded as lost (Tasks 17, 18, and 21). A record whose job never gets there lives for ever: a job whose message was lost with Redis's data after the record was saved, an unconfirmed submission that was never queued, a job whose worker never returns. Increment 2a decided that a record does not expire while its job is queued or running and left the end of a job lost before completion to this increment. This task gives every record the same lifetime from its submission, and restarts it when a delivery claims the job, so an unfinished record expires 31 days after the later of the two.
+
+**Decisions** (proposed with the task):
+
+- Submission writes the acceptance fields, the gate, and the lifetime in one Redis transaction, so no record exists without a lifetime. The `START` script restarts the lifetime with the claim. A finish, cancellation, or lost claimant sets it again from the finish time, as before.
+- The broker's confirmation, `queued_at`, is recorded by a new Lua script, `QUEUED`, only on a record that still exists, and without changing its lifetime, gate, or outcome. The plain `HSET` it replaces would create a record of only `queued_at`, without a lifetime, if the record was lost while the message was sent. Such a submission answers as an unconfirmed one does: `503` with the job's ID, which polling finds unknown. The job is not sent again. A delivery after the loss finds no record to claim and does not run the job, but one may have claimed it before the loss: that delivery runs the job and, as after an expiry, cannot record its outcome or deliver its package. The warning therefore says only that the confirmation is not recorded.
+- The lifetime is `RECORD_LIFETIME`, 31 days. A job that waits in the queue, or runs, for longer loses its record: it is then unknown, and a later delivery does not run it. The expiry bounds the record and is not a finding that the job stopped: it neither cancels nor stops a run, and a run that finishes after it cannot record its outcome or deliver its package, which is left for Task 23's cleanup. A job that finishes within the bound keeps the usual retention, its package for 30 days from the finish and its record a day longer. Engine has no bound on queue waits or run times, and none of the measured jobs comes near one. DESIGN.md's Restart behavior states this.
+- This supersedes Increment 2a's decision that a record does not expire while its job is queued or running. `test_job_records_outlast_the_package_retention` asserted that rule for a queued job, a TTL of `-1`; its expectation changes to the record lifetime, the one changed expectation, for that reason. Of the new tests, `test_confirmation_keeps_the_outcome_and_lifetime_of_a_job_that_finished_first` passes before the change: the plain `HSET` also kept a recorded outcome and its lifetime, and the script must keep them.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/tests/test_jobs.py`
+- Modify: `apps/engine/DESIGN.md` (Restart behavior)
+- Modify: `apps/engine/PLAN.md` (Increment 4 status)
+
+**Interfaces:**
+
+- Consumes: from Task 21, the `START` script with its claim argument and `Jobs.claim(job_id, claim)`; `Jobs.submit`, `Jobs.finish`, and `UnconfirmedSubmission`; `RECORD_LIFETIME` and `RETENTION`; the test helper `submit` and the `client` and `jobs` fixtures.
+- Produces: every record has a lifetime from its submission; the `START` script's second argument, the lifetime; the `QUEUED` script and `Jobs.queued_script`; a submission whose record was lost before its confirmation raises `UnconfirmedSubmission`.
+
+- [ ] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_jobs.py`, in `test_job_records_outlast_the_package_retention`, replace `assert jobs.records.ttl(record_key(queued)) == -1` with:
+
+```python
+    assert retention < jobs.records.ttl(record_key(queued)) <= lifetime
+```
+
+Add at the end of the file:
+
+```python
+def test_claim_restarts_the_lifetime_of_the_record(jobs: Jobs) -> None:
+    job_id = jobs.submit("smoke", {"bounds": BOUNDS})
+    # As if the job had waited in the queue for almost all of its record's lifetime.
+    jobs.records.expire(record_key(job_id), 60)
+    assert jobs.claim(job_id, "celery@engine-test earlier-run 7")
+    assert RETENTION.total_seconds() < jobs.records.ttl(record_key(job_id)) <= RECORD_LIFETIME.total_seconds()
+
+
+def test_confirmation_does_not_recreate_a_record_lost_meanwhile(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As if Redis lost the record while the broker took the message.
+    def lose_the_record(*args, task_id, **kwargs):
+        jobs.records.delete(record_key(task_id))
+
+    monkeypatch.setattr(jobs.sender, "send_task", lose_the_record)
+    response = client.post("/api/v1/jobs", json=SMOKE, headers=AUTHORIZED)
+    assert response.status_code == 503
+    job_id = response.json()["detail"]["job_id"]
+    assert not jobs.records.exists(record_key(job_id))
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).status_code == 404
+
+
+def test_confirmation_keeps_the_outcome_and_lifetime_of_a_job_that_finished_first(
+    client: TestClient, jobs: Jobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A worker can run a short job to its end before the API records the broker's confirmation.
+    def finish_while_sending(*args, task_id, **kwargs):
+        assert jobs.claim(task_id, "celery@engine-test earlier-run 7")
+        jobs.finish(task_id, "failed", "RuntimeError")
+        # Shortened, so that a confirmation that restarted the lifetime would show.
+        jobs.records.expire(record_key(task_id), 60)
+
+    monkeypatch.setattr(jobs.sender, "send_task", finish_while_sending)
+    job_id = submit(client, SMOKE)
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    assert (job["state"], job["error"]) == ("failed", {"type": "RuntimeError"})
+    assert jobs.records.ttl(record_key(job_id)) <= 60
+```
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reason**
+
+Run: `pnpm engine:check tests/test_jobs.py`
+Expected: 3 failed and 80 passed. The queued job's record has no lifetime, a TTL of `-1`; the claim leaves the shortened lifetime of 60 s; and the submission whose record was lost meanwhile answers `202`, because the plain `HSET` recreates the record, where `503` is expected. `test_confirmation_keeps_the_outcome_and_lifetime_of_a_job_that_finished_first` passes. Stop and report if a test fails in another way.
+
+- [ ] **Step 3: Give records a lifetime from submission and from the claim**
+
+In `apps/engine/dtcc_engine/jobs.py`, add before the comment above the `START` script:
+
+```python
+# Records the broker's confirmation of a job's message, if the job's record still exists: ARGV is the time.
+QUEUED = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'missing'
+end
+redis.call('HSET', KEYS[1], 'queued_at', ARGV[1])
+return 'recorded'
+"""
+```
+
+Replace the comment above the `START` script with:
+
+```python
+# Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started, records its
+# claim, and restarts the record's lifetime: ARGV is the claim and the lifetime.
+```
+
+and, in the script, add after the `HSET` line:
+
+```lua
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+```
+
+In `Jobs.__init__`, add before the line that registers `START`:
+
+```python
+        self.queued_script = self.records.register_script(QUEUED)
+```
+
+Replace `Jobs.submit` with:
+
+```python
+    def submit(self, dataset_name: str, parameters: dict[str, Any]) -> str:
+        """Record and queue a job that runs a Dataset with parameters the caller has validated; return its ID.
+
+        Raises:
+            redis.RedisError: If Redis cannot record the job; nothing was sent.
+            UnconfirmedSubmission: If sending the job or recording its confirmation failed, or the job's record was
+                lost meanwhile; the job may be queued, and it is not sent again.
+        """
+        job_id = str(uuid4())
+        key = record_key(job_id)
+        submitted_at = datetime.now(UTC).isoformat()
+        acceptance = {"dataset": dataset_name, "target": self.target, "submitted_at": submitted_at}
+        with self.records.pipeline() as pipeline:
+            pipeline.hset(key, mapping={**acceptance, "execution_gate": "waiting"})
+            # The record of a job that never finishes expires too.
+            pipeline.expire(key, RECORD_LIFETIME)
+            pipeline.execute()
+        try:
+            self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=self.target)
+            answer = self.queued_script(keys=[key], args=[datetime.now(UTC).isoformat()])
+        except (redis.RedisError, OperationalError) as error:
+            raise UnconfirmedSubmission(job_id) from error
+        if answer != "recorded":
+            # Recreating the record would leave one without its acceptance fields or a lifetime.
+            logger.warning("Job %s was sent, but its record is %s, so its confirmation is not recorded", job_id, answer)
+            raise UnconfirmedSubmission(job_id)
+        return job_id
+```
+
+In `Jobs.claim`, replace the call to `self.start_script` with:
+
+```python
+            answer = self.start_script(keys=[record_key(job_id)], args=[claim, int(RECORD_LIFETIME.total_seconds())])
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 130 passed: the 127 earlier tests and the 3 new ones.
+
+- [ ] **Step 5: Document the lifetime**
+
+In `apps/engine/DESIGN.md`, add to Restart behavior, after the paragraph that Task 21 added:
+
+```markdown
+Engine's record of a job that never finishes expires 31 days after the job's
+submission or, once a delivery claimed it, after the claim. The job is then
+unknown, and a later delivery of it does not run. The expiry bounds the record;
+it does not show that the job stopped, and it neither cancels nor stops a job
+that still runs. A job that finishes after its record expired cannot record its
+outcome or deliver its package; one that finishes before keeps the retention
+that Package creation, delivery, and retention describes.
+```
+
+Run: `npx --yes prettier@3.9.6 --check apps/engine/DESIGN.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 6: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [ ] **Step 7: Stop for review**
+
+Record Task 22's results in Increment 4's status, leave the changes uncommitted, and report Steps 2, 4, and 6. Suggested commit message: `Feature: Expired engine records of unfinished jobs`.
+
+### Task 23: Delete the packages that no job can deliver
+
+A completed job's package stays on disk after it expires, and a package can be left without a job that can deliver it: its job's record expired or was lost, or its job was recorded as failed after the export, as Task 21 records a lost claimant. DESIGN.md requires each host to clean up expired package files automatically, so that broker metadata expiry is not the only cleanup; expired packages are already refused (Task 12). This task has each host's worker delete them.
+
+**Interfaces verified for the task** (2026-10-13, at Core `17c6efe` and in the development image's Celery 5.6.3):
+
+- Core's canonical export stages the archive in `tempfile.TemporaryDirectory(dir=<package directory>, prefix='.dtcc-package-')` and moves it into place with `os.replace` (`dtcc_core/datasets/package.py`). The directory is removed when the export ends, unless its process is killed.
+- A worker bootstep that requires `celery.worker.components:Timer` gets the worker's timer, whose `call_repeatedly(seconds, function)` returns an entry with `cancel()`. The timer runs in the worker's main process, so a pass takes no pool process.
+- The worker blueprint's `Consumer` step is marked `last` (`celery/worker/components.py`), and the blueprint orders every other step before it (`celery/bootsteps.py`, `Blueprint._finalize_steps`), so a step's `start` runs before the worker consumes any message.
+
+**Decisions** (proposed with the task):
+
+- The worker deletes a package when its job's record is gone, or its job failed, was cancelled, or completed 30 periods of 24 hours ago or earlier. It keeps a package while its job has no outcome, because the job may still record completion, and while the job's record is unusable. A pass whose Redis read fails deletes no more packages; the next pass tries again. Deleting a package is retention, not a finding that the job's computation stopped: Core moves a package into place at the end of its export, and a job whose record is gone cannot deliver it.
+- When the worker starts, before it consumes any job, it also deletes every `.dtcc-package-*` directory. None of this worker's exports runs yet, because Celery starts the consumer after every other step; the host's worker is the only one that exports into its package directory (DESIGN.md, Runtime architecture: one worker on each compute host); and Task 21's deployment requirement has its earlier run stopped before it starts. So each such directory belongs to an export that was killed. The hourly pass leaves staging directories alone: Core sets no deadline on an export, so a directory's age does not show that its export stopped. A directory left while the worker runs is deleted when the worker next starts.
+- A bootstep runs a pass when the worker starts and then every hour, `CLEANUP_INTERVAL`. A host whose worker does not run keeps its files until the worker starts again; status and download already refuse expired packages. Each host's worker cleans the package directory it shares with that host's API.
+- Existing tests: `test_redelivery.py`'s docstring covers the new test. No expectation changes. The test shortens the interval to one second to see a later pass, and ages a staging directory made while the worker runs, which a later pass must keep.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/tests/test_redelivery.py`
+- Modify: `apps/engine/DESIGN.md` (Package creation, delivery, and retention)
+- Modify: `apps/engine/PLAN.md` (Increment 4 status)
+
+**Interfaces:**
+
+- Consumes: `Jobs.read_record`, `Jobs.package_path`, `Jobs.package_dir`, `RETENTION`, and the worker bootsteps of Task 21; the test helper `wait_for`.
+- Produces: `CLEANUP_INTERVAL`, `Jobs.clean_packages()`, `Jobs.clean_staging()`, and the worker bootstep `CleanPackages`.
+
+- [ ] **Step 1: Write the test**
+
+In `apps/engine/tests/test_redelivery.py`, replace the module docstring's first two lines with:
+
+```python
+"""Tests of how often a job runs when the worker receives it once, again, or after the job was cancelled, of the
+outcome a job gets when the process or the worker run that claimed it is lost, and of the packages the worker deletes.
+```
+
+Replace `from datetime import UTC, datetime` with:
+
+```python
+from datetime import UTC, datetime, timedelta
+```
+
+Add at the end of the file:
+
+```python
+def package_with_record(jobs: Jobs, fields: dict[str, str]) -> str:
+    """Write a package and a record of its job with these fields besides the acceptance fields; return the job's ID."""
+    job_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    acceptance = {"dataset": "smoke", "target": jobs.target, "submitted_at": now, "queued_at": now}
+    jobs.records.hset(record_key(job_id), mapping={**acceptance, **fields})
+    jobs.package_path(job_id).write_bytes(b"package")
+    return job_id
+
+
+def test_worker_deletes_the_packages_no_job_can_deliver(
+    redis_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dtcc_engine.jobs.CLEANUP_INTERVAL", timedelta(seconds=1), raising=False)
+    jobs = Jobs(redis_url, "cleaned", tmp_path)
+    now = datetime.now(UTC)
+    finished = {"execution_gate": "started", "finished_at": now.isoformat()}
+    expired = (now - RETENTION - timedelta(seconds=1)).isoformat()
+    packages = {
+        "completed": package_with_record(jobs, {**finished, "outcome": "completed"}),
+        "expired": package_with_record(jobs, {**finished, "outcome": "completed", "finished_at": expired}),
+        "failed": package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "WorkerLostError"}),
+        "cancelled": package_with_record(
+            jobs, {"execution_gate": "cancelled", "outcome": "cancelled", "finished_at": now.isoformat()}
+        ),
+        # Its job may still record completion.
+        "running": package_with_record(jobs, {"execution_gate": "started"}),
+        # Its state cannot be established, so it is kept.
+        "unusable": package_with_record(jobs, {}),
+    }
+    unknown = str(uuid.uuid4())
+    jobs.package_path(unknown).write_bytes(b"package")
+    packages["unknown"] = unknown
+    # Core stages an export beside the package; one there before the worker starts belongs to an export that was killed.
+    killed_export = tmp_path / ".dtcc-package-killed"
+    killed_export.mkdir()
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        kept = {name for name, job_id in packages.items() if jobs.package_path(job_id).exists()}
+        assert kept == {"completed", "running", "unusable"}
+        assert not killed_export.exists()
+        # One that appears while the worker runs may belong to a running export, however old it is.
+        running_export = tmp_path / ".dtcc-package-running"
+        running_export.mkdir()
+        two_days_ago = time.time() - 2 * 86400
+        os.utime(running_export, (two_days_ago, two_days_ago))
+        # A package whose job fails while the worker runs goes at a later pass.
+        failed_later = package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "RuntimeError"})
+        wait_for(lambda: not jobs.package_path(failed_later).exists(), timeout=10)
+        assert running_export.exists()
+```
+
+- [ ] **Step 2: Run the test to verify it fails for the right reason**
+
+Run: `pnpm engine:check tests/test_redelivery.py`
+Expected: 1 failed and 8 passed. When the worker has started, every package is still there, so the set of kept packages also holds `expired`, `failed`, `cancelled`, and `unknown`. Stop and report if the test fails in another way.
+
+- [ ] **Step 3: Delete the packages in the worker**
+
+In `apps/engine/dtcc_engine/jobs.py`, replace `import os` with:
+
+```python
+import os
+import shutil
+```
+
+Add after the `RUN_DATASET` line:
+
+```python
+# How often a worker deletes the packages that no job can deliver.
+CLEANUP_INTERVAL = timedelta(hours=1)
+```
+
+In `Jobs.__init__`, add after the line that adds `RecordLostClaims`:
+
+```python
+        class CleanPackages(bootsteps.StartStopStep):
+            """Deletes the packages that no job can deliver when the worker starts, and then every interval.
+
+            When the worker starts, it also deletes the staging directories of exports that were killed.
+            """
+
+            requires = {"celery.worker.components:Timer"}
+
+            def start(self, worker: Any) -> None:
+                # Celery starts the consumer after every other step, so none of this worker's exports runs yet.
+                jobs.clean_staging()
+                jobs.clean_packages()
+                self.cleanup = worker.timer.call_repeatedly(CLEANUP_INTERVAL.total_seconds(), jobs.clean_packages)
+
+            def stop(self, worker: Any) -> None:
+                self.cleanup.cancel()
+
+        self.celery_app.steps["worker"].add(CleanPackages)
+```
+
+Add before `Jobs.record_lost_process`:
+
+```python
+    def clean_packages(self) -> None:
+        """Delete this host's packages that no job can deliver.
+
+        A package goes when its job is unknown or expired, failed, was cancelled, or completed more than the retention
+        ago. It stays while its job has no outcome, which may still be completion, and while the job's record is
+        unusable. A pass that Redis does not answer deletes no more packages; the next pass does.
+        """
+        now = datetime.now(UTC)
+        try:
+            for path in self.package_dir.glob("*.dtccpkg"):
+                try:
+                    record = self.read_record(path.stem)
+                except JobStateUnavailable:
+                    continue
+                outcome = record["outcome"] if record else None
+                expired = outcome == "completed" and now >= record["finished_at"] + RETENTION
+                if record is None or outcome in ("failed", "cancelled") or expired:
+                    path.unlink(missing_ok=True)
+                    logger.info("Deleted package %s, which no job can deliver", path.name)
+        except redis.RedisError:
+            logger.warning("Could not read job records; packages are deleted at the next pass", exc_info=True)
+
+    def clean_staging(self) -> None:
+        """Delete the directories in which Core staged exports beside the packages.
+
+        Call it only before the worker runs jobs: the host's worker is the only one that exports here, and its earlier
+        run has stopped, so every such directory belongs to an export that was killed.
+        """
+        for staging in self.package_dir.glob(".dtcc-package-*"):
+            shutil.rmtree(staging, ignore_errors=True)
+            logger.info("Deleted %s, left by an export that was killed", staging.name)
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 131 passed: the 130 earlier tests and the new one.
+
+- [ ] **Step 5: Document the cleanup**
+
+In `apps/engine/DESIGN.md`, in Package creation, delivery, and retention, add after the paragraph that ends "merely because their files remain on disk.":
+
+```markdown
+Each host's worker deletes the packages that no job can deliver when it starts
+and every hour: those whose job is unknown or expired, failed, was cancelled, or
+completed more than 30 periods of 24 hours ago. A package stays while its job
+has no outcome. Deleting a package is retention; it does not show that the
+job's computation stopped. When the worker starts, before it runs any job, it
+also deletes the staging directories that exports left beside the packages: the
+host's worker is the only one that exports there, and it starts only after its
+earlier run stopped (Restart behavior), so those exports were killed. A staging
+directory left while the worker runs stays until the worker starts again.
+```
+
+Run: `npx --yes prettier@3.9.6 --check apps/engine/DESIGN.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 6: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [ ] **Step 7: Stop for review**
+
+Record Task 23's results in Increment 4's status, leave the changes uncommitted, and report Steps 2, 4, and 6. Suggested commit message: `Feature: Deleted engine packages that no job can deliver`.
+
+### Task 24: Check API, worker, and broker restarts separately
+
+The Restart behavior row asks that separate API, worker, and broker restarts promise no recovery, delete no surviving work, and report unavailable and unknown state honestly; the Failure reporting row asks the same of broker and host failures. Tasks 17 to 23 give a lost claimant a recorded failure, every record a lifetime, and every host a cleanup. This task checks each restart on its own: two automated tests pin what a new API and a worker started later do with surviving work, and the restarts themselves, including Redis's, run in a Compose project of their own, because the automated suite shares `engine-redis` with `pnpm dev:engine` and cannot restart it.
+
+**Interfaces verified for the task** (2026-10-13 to 2026-10-15, in the experiments and in Compose):
+
+- `engine-redis` runs `redis:8` with its defaults: RDB snapshots at the save points `3600 1 300 100 60 10000`, no append-only file, and its data in the container's anonymous `/data` volume, which a stopped or killed container keeps. A graceful restart saves a snapshot and loses nothing; a killed Redis comes back with its last snapshot. The experiments of 2026-10-13 showed both, and that a worker reconnects about 2 s after Redis returns. Which snapshot a kill returns to depends on elapsed time and write counts, not on what the jobs do.
+- `CONFIG SET save ""` turns automatic snapshots off until Redis restarts, and `SAVE` writes a snapshot before it answers ([Redis persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)).
+- Compose's `stop`, `restart`, and `kill` of `engine-redis` act on Redis alone: with a worker that depends on it running, `--dry-run` listed only the Redis container for each.
+- A Compose project name gives a project its own containers, network, and volumes, as `pnpm engine:check:prod` uses `dtcc-twin-engine-prod`. The `engine` service publishes port 8000 in every project; `engine-redis` and `engine-worker` publish none.
+- `docker compose stop` of one service, from another terminal, leaves an attached `docker compose up`, which `pnpm dev:engine` runs, and its other services running, and `docker compose start` brings the service back: checked on 2026-10-15 in a throwaway project. Interrupting `pnpm dev:engine` instead stops all its services, and Compose kills a container that has not stopped 10 seconds after it was asked to ([stop grace period](https://docs.docker.com/reference/compose-file/services/#stop_grace_period)); `compose.yaml` gives the worker no longer one.
+- Celery may store `STARTED`, which status reports as `running`, before a delivery claims the job (DESIGN.md's Cancellation). A claim is in Redis before the worker has Redis's answer, and a delivery whose claim raises does not run the job. The worker sets Core's progress callback only once its claim succeeds, and `city_volume_mesh` at Core `17c6efe` reports its phases through a `ProgressTracker`, which status shows as `progress` while the job runs; a reported `progress` therefore shows that the Dataset runs. A progress report that Redis does not take is logged without failing the job.
+- Engine's `finished_at` is the worker's time when it records the finish. Celery 5.6.3 logs a task's success or failure only after storing its result, which can wait for Redis, so the log line's time is not the job's finish. The Redis container's `date -u +%FT%T.%3NZ` reads the clock that the worker's containers share.
+- The API keeps no state of its own; status and packages come from Redis and the package directory.
+
+**Decisions** (proposed with the task):
+
+- The two new tests pin existing behavior, so they pass when written, as Task 14's coverage tests did. The first creates a new application over the same Redis and package directory; Step 3 restarts the API's process.
+- The restarts run in a Compose project of their own, `dtcc-twin-engine-restart`, with its own Redis, package volume, API, and worker. The development Redis, both its databases, and the development package volume are left alone, so the check discards no development data. Only the development API is stopped meanwhile, because both projects' APIs publish port 8000; it keeps no state and runs no job, so the development worker and Redis keep running, with any job they run. `pnpm dev:engine` is not interrupted, which would stop its worker too and kill a job that runs longer than the grace period. The project is removed at the end with its volumes. Components are restarted one at a time with Compose's `restart`, `stop`, `start`, and `kill`. A worker lost during a job is Task 21's Step 6 and is not repeated.
+- The Redis loss is checked against a known snapshot: automatic snapshots are turned off, and one is saved while no job is queued or running. Jobs accepted after it are then lost with the kill, whatever they do, and the jobs in it come back as it holds them, which the check records. DESIGN.md promises nothing after Redis loses data or returns to an earlier state: a job saved while claimed or waiting would come back so, and could then fail with `WorkerRestarted` or run again. The check avoids that state rather than requiring an outcome for it.
+- Expectations accept a job that has advanced: a job may complete before the API is back. Redis stops only once status reports the running job's `progress`, which shows that its Dataset runs; `running` alone, or a stored claim, does not. Redis stays down until status answers `503`, so a short outage cannot fall between polls. The attempt is judged by the job's `finished_at` against the outage's start and end, read from the same clock, and not by the time of Celery's log line. It shows a job that ran through the outage only if the job reported progress before the outage and finished after it. A job that finished before the outage, whose finish fell within it, which may lose the outcome as the contract allows, or whose order cannot be established makes the attempt inconclusive: it is recorded and repeated once. Every attempt is reported with its job IDs, `progress`, outage times, `finished_at`, and the worker's timestamped log. Any other result is diagnosed against DESIGN.md's Restart behavior, not inferred from a log line's time. The check shows that a job's run, from a progress report to its recorded finish, spanned the outage; it does not show which part of the run, the Dataset, the export, or the validation, did. A barrier would hold the job deterministically, but needs a worker started for the check with a test Dataset; the check runs the served worker instead, with `city_volume_mesh`, which runs about 100 s. The worker's log shows how often each job ran.
+
+**Files:**
+
+- Modify: `apps/engine/tests/test_redelivery.py`
+- Modify: `apps/engine/PLAN.md` (Increment 4 status)
+
+**Interfaces:**
+
+- Consumes: the fixtures `prefork_jobs` and `counting_dataset`, the helpers `wait_until_completed`, `runs_key`, `TOKEN`, and `AUTHORIZED`, and `create_app`; Tasks 17 to 23 for the behavior observed through the worker service.
+- Produces: two tests; the Restart behavior and Failure reporting rows' evidence in Increment 4's status.
+
+- [ ] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_redelivery.py`, add at the end of the file:
+
+```python
+def test_restarted_api_serves_the_jobs_the_earlier_one_accepted(
+    redis_url: str, prefork_jobs: Jobs, counting_dataset: str
+) -> None:
+    request = {"dataset": counting_dataset, "parameters": {"bounds": BOUNDS, "label": "api-restart"}}
+    response = TestClient(create_app(TOKEN, prefork_jobs)).post("/api/v1/jobs", json=request, headers=AUTHORIZED)
+    job_id = response.json()["job_id"]
+    wait_until_completed(prefork_jobs, job_id)
+    # The API keeps no state of its own: a new one reads the same Redis and package directory.
+    restarted = TestClient(create_app(TOKEN, Jobs(redis_url, "prefork", prefork_jobs.package_dir)))
+    polled = restarted.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    downloaded = restarted.get(f"/api/v1/jobs/{job_id}/package", headers=AUTHORIZED)
+    assert (polled.status_code, polled.json()["state"]) == (200, "completed")
+    assert downloaded.content == prefork_jobs.package_path(job_id).read_bytes()
+
+
+def test_job_queued_while_no_worker_runs_runs_when_a_worker_starts(
+    redis_url: str, tmp_path: Path, counting_dataset: str
+) -> None:
+    jobs = Jobs(redis_url, "started-later", tmp_path)
+    job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "queued-without-worker"})
+    assert jobs.status(job_id)["state"] == "queued"
+    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+        wait_until_completed(jobs, job_id)
+    assert jobs.records.get(runs_key("queued-without-worker")) == "1"
+```
+
+- [ ] **Step 2: Run the tests**
+
+Run: `pnpm engine:check tests/test_redelivery.py`
+Expected: 11 passed: the 9 earlier tests and the 2 new ones, which pin existing behavior. If either fails, stop and report.
+
+Run: `pnpm engine:check`
+Expected: 133 passed.
+
+- [ ] **Step 3: Restart each component in a Compose project of its own**
+
+If `pnpm dev:engine` runs, do not interrupt it: from another terminal, stop only its API with `docker compose --profile engine stop engine`, and check that `docker compose --profile engine ps` still lists its worker and Redis as running. In this step, `compose` stands for `docker compose --project-name dtcc-twin-engine-restart --profile engine`, run from the repository root. Start the project with `compose up --build --detach engine engine-worker`. Before any other command, check that `compose ps` lists only containers whose names start with `dtcc-twin-engine-restart-`, and wait until `compose logs engine-worker` shows that the worker is ready.
+
+Use the development token and the bounds `[319891, 6399790, 320091, 6399990]`. In checks 1 and 3, `city_volume_mesh` is the job that runs and `smoke` the job queued behind it. A job ran once if `compose logs engine-worker` has one line `Task dtcc_engine.run_dataset[<job ID>] succeeded`, and any other delivery of it is logged as not run.
+
+1. **API.** Submit both; while `city_volume_mesh` runs, `compose restart engine`, and wait until `/api/v1/health` answers. Expected: neither job is `failed` or unknown; `city_volume_mesh` is `running` or `completed`, and `smoke` `queued` or later. Both complete, both packages download, and each job ran once.
+2. **Worker.** `compose stop engine-worker`; the worker logs a warm shutdown. Submit `smoke`: it is `queued`. `compose start engine-worker`. Expected: the job completes, and it ran once.
+3. **Redis.** Submit both, and poll `city_volume_mesh` until its status has a `progress`; record it. Note the outage's start with `compose exec -T engine-redis date -u +%FT%T.%3NZ`, then `compose stop engine-redis`, and poll the job until status answers `503` with "temporarily unavailable". Then `compose start engine-redis`, and note the outage's end the same way. Expected: no answer during the outage is `failed`; the worker logs that it reconnected; both jobs complete, both packages download, and each job ran once; and the `finished_at` of `city_volume_mesh` is after the outage's end. If its `finished_at` is before the outage's start or between start and end, or it has none and the worker's log shows a Redis error while finishing it, or the order cannot be established, the attempt is inconclusive: record it, and repeat the check once. Record each attempt's job IDs, `progress`, outage times, `finished_at`, and `compose logs --timestamps engine-worker`. Diagnose any other result against DESIGN.md's Restart behavior, and report it.
+4. **Redis lost.** With no job queued or running, run `compose exec -T engine-redis redis-cli CONFIG SET save ""` and `compose exec -T engine-redis redis-cli SAVE`, and note what `compose exec -T engine-redis redis-cli DBSIZE` answers. Submit `smoke`, job A, and wait until it completes. `compose stop engine-worker`, and submit `smoke` again: job B is `queued`. Then `compose kill -s KILL engine-redis` and `compose start engine-redis`. Expected: `DBSIZE` answers the noted size, and `EXISTS dtcc-engine:job:<job ID>` answers 0 for A and B. A and B are `404` with "unknown or expired", and the jobs of checks 1 to 3 are still `completed`, with their packages. `compose start engine-worker`. Expected: the worker logs that it deleted A's package, and it receives no delivery of B, whose message was lost with the data. Record what came back.
+5. **Remove the project.** `compose down --volumes --rmi local`. Expected: `docker volume ls` no longer lists `dtcc-twin-engine-restart_engine-packages`, and still lists `dtcc-twin_engine-packages` and `dtcc-twin_postgres-data`. If the development API was stopped, start it again with `docker compose --profile engine start engine`.
+
+- [ ] **Step 4: Validate**
+
+Run: `pnpm engine:check:prod`, `npx --yes prettier@3.9.6 --check apps/engine/PLAN.md`, then `pnpm check`.
+Expected: the production and token checks pass; the plan uses Prettier code style; `pnpm check` passes. Report passed, failed, skipped, and not-run checks separately.
+
+- [ ] **Step 5: Stop for review**
+
+Record Task 24's results in Increment 4's status, including each check in Step 3, set Increment 4's status to executed once Tasks 20 to 24 are, leave the changes uncommitted, and report Steps 2, 3, and 4. Suggested commit message: `Test: Checked engine restarts`.
 
 ## Increment 5a: Production image for the HTTP service
 
@@ -3184,7 +5538,9 @@ Expected: passes. Set Task 9's status in 5a's status line, leave changes uncommi
 
 **Depends on:** increments 2a and 2b for the worker, Redis, packages, and simulation jobs; increment 3 for remote delivery measurements and comparing image digests across hosts; increment 4 for restart behavior.
 
-**Scope:** the worker containers' Celery-specific health-check override; the documented production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); building and validating the `linux/amd64` image on a native x86_64 Linux host (Task 9 ran it only under emulation); deploying the API and worker on that host, running representative Core and Sim jobs, and recording the baseline measurements the spec lists, with hardware, image digest, and software versions. The deployment runs the exact image digest it tested.
+**Cancellation prerequisite:** every worker consuming the deployment's queues must enforce the start/cancel gate before any API exposes cancellation. The one-time development reset in increment 4 is not a production upgrade procedure.
+
+**Scope:** the worker containers' Celery-specific health-check override; a stable Celery node name for each worker that no other running worker uses, under which a worker starts only after its earlier run stopped (Task 21); the documented production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); building and validating the `linux/amd64` image on a native x86_64 Linux host (Task 9 ran it only under emulation); deploying the API and worker on that host, running representative Core and Sim jobs, and recording the baseline measurements the spec lists, with hardware, image digest, and software versions. The deployment runs the exact image digest it tested.
 
 **Upstream interfaces:** Celery's worker inspection for the health check, Celery 5.6.3 (increment 2a); the same `prod` image and `dtcc-engine` entry points as 5a.
 
