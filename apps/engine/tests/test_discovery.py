@@ -27,7 +27,7 @@ def test_health_needs_no_token(client: TestClient) -> None:
     assert response.json() == {"status": "ok"}
 
 
-@pytest.mark.parametrize("path", ["/api/v1/datasets", "/api/v1/datasets/buildings", "/api/v1/host"])
+@pytest.mark.parametrize("path", ["/api/v1/datasets", "/api/v1/datasets/buildings", "/api/v1/host", "/api/v1/targets"])
 @pytest.mark.parametrize(
     "headers",
     [

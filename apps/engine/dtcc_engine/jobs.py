@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -21,10 +22,14 @@ import redis
 from celery import Celery, Task, bootsteps
 from celery.exceptions import Ignore, WorkerLostError
 from celery.signals import task_failure
+from celery.worker import state as worker_state
+from celery.worker.control import inspect_command
 from dtcc_core.common.progress import get_progress_callback, set_progress_callback
 from dtcc_core.datasets.dataset import DatasetUpstreamError
-from kombu.exceptions import OperationalError
+from kombu.exceptions import ChannelError, OperationalError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
+VERSIONED_PACKAGES = ("dtcc-engine", "dtcc-core", "dtcc-sim")
 RETENTION = timedelta(days=30)
 # A day beyond the retention, so a job's records outlast its package even if hosts' clocks differ slightly.
 RECORD_LIFETIME = RETENTION + timedelta(days=1)
@@ -36,6 +41,10 @@ TARGET_PATTERN = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 IMAGE_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 # How long a starting worker waits for an answer from another running worker with its node name, once connected.
 NODE_CHECK_TIMEOUT = 0.5
+# How long an observation waits for a target's worker to answer, once connected.
+OBSERVATION_TIMEOUT = 0.5
+# Engine's inspect command, which a worker answers with what an observation needs.
+DESCRIBE_WORKER = "engine_worker"
 # Celery's states of a job without a recorded outcome; SUCCESS follows the outcome, so it never appears alone.
 CELERY_STATES = {"PENDING": "queued", "STARTED": "running", "PROGRESS": "running", "FAILURE": "failed"}
 # The outcomes a record can hold with each value of its execution gate.
@@ -114,6 +123,42 @@ redis.call('EXPIRE', KEYS[1], ARGV[4])
 return 'recorded'
 """
 logger = logging.getLogger(__name__)
+
+
+def installed_versions() -> dict[str, str]:
+    """Return the installed Engine, Core, and Sim distribution versions."""
+    return {package: version(package) for package in VERSIONED_PACKAGES}
+
+
+@inspect_command(name=DESCRIBE_WORKER)
+def describe_worker(state: Any) -> dict[str, Any]:
+    """Describe this worker for an observation: its image digest, versions, job limit, jobs held, and queues.
+
+    It never reports a job's arguments. Celery registers the command for every app in the process, so it finds this
+    worker's jobs through the app.
+    """
+    consumer = state.consumer
+    queues = consumer.task_consumer.queues if consumer.task_consumer else []
+    return {
+        "image_digest": state.app.engine_jobs.image_digest,
+        "versions": installed_versions(),
+        # The limit Celery applies with prefetch disabled: the worker takes a job only while it holds fewer.
+        "job_limit": getattr(consumer.controller, "max_concurrency", None) or consumer.pool.num_processes,
+        "reserved": len(worker_state.reserved_requests),
+        "queues": sorted(queue.name for queue in queues),
+    }
+
+
+class WorkerDescription(BaseModel):
+    """A worker's answer to `DESCRIBE_WORKER`."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    image_digest: str | None
+    versions: dict[str, str]
+    job_limit: int
+    reserved: int
+    queues: list[str]
 
 
 def record_key(job_id: str) -> str:
@@ -224,6 +269,8 @@ class Jobs:
         # Identifies this run of the worker, so that a worker started again tells its earlier run's claims from its own.
         self.worker_run = uuid4().hex
         self.celery_app = Celery("dtcc_engine", broker=redis_url, backend=redis_url)
+        # Where Engine's inspect command, which Celery registers for every app, finds this app's jobs.
+        self.celery_app.engine_jobs = self
         self.celery_app.conf.update(
             task_default_queue=target,
             task_track_started=True,
@@ -551,6 +598,62 @@ class Jobs:
             return
         if answers:
             raise RuntimeError(f"Another running worker answers as {node}, so this one does not start")
+
+    def observe(self, target: str) -> dict[str, Any]:
+        """Observe a target's worker through the broker, with the count of jobs waiting in its queue.
+
+        Returns:
+            `state`, `reason`, `worker`, the worker's answer, and `waiting`. The state is `ready` if the worker can
+            start a job now; `busy` if it holds as many jobs as its limit, or jobs wait; `unavailable` if it does not
+            consume exactly its target's queue; `incompatible` if its image digest does not match this host's; and
+            `unknown` if the broker or the worker did not answer, or the answer is malformed, which does not show that
+            the worker stopped. Only ready and busy have no reason; a value not obtained is None.
+        """
+        node = f"celery@{target}"
+        try:
+            # A connection of its own: on a pooled one, an earlier call that timed out can lose this answer.
+            with self.celery_app.connection_for_write() as connection:
+                # Before the worker answers: a job it takes from the queue in between is counted twice, not missed.
+                try:
+                    waiting = connection.default_channel.queue_declare(queue=target, passive=True).message_count
+                except ChannelError:
+                    # Kombu keeps no list for an empty queue, so its passive declaration finds none.
+                    waiting = 0
+                answers = self.celery_app.control.broadcast(
+                    DESCRIBE_WORKER, destination=[node], reply=True, timeout=OBSERVATION_TIMEOUT, connection=connection
+                )
+        except (OperationalError, redis.RedisError):
+            logger.warning("Could not observe the worker of %s", target, exc_info=True)
+            return {"state": "unknown", "reason": "The broker did not answer", "worker": None, "waiting": None}
+        answer = next((reply[node] for reply in answers if node in reply), None)
+        if answer is None:
+            reason = f"Its worker did not answer within {OBSERVATION_TIMEOUT} s"
+            return {"state": "unknown", "reason": reason, "worker": None, "waiting": waiting}
+        try:
+            worker = WorkerDescription.model_validate(answer).model_dump()
+        except ValidationError:
+            return {
+                "state": "unknown",
+                "reason": "Its worker's answer is malformed",
+                "worker": None,
+                "waiting": waiting,
+            }
+        digests = (self.image_digest, worker["image_digest"])
+        if target == self.target:
+            # Compared only when both are set: a development deployment supplies none, and runs locally only.
+            compatible = None in digests or digests[0] == digests[1]
+        else:
+            compatible = None not in digests and digests[0] == digests[1]
+        reason = None
+        if worker["queues"] != [target]:
+            state, reason = "unavailable", f"Its worker does not consume exactly the queue '{target}'"
+        elif not compatible:
+            state, reason = "incompatible", "Its worker's image digest is missing or differs from this host's"
+        elif worker["reserved"] < worker["job_limit"] and waiting == 0:
+            state = "ready"
+        else:
+            state = "busy"
+        return {"state": state, "reason": reason, "worker": worker, "waiting": waiting}
 
     def record_lost_process(self, sender: Task, task_id: str, exception: BaseException, **kwargs: Any) -> None:
         """Record the failure of a job whose pool process was lost, reported by Celery in the worker's main process."""

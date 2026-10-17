@@ -228,6 +228,15 @@ Availability means that a target can accept queued work; capacity means that it
 appears to have room to start another job. A busy target can still be available.
 HTTP liveness alone must not be treated as proof that its Celery worker is ready.
 
+Engine observes a target through the broker. The target's worker answers with
+its image digest, versions, job limit, the jobs it holds, and the queues it
+consumes, never with a job's arguments, and the broker counts the jobs waiting
+in the target's queue. A target is available when its worker answers and
+consumes exactly its target's queue, and has capacity when the worker holds
+fewer jobs than its limit and none wait. A target whose worker does not answer
+is unknown: Engine does not conclude that the worker stopped, and routing
+treats the target as unavailable.
+
 Reported load is a placement hint. Concurrent submissions can observe the same
 capacity, so automatic placement does not guarantee immediate execution. Celery
 enforces the actual job-count limit. Engine must not add a distributed slot
@@ -508,6 +517,9 @@ manager into Engine.
 Configuration supplies the central broker/result-backend connection, one
 shared Engine HTTP token, the local target identity, the static remote-target
 list, per-host concurrent-job limits, and local temporary result directories.
+Each remote target is an identifier and the base address of its Engine HTTP
+service, without credentials; the entry service sends the shared token only to
+those addresses and follows no redirects.
 All Engine HTTP services use the shared token; there are no per-consumer roles.
 The only exception is an unauthenticated health route that reports liveness and
 returns no Dataset, job, or version information, so that process supervisors
@@ -542,7 +554,11 @@ Celery, Python, and the numerical stack. In v1, every host in a deployment runs
 the `linux/amd64` image, and hosts are compatible when they run the same
 platform-specific image digest (not a multi-platform index, whose per-platform
 images have different digests). The deployment supplies each host's digest to
-its configuration so that discovery can report it. Image compatibility is
+its configuration so that discovery and the host's worker can report it. A
+remote target is compatible only when its worker reports the entry's digest; a
+missing digest never matches. The local target is compared only when both
+digests are set, so a development deployment without digests runs locally
+only. Image compatibility is
 separate from runtime availability, which each host reports for itself. Distribution versions alone do
 not identify the Core and Sim commits installed from Git. An environment that
 can import Dataset descriptors is not automatically a working numerical

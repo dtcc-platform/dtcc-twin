@@ -12,9 +12,11 @@ import re
 import secrets
 from importlib.metadata import version
 from typing import Any
+from urllib.parse import urlsplit
 
 import dtcc_core.datasets as datasets
 import dtcc_sim  # noqa: F401  Importing Sim registers its Dataset Definitions with Core.
+import requests
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -22,9 +24,18 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, ValidationError
 from redis import RedisError
 
-from dtcc_engine.jobs import ExecutionStarted, Jobs, JobStateUnavailable, UnconfirmedSubmission, jobs_from_environment
+from dtcc_engine.jobs import (
+    TARGET_PATTERN,
+    ExecutionStarted,
+    Jobs,
+    JobStateUnavailable,
+    UnconfirmedSubmission,
+    installed_versions,
+    jobs_from_environment,
+)
 
-VERSIONED_PACKAGES = ("dtcc-engine", "dtcc-core", "dtcc-sim")
+# How long the entry waits to connect to a remote host's Engine, and then for each read of its answer.
+HOST_TIMEOUT = 5.0
 # RFC 6750 b64token: any other configured token could never match a well-formed Authorization header.
 BEARER_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\-._~+/]+=*")
 
@@ -58,9 +69,14 @@ def public_errors(errors: list[dict[str, Any]], fields: set[str]) -> list[dict[s
     ]
 
 
-def installed_versions() -> dict[str, str]:
-    """Return the installed Engine, Core, and Sim distribution versions."""
-    return {package: version(package) for package in VERSIONED_PACKAGES}
+class HostDiscovery(BaseModel):
+    """A host's answer to `GET /api/v1/host`."""
+
+    target: str
+    image_digest: str | None
+    versions: dict[str, str]
+    catalog_revision: str
+    datasets: dict[str, Any]
 
 
 def dataset_catalog() -> dict[str, Any]:
@@ -78,13 +94,64 @@ def dataset_catalog() -> dict[str, Any]:
     return {"catalog_revision": "sha256:" + hashlib.sha256(canonical.encode()).hexdigest(), **content}
 
 
-def create_app(api_token: str, jobs: Jobs) -> FastAPI:
+def parse_remote_targets(value: str, local_target: str) -> dict[str, str]:
+    """Parse the remote targets, `<identifier>=<address>` separated by commas, into addresses by identifier, in order.
+
+    An address is the base URL of the target's Engine HTTP service: `http` or `https`, without credentials, a query,
+    or a fragment. Errors never repeat an address, which could hold a credential.
+
+    Raises:
+        ValueError: If an entry is malformed, an identifier is malformed, repeated, or the local target's, or an
+            address is not such a URL.
+    """
+    targets: dict[str, str] = {}
+    for entry in value.split(",") if value else []:
+        identifier, separator, address = entry.partition("=")
+        if not separator or not TARGET_PATTERN.fullmatch(identifier):
+            raise ValueError("Each remote target must be <identifier>=<address>, with a valid target identifier")
+        if identifier == local_target or identifier in targets:
+            raise ValueError(f"Remote target '{identifier}' is the local target or is configured twice")
+        try:
+            parts = urlsplit(address)
+            parts.port  # Raises ValueError if the port is malformed.
+        except ValueError:
+            # The parser's own errors can repeat the address.
+            parts = None
+        if (
+            parts is None
+            or parts.scheme not in ("http", "https")
+            or not parts.hostname
+            or "@" in parts.netloc
+            # Not parts.query or parts.fragment: an empty one is "", and would still come before the route's path.
+            or "?" in address
+            or "#" in address
+        ):
+            raise ValueError(
+                f"Remote target '{identifier}' needs a valid http or https URL without credentials, query, or fragment"
+            )
+        targets[identifier] = address.rstrip("/")
+    return targets
+
+
+def host_summary(host: dict[str, Any]) -> dict[str, Any]:
+    """Return a host-local discovery's image digest, versions, and catalog revision, and its Datasets' names."""
+    return {
+        "image_digest": host["image_digest"],
+        "versions": host["versions"],
+        "catalog_revision": host["catalog_revision"],
+        "datasets": sorted(host["datasets"]),
+    }
+
+
+def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None = None) -> FastAPI:
     """Create the Engine HTTP application.
 
     Args:
         api_token: Shared token that every route except the health route requires,
             sent as `Authorization: Bearer <token>`.
         jobs: The jobs of this host's compute target.
+        remote_targets: The base addresses of the remote targets' Engine HTTP services by identifier, in placement
+            order, as `parse_remote_targets` returns them.
 
     Raises:
         ValueError: If `api_token` is empty or is not an RFC 6750 bearer token
@@ -93,6 +160,7 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
     if not BEARER_TOKEN_PATTERN.fullmatch(api_token):
         raise ValueError("The Engine API token must be a non-empty RFC 6750 bearer token")
     expected_token = api_token.encode()
+    remote_targets = remote_targets or {}
     bearer = HTTPBearer(auto_error=False)
 
     def require_token(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
@@ -118,6 +186,32 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' is unknown or expired")
         return job
 
+    def bearer_token(request: requests.PreparedRequest) -> requests.PreparedRequest:
+        # As the request's authentication, so that requests does not replace it with credentials from `.netrc`.
+        request.headers["Authorization"] = f"Bearer {api_token}"
+        return request
+
+    def remote_host(target: str, address: str) -> dict[str, Any]:
+        """Return a remote target's host-local discovery, or the reason it could not be read, as `host_error`."""
+        try:
+            # Not redirected: the token goes to configured addresses only.
+            response = requests.get(
+                f"{address}/api/v1/host", auth=bearer_token, timeout=HOST_TIMEOUT, allow_redirects=False
+            )
+        except requests.RequestException:
+            return {"host": None, "host_error": "The host could not be reached"}
+        if response.status_code == status.HTTP_401_UNAUTHORIZED:
+            return {"host": None, "host_error": "The host rejected the token"}
+        if response.status_code != status.HTTP_200_OK:
+            return {"host": None, "host_error": f"The host answered HTTP {response.status_code}"}
+        try:
+            host = HostDiscovery.model_validate(response.json())
+        except (ValueError, ValidationError):
+            return {"host": None, "host_error": "The host's answer is malformed"}
+        if host.target != target:
+            return {"host": None, "host_error": "The host answers as another target"}
+        return {"host": host_summary(host.model_dump()), "host_error": None}
+
     # Generated documentation would be served without the token; health is the only public route.
     app = FastAPI(title="DTCC Engine", version=version("dtcc-engine"), docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -141,6 +235,14 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
         # Host-local discovery, which must not query other hosts.
         return {"target": jobs.target, "image_digest": jobs.image_digest, **dataset_catalog()}
 
+    @app.get("/api/v1/targets", dependencies=[Depends(require_token)])
+    def list_targets() -> dict[str, Any]:
+        local = {"host": host_summary(describe_host()), "host_error": None}
+        targets = [{"target": jobs.target, **jobs.observe(jobs.target), **local}]
+        for target, address in remote_targets.items():
+            targets.append({"target": target, **jobs.observe(target), **remote_host(target, address)})
+        return {"targets": targets}
+
     @app.get("/api/v1/datasets/{name}", dependencies=[Depends(require_token)])
     def describe_dataset(name: str) -> dict[str, Any]:
         registered = datasets.list()
@@ -159,7 +261,7 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
         if request.target not in (None, jobs.target):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Target '{request.target}' is not configured; this Engine runs jobs on '{jobs.target}'",
+                detail=f"Target '{request.target}' is not accepted; this Engine runs jobs only on '{jobs.target}'",
             )
         if request.parameters.get("format") is not None:
             raise HTTPException(
@@ -230,11 +332,14 @@ def create_app(api_token: str, jobs: Jobs) -> FastAPI:
 
 
 def create_app_from_environment() -> FastAPI:
-    """Create the application from `ENGINE_API_TOKEN` and the job settings; the Uvicorn `--factory` entry point.
+    """Create the application from `ENGINE_API_TOKEN`, the job settings, and `ENGINE_REMOTE_TARGETS`, which, unset or
+    empty, means that there are none; the Uvicorn `--factory` entry point.
 
     Raises:
-        ValueError: If `ENGINE_API_TOKEN` is unset, empty, or not an RFC 6750 bearer token, or if `ENGINE_TARGET` or
-            `ENGINE_IMAGE_DIGEST` is malformed.
+        ValueError: If `ENGINE_API_TOKEN` is unset, empty, or not an RFC 6750 bearer token, if `ENGINE_TARGET` or
+            `ENGINE_IMAGE_DIGEST` is malformed, or if `ENGINE_REMOTE_TARGETS` cannot be used (`parse_remote_targets`).
         KeyError: If a job setting is unset: `ENGINE_REDIS_URL`, `ENGINE_TARGET`, or `ENGINE_PACKAGE_DIR`.
     """
-    return create_app(os.environ.get("ENGINE_API_TOKEN", ""), jobs_from_environment())
+    jobs = jobs_from_environment()
+    remote_targets = parse_remote_targets(os.environ.get("ENGINE_REMOTE_TARGETS", ""), jobs.target)
+    return create_app(os.environ.get("ENGINE_API_TOKEN", ""), jobs, remote_targets)
