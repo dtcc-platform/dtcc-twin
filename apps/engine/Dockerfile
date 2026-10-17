@@ -52,6 +52,9 @@ FROM condaforge/miniforge3:26.7.2-0 AS runtime
 # Same base image and path as the builder: a conda environment contains absolute paths.
 COPY --from=builder /opt/conda/envs/engine /opt/conda/envs/engine
 ENV PYTHONUNBUFFERED=1
+# Importing Sim starts PETSc, whose signal handlers would abort a process that writes to a dropped connection, and
+# would catch SIGTERM, which the HTTP service and the worker handle themselves.
+ENV PETSC_OPTIONS=-no_signal_handler
 SHELL ["conda", "run", "--no-capture-output", "-n", "engine", "/bin/bash", "-c"]
 # `conda run` does not forward SIGTERM to its child, so activate and exec under the base image's tini.
 ENTRYPOINT ["tini", "--", "/bin/bash", "-c", "source /opt/conda/etc/profile.d/conda.sh && conda activate engine && exec \"$@\"", "engine"]

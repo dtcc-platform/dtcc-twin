@@ -609,6 +609,12 @@ Both targets follow these rules:
   Core's continuous integration does not cover that platform. Supporting
   `linux/arm64`, such as AWS Graviton, requires that upstream fix and its own
   production validation.
+- The image sets `PETSC_OPTIONS=-no_signal_handler`. Importing Sim starts PETSc,
+  whose signal handlers would otherwise abort a process that writes to a
+  dropped connection, instead of raising an error that Engine, Celery, or the
+  Redis client can handle, and would catch the termination signal that the HTTP
+  service and the worker handle themselves. A deployment that sets its own
+  PETSc options keeps this one.
 
 For local development, the root `compose.yaml` places Engine services behind
 the `engine` profile, so developers who work only on the frontend or backend
@@ -621,8 +627,9 @@ not part of the repository-wide `pnpm check`, which does not build the image.
 Its environment tests check that Core, Sim, FEniCSx, and the TetGen wrapper are
 installed; that TetGen tetrahedralizes a unit cube; that FEniCSx assembles the
 unit cube's volume and solves a small problem through PETSc; that the unit-cube
-mesh round-trips through an HDF5 file read back by h5py; and that Core builds a
-volume mesh of a small city.
+mesh round-trips through an HDF5 file read back by h5py; that Core builds a
+volume mesh of a small city; and that a process that imports Engine raises an
+error, rather than aborting, when it writes to a closed connection.
 
 The frontend does not call Engine directly. The shared Engine token must not be
 exposed to browsers, so the Twin backend holds the token and forwards the Engine
