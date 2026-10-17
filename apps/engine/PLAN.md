@@ -66,6 +66,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 31. A remote host's worker holds its limit or has jobs waiting, does not answer, consumes another queue as well or none, or runs another image, or the host's HTTP service cannot be reached, rejects the token, or redirects: `GET /api/v1/targets` reports each target's state from its worker's own answer through the broker, `busy`, `unknown`, `unavailable`, or `incompatible`, and its host-local discovery or why it is missing; a host whose HTTP service answers is not thereby ready, the shared token, and no other credential such as a `.netrc` entry's, goes only to the configured address and not to a redirect's location, and no answer repeats a job's arguments. Pinned in Task 26 (`test_target_whose_worker_holds_its_limit_or_has_jobs_waiting_is_busy`, `test_target_whose_api_answers_but_whose_worker_does_not_is_unknown`, `test_worker_that_does_not_consume_exactly_its_queue_is_unavailable`, `test_worker_is_compatible_when_its_image_digest_matches_this_hosts`, `test_host_whose_discovery_cannot_be_read_is_reported_with_the_reason`, `test_redirect_from_a_host_is_not_followed`, `test_host_is_sent_the_shared_token_and_no_other_credential`) and checked through the worker service in Task 26, Step 6.
 32. `ENGINE_REMOTE_TARGETS` names the local target or one target twice, or gives an address with credentials, a query or a fragment, even an empty one, a scheme other than `http` or `https`, or a form that Python's URL parser rejects: the API refuses to start, and neither its error nor what it was raised from repeats the address. Pinned in Task 26 (`test_remote_targets_that_cannot_be_used_are_refused_without_repeating_their_addresses`).
 33. A remote target's job completes, and its host keeps its package, has lost it, or cannot deliver it because the host cannot be reached, rejects the token, redirects, answers another status, or serves another target, or the target is not configured; or the host sends the package compressed or stops sending midway, or the client abandons the download: the entry's status reports the package as available, unavailable, or unknown, `null`; its download streams the host's package unchanged, decoded if the host encoded it, and keeps no copy, or answers `409` or `503` without the host's answer; a stream that fails midway fails the download; an abandoned download closes the entry's request to the host; a host's host-local route serves only its own target's packages and never forwards; and a remote job past its retention is unknown at the entry and at its host, though its file remains. Pinned in Task 27 (`test_remote_job_is_polled_and_downloaded_through_the_entry`, `test_remote_package_its_host_no_longer_has_is_unavailable`, `test_remote_package_whose_host_does_not_deliver_it_is_unknown`, `test_host_answer_that_is_not_a_package_is_not_passed_on`, `test_package_its_host_stops_sending_is_not_delivered_whole`, `test_package_its_host_sends_compressed_is_delivered_as_the_archive`, `test_download_the_client_abandons_releases_its_hosts_connection`, `test_host_serves_its_own_packages_and_forwards_none`, `test_remote_package_past_its_retention_is_unknown_though_its_file_remains`).
+34. A job is submitted without a target while this host's worker is ready, busy, unavailable, incompatible, or does not answer, and the remote targets' workers are in any of these states; or a target is named that is ready, busy, cannot accept the job, or is not configured; or several jobs are submitted at once: the job goes to the first ready target, this host's first and then the remote ones in configured order, observing no further, or else to the first busy one in the same order; a named target takes the job if it is ready or busy and is never replaced by another; the job's record names its target, and its message goes to that target's queue, whose worker runs it, and it is polled and downloaded through the entry; a job that no observed target can accept is `503` with each observed target's state and reason, and is neither recorded nor queued; an identifier that is not configured is `422` before any observation; and concurrent submissions never run more jobs on a host than its worker's limit. Pinned in Task 28 (`test_automatic_placement_takes_the_first_ready_target_or_else_the_first_busy_one`, `test_job_no_target_can_accept_is_rejected_with_each_ones_reason`, `test_requested_target_that_is_ready_or_busy_takes_the_job`, `test_requested_target_that_cannot_accept_the_job_is_rejected_and_no_other_takes_it`, `test_requested_target_that_is_not_configured_is_rejected_without_an_observation`, `test_job_whose_targets_do_not_answer_is_rejected_and_not_recorded`, `test_job_submitted_through_the_entry_runs_on_its_target_and_is_delivered_through_the_entry`, `test_automatic_placement_follows_the_configured_order_of_the_remote_targets`, `test_jobs_pass_a_busy_target_and_queue_on_one_when_none_is_ready`, `test_concurrent_submissions_run_no_more_jobs_on_a_host_than_its_limit`).
 
 ---
 
@@ -2553,7 +2554,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 3: Remote targets and delivery
 
-Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for changes, which were made the same day; its second review, of 2026-10-15 and 2026-10-16, accepted it, and Step 6.5's wording was narrowed after it. The plan is committed in `2e6eb02`. Task 25 was executed 2026-10-16 and committed in `37c31f1`. Its results: with the tests written, `engine:check tests/test_discovery.py tests/test_targets.py` gave 25 failed and 30 passed in 121.6 s, each as Step 2 expects: `/api/v1/host` answered `404` where the four token cases expect `401` and the three host cases `200`, the 8 target identifiers and 6 image digests raised no `ValueError`, and the four worker cases ended in `TimeoutExpired` after 30 s. With the implementation, `engine:check` gave 159 passed in 72.6 s. `engine` and `engine-worker` were stopped and development Redis was running; database 0 held 5 job records, one claimed by `celery@engine-worker`, which had an outcome, so Step 6.1 listed none. With `pnpm dev:engine`, the worker's banner named `celery@local` and its queue `local`. A `smoke` job completed with the claim `celery@local c130156e67cc42d6b4e6678f4f64d594 32`. `/api/v1/host` answered target `local`, `image_digest` null, and the versions, catalog revision, and 28 Datasets of `/api/v1/datasets`, and `401` without the token. With `city_volume_mesh` `running`, a second worker exited with 1 after 5 s, having logged `Unrecoverable error: RuntimeError('Another running worker answers as celery@local, so this one does not start')`. The job was still `running` without a finish time when it had exited, so the attempt was conclusive; it completed after 115 s in the worker, and its 68,525-byte package downloaded. Under `celery@engine-worker`, a worker exited with 1, having logged that a worker of target `local` must run as `celery@local`; with `--queues other`, one exited with 1, having logged that it must consume only the queue `local`. The running worker logged no error; stopped, it logged a warm shutdown, and both containers exited with 0. Prettier passed for `compose.yaml`, `DESIGN.md`, and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` failed once, on two backend e2e tests in `auth.e2e-spec.ts` that each log in twice and timed out at 5 s, at a load average of about 6; its rerun passed. Both reviews of the execution, of 2026-10-16, accepted it; the worker module's docstring now gives the launch command with `--hostname`, which Codex's review found missing. Task 26 was expanded on 2026-10-16; its first review asked for changes, which were made the same day, its second review asked for two more, to Step 6 and to wording, and its third for Step 6's stops to wait for the worker without a deadline; each was made the same day. Gemini's second and third reviews and Codex's fourth accepted it. The plan is committed in `9d423b1`. Task 26 was executed 2026-10-17. Its results: with the tests and the skeleton written, `engine:check tests/test_discovery.py tests/test_targets.py tests/test_hosts.py` gave 40 failed and 56 passed in 47.2 s, each as Step 2 expects: `/api/v1/targets` answered `404` where the four token cases expect `401` and the 11 listings `200`, the 17 remote-target values raised no `ValueError`, and the eight direct observations raised `NotImplementedError`. With the implementation, `engine:check` gave 200 passed in 129.6 s; the image has `requests` 2.34.2, and its dependency layers came from Docker's build cache, which the reviews' builds of the same `pyproject.toml` had filled. `engine` and `engine-worker` were stopped, having exited with 0 after Task 25, and the queue `local` was empty, so no job had to finish first. With `pnpm dev:engine`, the targets listed `local` `ready`, with no reason; `worker` with `image_digest` null, the versions of `/api/v1/datasets`, `job_limit` 1, `reserved` 0, and `queues` `["local"]`; `waiting` 0; and `host` with `image_digest` null and the versions, catalog revision, and 28 Dataset names of `/api/v1/datasets`, sorted, with `host_error` null; and `401` without the token. Step 6's two `celery` commands need the image's path, `/opt/conda/envs/engine/bin/celery`, as earlier tasks' do, because `exec` does not activate the environment; they were corrected. `inspect engine_worker` answered `celery@local` with the same `worker`. With `city_volume_mesh` `running` and `smoke` `queued` when they were read right after the listing, the target was `busy`, with `reserved` 1 and `waiting` 1, and the answer did not contain the bounds. `city_volume_mesh` then failed after 8 min 34 s, with `TimeoutError` in Core's lidar download: `compute.dtcc.chalmers.se:8000` sent a 74 MB lidar file to this machine at about 650 KB/s, and each of the download's four attempts timed out. Engine's code was not involved, and the busy listing stands, since the job was running when it was taken. `smoke` completed, and the target was then `ready`, with `reserved` and `waiting` 0. Stopped with `--timeout -1`, the worker logged a warm shutdown and exited with 0, and the target was `unknown`, with the reason "Its worker did not answer within 0.5 s", `worker` null, `waiting` 0, and `host` as before; started again, it was `ready`. Both containers were then stopped with `--timeout -1` and exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Both reviews of the execution, of 2026-10-17, accepted it, and it is committed in `666dc12`. Task 27 was expanded on 2026-10-17; its first review asked for one change, to the length a compressed package is forwarded with, which was made the same day, and Gemini's accepted it; both second reviews accepted the revision. The plan is committed in `551ee92`. Before its execution, on 2026-10-17, the image was set to start PETSc without its signal handlers, because Task 27's prototype found that they abort a process that writes to a dropped connection, and they also catch SIGTERM (Engine image in DESIGN.md). `test_write_to_a_closed_connection_raises_in_an_engine_process` pins it: written first, it failed with the process aborted, exit code 15; with the setting, `engine:check` gave 201 passed, `engine:check:prod` 19 passed with its token checks, and `pnpm check` passed. Task 27's plan was then brought up to date: its stub host writes without `MSG_NOSIGNAL`, and its note on PETSc describes the image with the setting. Both reviews of the fix and the update, of 2026-10-17, accepted them, and they are committed in `d441371` and `500e16b`. Task 27 was executed 2026-10-17. Its results: with the tests written, `engine:check tests/test_hosts.py tests/test_jobs.py` gave 16 failed and 92 passed in 52.5 s, each as Step 2 expects: the host-local route answered `404` "Not Found", the entry reported a remote job's package as `available` `false`, from its own disk, and its download answered `409` with the local detail, so the stub that stops sending raised no `ChunkedEncodingError`. With the implementation, `engine:check` gave 217 passed in 148.3 s. `engine` and `engine-worker` had exited with 0, so no job had to finish first. With `pnpm dev:engine`, a `smoke` job completed with `package.available` `true`; its package downloaded with `200` from the public route and from the host-local route, and the two files, of 114,403 bytes, were identical; `HEAD` on the host-local route answered `200` with that `content-length`, and `401` without the token; a new UUID answered `404`, "unknown or expired". Stopped with `--timeout -1`, both containers exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 19 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Of the reviews of the execution, of 2026-10-17, Codex's asked for one change, that an error while the entry streams a remote package not put the host's address and answer in its log, and withdrew it, because DESIGN.md lets operational diagnostics keep them; Gemini's accepted it. Tasks 28 to 31 are outlined under Expansion and are expanded one at a time. An expanded task is not an accepted one until review accepts it, and an accepted plan is not an executed task.
+Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for changes, which were made the same day; its second review, of 2026-10-15 and 2026-10-16, accepted it, and Step 6.5's wording was narrowed after it. The plan is committed in `2e6eb02`. Task 25 was executed 2026-10-16 and committed in `37c31f1`. Its results: with the tests written, `engine:check tests/test_discovery.py tests/test_targets.py` gave 25 failed and 30 passed in 121.6 s, each as Step 2 expects: `/api/v1/host` answered `404` where the four token cases expect `401` and the three host cases `200`, the 8 target identifiers and 6 image digests raised no `ValueError`, and the four worker cases ended in `TimeoutExpired` after 30 s. With the implementation, `engine:check` gave 159 passed in 72.6 s. `engine` and `engine-worker` were stopped and development Redis was running; database 0 held 5 job records, one claimed by `celery@engine-worker`, which had an outcome, so Step 6.1 listed none. With `pnpm dev:engine`, the worker's banner named `celery@local` and its queue `local`. A `smoke` job completed with the claim `celery@local c130156e67cc42d6b4e6678f4f64d594 32`. `/api/v1/host` answered target `local`, `image_digest` null, and the versions, catalog revision, and 28 Datasets of `/api/v1/datasets`, and `401` without the token. With `city_volume_mesh` `running`, a second worker exited with 1 after 5 s, having logged `Unrecoverable error: RuntimeError('Another running worker answers as celery@local, so this one does not start')`. The job was still `running` without a finish time when it had exited, so the attempt was conclusive; it completed after 115 s in the worker, and its 68,525-byte package downloaded. Under `celery@engine-worker`, a worker exited with 1, having logged that a worker of target `local` must run as `celery@local`; with `--queues other`, one exited with 1, having logged that it must consume only the queue `local`. The running worker logged no error; stopped, it logged a warm shutdown, and both containers exited with 0. Prettier passed for `compose.yaml`, `DESIGN.md`, and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` failed once, on two backend e2e tests in `auth.e2e-spec.ts` that each log in twice and timed out at 5 s, at a load average of about 6; its rerun passed. Both reviews of the execution, of 2026-10-16, accepted it; the worker module's docstring now gives the launch command with `--hostname`, which Codex's review found missing. Task 26 was expanded on 2026-10-16; its first review asked for changes, which were made the same day, its second review asked for two more, to Step 6 and to wording, and its third for Step 6's stops to wait for the worker without a deadline; each was made the same day. Gemini's second and third reviews and Codex's fourth accepted it. The plan is committed in `9d423b1`. Task 26 was executed 2026-10-17. Its results: with the tests and the skeleton written, `engine:check tests/test_discovery.py tests/test_targets.py tests/test_hosts.py` gave 40 failed and 56 passed in 47.2 s, each as Step 2 expects: `/api/v1/targets` answered `404` where the four token cases expect `401` and the 11 listings `200`, the 17 remote-target values raised no `ValueError`, and the eight direct observations raised `NotImplementedError`. With the implementation, `engine:check` gave 200 passed in 129.6 s; the image has `requests` 2.34.2, and its dependency layers came from Docker's build cache, which the reviews' builds of the same `pyproject.toml` had filled. `engine` and `engine-worker` were stopped, having exited with 0 after Task 25, and the queue `local` was empty, so no job had to finish first. With `pnpm dev:engine`, the targets listed `local` `ready`, with no reason; `worker` with `image_digest` null, the versions of `/api/v1/datasets`, `job_limit` 1, `reserved` 0, and `queues` `["local"]`; `waiting` 0; and `host` with `image_digest` null and the versions, catalog revision, and 28 Dataset names of `/api/v1/datasets`, sorted, with `host_error` null; and `401` without the token. Step 6's two `celery` commands need the image's path, `/opt/conda/envs/engine/bin/celery`, as earlier tasks' do, because `exec` does not activate the environment; they were corrected. `inspect engine_worker` answered `celery@local` with the same `worker`. With `city_volume_mesh` `running` and `smoke` `queued` when they were read right after the listing, the target was `busy`, with `reserved` 1 and `waiting` 1, and the answer did not contain the bounds. `city_volume_mesh` then failed after 8 min 34 s, with `TimeoutError` in Core's lidar download: `compute.dtcc.chalmers.se:8000` sent a 74 MB lidar file to this machine at about 650 KB/s, and each of the download's four attempts timed out. Engine's code was not involved, and the busy listing stands, since the job was running when it was taken. `smoke` completed, and the target was then `ready`, with `reserved` and `waiting` 0. Stopped with `--timeout -1`, the worker logged a warm shutdown and exited with 0, and the target was `unknown`, with the reason "Its worker did not answer within 0.5 s", `worker` null, `waiting` 0, and `host` as before; started again, it was `ready`. Both containers were then stopped with `--timeout -1` and exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Both reviews of the execution, of 2026-10-17, accepted it, and it is committed in `666dc12`. Task 27 was expanded on 2026-10-17; its first review asked for one change, to the length a compressed package is forwarded with, which was made the same day, and Gemini's accepted it; both second reviews accepted the revision. The plan is committed in `551ee92`. Before its execution, on 2026-10-17, the image was set to start PETSc without its signal handlers, because Task 27's prototype found that they abort a process that writes to a dropped connection, and they also catch SIGTERM (Engine image in DESIGN.md). `test_write_to_a_closed_connection_raises_in_an_engine_process` pins it: written first, it failed with the process aborted, exit code 15; with the setting, `engine:check` gave 201 passed, `engine:check:prod` 19 passed with its token checks, and `pnpm check` passed. Task 27's plan was then brought up to date: its stub host writes without `MSG_NOSIGNAL`, and its note on PETSc describes the image with the setting. Both reviews of the fix and the update, of 2026-10-17, accepted them, and they are committed in `d441371` and `500e16b`. Task 27 was executed 2026-10-17. Its results: with the tests written, `engine:check tests/test_hosts.py tests/test_jobs.py` gave 16 failed and 92 passed in 52.5 s, each as Step 2 expects: the host-local route answered `404` "Not Found", the entry reported a remote job's package as `available` `false`, from its own disk, and its download answered `409` with the local detail, so the stub that stops sending raised no `ChunkedEncodingError`. With the implementation, `engine:check` gave 217 passed in 148.3 s. `engine` and `engine-worker` had exited with 0, so no job had to finish first. With `pnpm dev:engine`, a `smoke` job completed with `package.available` `true`; its package downloaded with `200` from the public route and from the host-local route, and the two files, of 114,403 bytes, were identical; `HEAD` on the host-local route answered `200` with that `content-length`, and `401` without the token; a new UUID answered `404`, "unknown or expired". Stopped with `--timeout -1`, both containers exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 19 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Of the reviews of the execution, of 2026-10-17, Codex's asked for one change, that an error while the entry streams a remote package not put the host's address and answer in its log, and withdrew it, because DESIGN.md lets operational diagnostics keep them; Gemini's accepted it. It is committed in `bdf326a`. Task 28 was expanded on 2026-10-17; its prototype's measurements led the user to choose one observation per target and request, without a retry. Both reviews of the plan, of 2026-10-17, accepted it. Tasks 29 to 31 are outlined under Expansion and are expanded one at a time. An expanded task is not an accepted one until review accepts it, and an accepted plan is not an executed task.
 
 **Scope:** configured remote targets, automatic local-first routing, explicit targets, per-host job limits, all-hosts-busy queueing, the compute-targets operation (target identifiers, versions, local capabilities, observed availability), aggregated discovery at the entry service that reports target availability and includes remote-only capabilities without executing them locally, and package transfer from a remote Engine HTTP service to the entry service without a shared filesystem. Remote discovery and delivery use the shared token.
 
@@ -2577,7 +2578,7 @@ Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for c
 - Identity: a target identifier names the target's queue and its worker's node, `celery@<target>`; the deployment supplies the host's image digest (Task 25).
 - Observation: one call per target, aimed at its node name, to an inspect command that Engine's worker registers. It answers the worker's image digest, versions, job limit, reserved count, and consumed queues, never job arguments; the node name it is aimed at identifies the target (Task 26). Each call uses a broker connection of its own and a 0.5 s timeout; the waiting count comes from Kombu's passive queue declaration. A target that does not answer is unknown, not stopped; one whose worker does not consume exactly its target's queue is unavailable. No cache.
 - Compatibility: the worker's reported image digest equals the entry's. A remote target needs both present; the local target is compared when both are set, so a development deployment without digests runs locally only.
-- Routing: DESIGN.md's table, in which an unknown observation counts as unavailable.
+- Routing: DESIGN.md's table, in which an unknown observation counts as unavailable. Each target is observed once per request, in placement order until one is ready; a target that is not configured is `422`, and a job that no observed target can accept `503` (Task 28).
 - Delivery: each host serves its own packages through a host-local route that never forwards (Task 27). Status asks the owning host whether a completed remote job's package is available, and reports `null` when that host does not answer. The download streams from the owning host without asking for the status first, stores nothing at the entry, follows no redirects, and sends the shared token only to configured addresses. The HTTP client is `requests`, declared at 2.34.2.
 - Execution environment: the claim records the worker's versions and image digest in fields of their own.
 - Runtime availability: unknown until Core provides an interface (Blockers).
@@ -4682,6 +4683,512 @@ Expected: as in Task 17, Step 7.
 - [x] **Step 8: Stop for review**
 
 Record Task 27's results in Increment 3's status, including Step 6's observations, leave the changes uncommitted, and report Steps 2, 4, 6, and 7. Suggested commit message: `Feature: Delivered remote packages through the entry`.
+
+### Task 28: Place each job on a target
+
+Submission places each job on a target by DESIGN.md's routing table: on the target the request names, or, without one, on this host's target or a remote one, by what each target's worker answers when it is observed (Routing, Concurrency, Validation, and Remote execution rows). Until now the API accepted only its own target, and the tests of Tasks 26 and 27 ran a remote job by submitting it through the remote target's `Jobs`; this task lets the entry submit it, and a consumer then polls and downloads it through the entry, as Task 27 made possible.
+
+**Interfaces verified for the task** (2026-10-17, in the development image's Celery 5.6.3, Kombu 5.6.2, and Core `17c6efe` source, and in a prototype in a Compose project of its own):
+
+- `Jobs.observe` (Task 26) of a worker process with `--concurrency 1`: of 1,600 observations, idle and while the worker held a job, one at a time and from 8 threads, none was `unknown`; the median took 3.0 ms one at a time and 21 ms from 8 threads, and the longest 35 ms. A target whose worker does not answer costs the full 0.5 s.
+- The entry's `send_task` with `queue=<target>` puts the message in the list that Kombu's Redis transport keeps for that queue at priority 0, which `LLEN` counts and the target's worker consumes; Engine sends no priorities.
+- With the routing applied and the tests unchanged, the 60 cases in `tests/test_jobs.py` that submit through the `client` fixture failed: the API observed the fixture's target, which no worker serves, as `unknown`, and rejected their jobs with `503`. With the fixture observing its target as busy, the 85 job tests passed. The `served_client` tests, whose worker runs in the test process, and `test_restarted_api_serves_the_jobs_the_earlier_one_accepted` passed with real observations, and `test_unreachable_redis_is_reported_as_unavailable` passed unchanged: its observation finds that the broker does not answer, and the rejection says that the job was not submitted.
+- A Dataset Definition registers with Core when its class is defined and is removed with `unregister` (Core's `DatasetDescriptor.__init_subclass__`). The API validates a request with the registry of its own process, so an API in the test process accepts `engine_held_probe`, which `tests/target_worker.py` registers in the workers' processes, only while it is registered there too.
+- The prototype's suite gave 240 passed twice, in 162 s each.
+
+**Decisions** (proposed with the task):
+
+- Request: the body's `target`, absent or `null`, asks for automatic placement; a configured identifier, this host's or a remote one, names the target. Any other identifier is `422`, "Target '<identifier>' is not configured on this Engine", before any target is observed.
+- Engine observes targets only once the request is otherwise valid, after the checks of the Dataset, `format`, and Core's validation, so a request that cannot run costs no observation.
+- Automatic placement observes this host's target, then the remote ones in configured order, each with `Jobs.observe`, and places the job on the first one that is `ready`, observing no further. If none is ready, it places the job on the first one that is `busy`, in the same order: this is the table's all-busy row, which queues locally if the local host is available and compatible, and otherwise on the first available compatible remote host. A target that is `unknown`, `unavailable`, or `incompatible` is passed over.
+- A named target is observed alone. `ready` or `busy`, it takes the job; otherwise the request is rejected, and no other target takes the job.
+- Each target is observed once per request, with Task 26's 0.5 s timeout and no retry, so a late answer leaves the target `unknown`, and a job that no other target can accept is rejected. The user chose this on 2026-10-17, over retrying or a longer timeout, from the measurements above; Task 31 measures late answers between real hosts.
+- A rejection is `503`, with the detail "The job was not submitted." followed by "Target '<identifier>' is <state>: <reason>." for each observed target, in order. Nothing is recorded or queued. The reasons are the observation's, which hold no job argument, address, or credential. The detail is a sentence, as most of the API's errors are; `GET /api/v1/targets` gives the states as data.
+- `Jobs.submit` gains `target`, this host's by default: the job's record names it, and its message goes to its queue, so the target's worker runs it directly. The `202` answer is unchanged; the job's status names its target.
+- The entry validates a request with its own registry, which is the selected target's, because compatible targets run the same image (Task 26): a remote target needs the entry's digest, and a development deployment without digests runs only locally. Runtime availability stays unknown (Blockers).
+- Concurrent submissions can observe the same capacity and choose the same target; its worker, which takes a job only while it holds fewer than its limit, still runs no more. Engine reserves nothing.
+- Development: a submission made while no worker answers, before `pnpm dev:engine`'s worker is ready or while it restarts, is rejected with `503`. The README says so.
+- Tests: the routing table, the order of observations, and the rejections are focused contract tests in `tests/test_targets.py`, through an API in the test process whose `Jobs.observe` is replaced. Real observations are exercised in `tests/test_targets.py` with targets that no worker serves, and in `tests/test_hosts.py` with the hosts' workers: a job submitted through the entry's API process, run on its target, and downloaded through the entry; the configured order; busy targets; and concurrent submissions of held jobs through an API in the test process, for which `engine_held_probe` is registered in the test process for the test, with `target_worker.py`'s arguments. One existing fixture changes: `client` in `tests/test_jobs.py`, whose target no worker serves, observes it as busy, because the API would otherwise reject every job these tests submit. No expectation changes.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/api.py`
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/tests/test_targets.py`
+- Modify: `apps/engine/tests/test_hosts.py`
+- Modify: `apps/engine/tests/test_jobs.py`
+- Modify: `apps/engine/DESIGN.md` (Routing and concurrency)
+- Modify: `README.md` (the engine's job routes)
+- Modify: `apps/engine/PLAN.md` (Increment 3 status)
+
+**Interfaces:**
+
+- Consumes: from Task 26, `Jobs.observe`, the remote targets, and the fixtures and helpers `hosts`, `list_targets`, and `wait_for_targets`; from Task 27, `fetch`; from Task 10, `Jobs.submit` and the request's `target`. From Celery: `send_task` with `queue`; from Core: `unregister`.
+- Produces: in `create_app`, `select_target`; `Jobs.submit`'s `target`; in `tests/test_targets.py`, `PLACEMENT` and `submit_observed`; in `tests/test_hosts.py`, `states`, `ready`, `submit_through`, and the fixture `held_probe`.
+
+- [ ] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_jobs.py`, replace the module docstring's second paragraph, from "The `client` fixture's jobs stay queued" to "that tests register.", with:
+
+```python
+The `client` fixture's jobs stay queued, because no worker serves its target; the API observes that target as a worker
+holding its limit would be, so that it places jobs there. The `served_client` fixture's worker runs in this process, so
+it also runs the Dataset Definitions that tests register.
+```
+
+Replace the fixture `client` with:
+
+```python
+@pytest.fixture
+def client(jobs: Jobs, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr(jobs, "observe", lambda target: {"state": "busy", "reason": None})
+    return TestClient(create_app(TOKEN, jobs))
+
+
+```
+
+In `apps/engine/tests/test_targets.py`, in the module docstring, replace "; and the observation of a target's worker." with "; the observation of a target's worker; and the selection of a job's target.", and replace `from dtcc_engine.api import create_app_from_environment` with `from dtcc_engine.api import create_app, create_app_from_environment`. Add at the end of the file:
+
+```python
+
+
+# The placement order of the API that `submit_observed` submits through.
+PLACEMENT = ["placing", "first", "second"]
+
+
+def submit_observed(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path, states: dict[str, str], target: str | None
+) -> tuple[Any, str | None, list[str], dict[str, int]]:
+    """Submit a `smoke` job to `target`, or by automatic placement if None, through an API whose targets are observed
+    in these states: its own, `placing`, then the remote `first` and `second`.
+
+    Returns the response; the target that the job's record names, if the job was accepted; the targets observed, in
+    order; and how many messages each target's queue gained.
+    """
+    jobs = Jobs(redis_url, "placing", tmp_path)
+    observed: list[str] = []
+
+    def observe(observed_target: str) -> dict[str, Any]:
+        observed.append(observed_target)
+        state = states[observed_target]
+        return {"state": state, "reason": None if state in ("ready", "busy") else f"Why it is {state}"}
+
+    monkeypatch.setattr(jobs, "observe", observe)
+    client = TestClient(create_app("test-token", jobs, {"first": "http://127.0.0.1:1", "second": "http://127.0.0.1:2"}))
+    before = {queue: jobs.records.llen(queue) for queue in states}
+    request = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}, "target": target}
+    response = client.post("/api/v1/jobs", json=request, headers={"Authorization": "Bearer test-token"})
+    recorded = jobs.status(response.json()["job_id"])["target"] if response.status_code == 202 else None
+    return response, recorded, observed, {queue: jobs.records.llen(queue) - before[queue] for queue in states}
+
+
+@pytest.mark.parametrize(
+    ("states", "target", "observed"),
+    [
+        ({"placing": "ready", "first": "ready", "second": "ready"}, "placing", ["placing"]),
+        ({"placing": "busy", "first": "ready", "second": "ready"}, "first", ["placing", "first"]),
+        ({"placing": "unknown", "first": "busy", "second": "ready"}, "second", PLACEMENT),
+        ({"placing": "busy", "first": "busy", "second": "busy"}, "placing", PLACEMENT),
+        ({"placing": "incompatible", "first": "unavailable", "second": "busy"}, "second", PLACEMENT),
+    ],
+    ids=["local-ready", "local-busy", "first-ready-remote", "all-busy", "first-busy-remote"],
+)
+def test_automatic_placement_takes_the_first_ready_target_or_else_the_first_busy_one(
+    monkeypatch: pytest.MonkeyPatch,
+    redis_url: str,
+    tmp_path: Path,
+    states: dict[str, str],
+    target: str,
+    observed: list[str],
+) -> None:
+    response, recorded, observed_targets, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, None)
+    assert (response.status_code, recorded) == (202, target)
+    assert observed_targets == observed
+    assert queued == {queue: int(queue == target) for queue in states}
+
+
+def test_job_no_target_can_accept_is_rejected_with_each_ones_reason(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path
+) -> None:
+    states = {"placing": "unknown", "first": "incompatible", "second": "unavailable"}
+    records = Jobs(redis_url, "counting", tmp_path).records
+    before = len(records.keys(record_key("*")))
+    response, recorded, observed, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, None)
+    assert (response.status_code, recorded) == (503, None)
+    assert response.json()["detail"] == (
+        "The job was not submitted. Target 'placing' is unknown: Why it is unknown. "
+        "Target 'first' is incompatible: Why it is incompatible. Target 'second' is unavailable: Why it is unavailable."
+    )
+    assert observed == PLACEMENT
+    assert queued == {"placing": 0, "first": 0, "second": 0}
+    assert len(records.keys(record_key("*"))) == before
+
+
+@pytest.mark.parametrize("target", ["placing", "second"])
+@pytest.mark.parametrize("state", ["ready", "busy"])
+def test_requested_target_that_is_ready_or_busy_takes_the_job(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path, target: str, state: str
+) -> None:
+    states = {"placing": "ready", "first": "ready", "second": "ready", target: state}
+    response, recorded, observed, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, target)
+    assert (response.status_code, recorded) == (202, target)
+    assert observed == [target]
+    assert queued == {queue: int(queue == target) for queue in states}
+
+
+@pytest.mark.parametrize("target", ["placing", "second"])
+@pytest.mark.parametrize("state", ["unknown", "unavailable", "incompatible"])
+def test_requested_target_that_cannot_accept_the_job_is_rejected_and_no_other_takes_it(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path, target: str, state: str
+) -> None:
+    states = {"placing": "ready", "first": "ready", "second": "ready", target: state}
+    response, recorded, observed, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, target)
+    assert (response.status_code, recorded) == (503, None)
+    assert response.json()["detail"] == f"The job was not submitted. Target '{target}' is {state}: Why it is {state}."
+    assert observed == [target]
+    assert queued == {"placing": 0, "first": 0, "second": 0}
+
+
+def test_requested_target_that_is_not_configured_is_rejected_without_an_observation(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str, tmp_path: Path
+) -> None:
+    states = {"placing": "ready", "first": "ready", "second": "ready"}
+    response, recorded, observed, queued = submit_observed(monkeypatch, redis_url, tmp_path, states, "elsewhere")
+    assert (response.status_code, recorded) == (422, None)
+    assert response.json()["detail"] == "Target 'elsewhere' is not configured on this Engine"
+    assert observed == []
+    assert queued == {"placing": 0, "first": 0, "second": 0}
+
+
+def test_job_whose_targets_do_not_answer_is_rejected_and_not_recorded(redis_url: str, tmp_path: Path) -> None:
+    # No worker serves this API's own target or its remote one, so neither answers its observation.
+    jobs = Jobs(redis_url, "unanswered", tmp_path)
+    client = TestClient(create_app("test-token", jobs, {"absent": "http://127.0.0.1:1"}))
+    before = len(jobs.records.keys(record_key("*")))
+    unknown = "is unknown: Its worker did not answer within 0.5 s."
+    for target, reasons in (
+        (None, f"Target 'unanswered' {unknown} Target 'absent' {unknown}"),
+        ("absent", f"Target 'absent' {unknown}"),
+    ):
+        request = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}, "target": target}
+        response = client.post("/api/v1/jobs", json=request, headers={"Authorization": "Bearer test-token"})
+        assert (response.status_code, response.json().get("detail")) == (503, f"The job was not submitted. {reasons}")
+    assert len(jobs.records.keys(record_key("*"))) == before
+```
+
+In `apps/engine/tests/test_hosts.py`, add `from concurrent.futures import ThreadPoolExecutor` after `from collections.abc import Callable, Iterator`, and `from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister` after `from celery import Celery`. Add at the end of the file:
+
+```python
+
+
+def states(listed: dict[str, dict[str, Any]]) -> list[str]:
+    return [target["state"] for target in listed.values()]
+
+
+def ready(listed: dict[str, dict[str, Any]]) -> bool:
+    return all(state == "ready" for state in states(listed))
+
+
+def submit_through(address: str, target: str | None) -> str:
+    """Submit a `smoke` job through an Engine API process, to `target` or by automatic placement; return its ID."""
+    request = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}, "target": target}
+    response = fetch(address, "/api/v1/jobs", "POST", json=request)
+    assert response.status_code == 202, response.text
+    return response.json()["job_id"]
+
+
+@pytest.mark.parametrize(
+    ("requested", "target"), [(None, "entry"), ("remote", "remote")], ids=["automatic", "requested"]
+)
+def test_job_submitted_through_the_entry_runs_on_its_target_and_is_delivered_through_the_entry(
+    hosts: dict[str, Any], requested: str | None, target: str
+) -> None:
+    entry = hosts["entry_address"]
+    wait_for_targets(hosts["entry"], {"remote": hosts["remote_address"]}, ready)
+    job_id = submit_through(entry, requested)
+    wait_for(lambda: fetch(entry, f"/api/v1/jobs/{job_id}").json()["state"] == "completed")
+    job = fetch(entry, f"/api/v1/jobs/{job_id}").json()
+    assert (job["target"], job["package"]["available"]) == (target, True)
+    # The package is on the host whose worker ran the job.
+    assert fetch(entry, f"/api/v1/jobs/{job_id}/package").content == hosts[target].package_path(job_id).read_bytes()
+
+
+def test_automatic_placement_follows_the_configured_order_of_the_remote_targets(
+    redis_url: str, tmp_path: Path, hosts: dict[str, Any]
+) -> None:
+    # No worker serves this API's own target, so it places jobs on the hosts' targets, as remote ones, in their order.
+    workerless = Jobs(redis_url, "workerless", tmp_path, DIGEST)
+    for order in (["entry", "remote"], ["remote", "entry"]):
+        wait_for_targets(hosts["entry"], {"remote": hosts["remote_address"]}, ready)
+        client = TestClient(create_app(TOKEN, workerless, {target: hosts[f"{target}_address"] for target in order}))
+        request = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}}
+        response = client.post("/api/v1/jobs", json=request, headers=AUTHORIZED)
+        assert response.status_code == 202, response.text
+        job_id = response.json()["job_id"]
+        assert workerless.status(job_id)["target"] == order[0]
+        wait_for(lambda: workerless.status(job_id)["state"] == "completed")
+
+
+def test_jobs_pass_a_busy_target_and_queue_on_one_when_none_is_ready(hosts: dict[str, Any]) -> None:
+    entry, remote, address = hosts["entry"], hosts["remote"], hosts["entry_address"]
+    remote_targets = {"remote": hosts["remote_address"]}
+    held = {"bounds": BOUNDS, "release_key": f"engine-test:release:{uuid.uuid4()}"}
+    try:
+        entry.submit("engine_held_probe", held)
+        wait_for_targets(entry, remote_targets, lambda listed: states(listed) == ["busy", "ready"])
+        passed = submit_through(address, None)
+        assert entry.status(passed)["target"] == "remote"
+        wait_for(lambda: entry.status(passed)["state"] == "completed")
+        remote.submit("engine_held_probe", held)
+        wait_for_targets(entry, remote_targets, lambda listed: states(listed) == ["busy", "busy"])
+        queued = {requested: submit_through(address, requested) for requested in (None, "remote")}
+        held_back = {requested: entry.status(job_id) for requested, job_id in queued.items()}
+    finally:
+        entry.records.set(held["release_key"], 1)
+    # With every target busy, automatic placement queues on this host's, and a requested target queues its job.
+    assert {requested: (job["target"], job["state"]) for requested, job in held_back.items()} == {
+        None: ("entry", "queued"),
+        "remote": ("remote", "queued"),
+    }
+    wait_for(lambda: all(entry.status(job_id)["state"] == "completed" for job_id in queued.values()))
+
+
+@pytest.fixture
+def held_probe() -> Iterator[None]:
+    """Register `engine_held_probe` in this process for a test, with the arguments that `target_worker.py` gives it,
+    so that an API in this process accepts its jobs, which only the workers run."""
+
+    class HeldProbeArgs(DatasetBaseArgs):
+        release_key: str
+
+    class HeldProbeDataset(DatasetDescriptor):
+        name = "engine_held_probe"
+        description = "Dataset defined by an Engine test that runs until a test releases it"
+        ArgsModel = HeldProbeArgs
+
+        def build(self, args):
+            raise NotImplementedError
+
+    try:
+        yield
+    finally:
+        unregister("engine_held_probe")
+
+
+def test_concurrent_submissions_run_no_more_jobs_on_a_host_than_its_limit(
+    hosts: dict[str, Any], held_probe: None
+) -> None:
+    entry, remote_targets = hosts["entry"], {"remote": hosts["remote_address"]}
+    app = create_app(TOKEN, entry, remote_targets)
+    release = f"engine-test:release:{uuid.uuid4()}"
+    request = {"dataset": "engine_held_probe", "parameters": {"bounds": BOUNDS, "release_key": release}}
+    wait_for_targets(entry, remote_targets, ready)
+    try:
+        # The submissions observe the targets at about the same time, so several see the same capacity.
+        with ThreadPoolExecutor(6) as pool:
+            responses = list(
+                pool.map(lambda _: TestClient(app).post("/api/v1/jobs", json=request, headers=AUTHORIZED), range(6))
+            )
+        assert [response.status_code for response in responses] == [202] * 6
+        job_ids = [response.json()["job_id"] for response in responses]
+
+        def each_target_runs_a_job() -> bool:
+            jobs = [entry.status(job_id) for job_id in job_ids]
+            return {job["target"] for job in jobs if job["state"] == "running"} == {job["target"] for job in jobs}
+
+        wait_for(each_target_runs_a_job)
+        held = [entry.status(job_id) for job_id in job_ids]
+    finally:
+        entry.records.set(release, 1)
+    # Each target's worker, whose limit is 1, runs one of the jobs placed on it, and the others wait in its queue.
+    for target in {job["target"] for job in held}:
+        placed = sorted(job["state"] for job in held if job["target"] == target)
+        assert placed == ["queued"] * (len(placed) - 1) + ["running"]
+    wait_for(lambda: all(entry.status(job_id)["state"] == "completed" for job_id in job_ids))
+```
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reasons**
+
+Run: `pnpm engine:check tests/test_targets.py tests/test_hosts.py tests/test_jobs.py`
+Expected: 21 failed and 156 passed, in under two minutes, each as follows. The API observes no target and places every job on its own. In `tests/test_targets.py`, the five cases of `test_automatic_placement_takes_the_first_ready_target_or_else_the_first_busy_one` find no observation, or the job on `placing` where `first` or `second` is expected; `test_job_no_target_can_accept_is_rejected_with_each_ones_reason` and `test_job_whose_targets_do_not_answer_is_rejected_and_not_recorded` find the job accepted, `202`, where `503` is expected; the two `placing` cases of `test_requested_target_that_is_ready_or_busy_takes_the_job` find no observation, and its two `second` cases `422`; the three `placing` cases of `test_requested_target_that_cannot_accept_the_job_is_rejected_and_no_other_takes_it` find `202`, and its three `second` cases `422`, where `503` is expected; and `test_requested_target_that_is_not_configured_is_rejected_without_an_observation` finds the detail "is not accepted; this Engine runs jobs only on 'placing'". In `tests/test_hosts.py`, the `requested` case of `test_job_submitted_through_the_entry_runs_on_its_target_and_is_delivered_through_the_entry` finds `422`, `test_automatic_placement_follows_the_configured_order_of_the_remote_targets` finds the job on `workerless`, and `test_jobs_pass_a_busy_target_and_queue_on_one_when_none_is_ready` finds it on `entry` where `remote` is expected. Two new cases pass, because the committed code places every job on this host's target, which is ready when they run, and its worker's limit already holds: the `automatic` case of `test_job_submitted_through_the_entry_runs_on_its_target_and_is_delivered_through_the_entry`, and `test_concurrent_submissions_run_no_more_jobs_on_a_host_than_its_limit`. Stop and report if a test fails in another way.
+
+- [ ] **Step 3: Place each job on a target**
+
+In `apps/engine/dtcc_engine/jobs.py`, replace the method `Jobs.submit` with:
+
+```python
+    def submit(self, dataset_name: str, parameters: dict[str, Any], target: str | None = None) -> str:
+        """Record and queue a job that runs a Dataset with parameters the caller has validated; return its ID.
+
+        Args:
+            dataset_name: The Dataset's name.
+            parameters: The Dataset's parameters.
+            target: The target whose queue the job goes to, and which its record names; this host's if None.
+
+        Raises:
+            redis.RedisError: If Redis cannot record the job; nothing was sent.
+            UnconfirmedSubmission: If sending the job or recording its confirmation failed, or the job's record was
+                lost meanwhile; the job may be queued, and it is not sent again.
+        """
+        target = target or self.target
+        job_id = str(uuid4())
+        key = record_key(job_id)
+        submitted_at = datetime.now(UTC).isoformat()
+        acceptance = {"dataset": dataset_name, "target": target, "submitted_at": submitted_at}
+        with self.records.pipeline() as pipeline:
+            pipeline.hset(key, mapping={**acceptance, "execution_gate": "waiting"})
+            # The record of a job that never finishes expires too.
+            pipeline.expire(key, RECORD_LIFETIME)
+            pipeline.execute()
+        try:
+            self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=target)
+
+            answer = self.queued_script(keys=[key], args=[datetime.now(UTC).isoformat()])
+        except (redis.RedisError, OperationalError) as error:
+            raise UnconfirmedSubmission(job_id) from error
+        if answer != "recorded":
+            # Recreating the record would leave one without its acceptance fields or a lifetime.
+            logger.warning("Job %s was sent, but its record is %s, so its confirmation is not recorded", job_id, answer)
+            raise UnconfirmedSubmission(job_id)
+        return job_id
+
+```
+
+In `apps/engine/dtcc_engine/api.py`, in `create_app`, add before `local_package`:
+
+```python
+    def select_target(requested: str | None) -> str:
+        """Select the target a job goes to: the requested one, or by automatic placement, per DESIGN.md's routing table.
+
+        Automatic placement observes this host's target, then the remote ones in placement order, and takes the first
+        that is ready, or else the first that is busy.
+
+        Raises:
+            HTTPException: `503` if no target it observed can accept the job, naming each one's state and reason.
+        """
+        observations = {}
+        for target in [requested] if requested else [jobs.target, *remote_targets]:
+            observations[target] = jobs.observe(target)
+            if observations[target]["state"] == "ready":
+                return target
+        busy = [target for target, observed in observations.items() if observed["state"] == "busy"]
+        if busy:
+            return busy[0]
+        reasons = " ".join(
+            f"Target '{target}' is {observed['state']}: {observed['reason']}."
+            for target, observed in observations.items()
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"The job was not submitted. {reasons}"
+        )
+
+```
+
+Replace the route `submit_job` with:
+
+```python
+    @app.post("/api/v1/jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_token)])
+    def submit_job(request: JobRequest) -> dict[str, str]:
+        registered = datasets.list()
+        if request.dataset not in registered:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Dataset '{request.dataset}' is not registered",
+            )
+        if request.target not in (None, jobs.target, *remote_targets):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Target '{request.target}' is not configured on this Engine",
+            )
+        if request.parameters.get("format") is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Engine delivers every job as a canonical .dtccpkg; remove the 'format' parameter",
+            )
+        try:
+            registered[request.dataset].validate(dict(request.parameters))
+        except ValidationError as error:
+            fields = set(registered[request.dataset].ArgsModel.model_fields)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=public_errors(error.errors(), fields)
+            ) from None
+        # Observed after validation, so that a request that cannot run costs no observation.
+        target = select_target(request.target)
+        try:
+            job_id = jobs.submit(request.dataset, request.parameters, target)
+
+        except RedisError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The job queue is unavailable; the job was not submitted",
+            ) from None
+        except UnconfirmedSubmission as unconfirmed:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "message": "The queue did not confirm the job, which may still run; poll it before resubmitting",
+                    "job_id": unconfirmed.job_id,
+                    "status_url": f"/api/v1/jobs/{unconfirmed.job_id}",
+                },
+            ) from None
+        return {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}"}
+
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 240 passed: the 217 earlier tests and the 23 new cases.
+
+- [ ] **Step 5: Document the placement**
+
+In `apps/engine/DESIGN.md`, in Routing and concurrency, add after the paragraph that ends "routing treats the target as unavailable.":
+
+```markdown
+A request names a configured target or none. Engine validates the request
+before it observes any target, and rejects an identifier that is not configured
+as invalid. Without a named target, Engine observes the local target, then the
+remote targets in configuration order, and places the job on the first one with
+capacity, observing no further; if none has capacity, on the first one that is
+available and compatible. A named target is observed alone, and takes the job
+if it is available and compatible, with capacity or without. Engine observes
+each target once per request, so a late answer leaves it unknown. A request
+that no observed target can accept is rejected as temporarily unavailable, with
+each observed target's state and reason, and is neither recorded nor queued.
+The job's record names the selected target, and its message goes to that
+target's queue. Engine validates a request with its own Dataset registry, which
+is the selected target's, because compatible targets run the same image
+(Deployment and authentication).
+```
+
+In `README.md`, add after "run `docker compose --profile engine restart engine-worker`." the sentence "While the worker starts or restarts, the engine rejects submissions with `503`, because it places a job only on a target whose worker answers."
+
+Run: `npx --yes prettier@3.9.6 --check README.md apps/engine/DESIGN.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 6: Place jobs through the development engine**
+
+This step stops and starts the development worker, so it needs the development engine to itself: submit nothing else while it runs, and clear no job. Start its Redis, if it is not running: `docker compose --profile engine up -d --wait engine-redis`.
+
+If the worker is running, through `pnpm dev:engine` or otherwise (`docker compose --profile engine ps --status running --services` lists `engine-worker`), wait until it has no job queued or running before anything stops or rebuilds it, as in Task 26, Step 6: `docker compose --profile engine exec -T engine-redis redis-cli -n 0 LLEN local` answers 0, and `docker compose --profile engine exec -T engine-worker /opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect active --destination celery@local` lists none; an answer that does not come is not an empty list. Then stop the engine and the worker without a deadline: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Expected: `docker compose --profile engine ps -a engine-worker` shows that the worker exited with 0. Never kill the worker, and start or rebuild nothing while it runs; if it does not exit, stop and report it, as any other exit code.
+
+Start `pnpm dev:engine` and wait until the worker logs that it is ready. Send each request below with `-H "Authorization: Bearer local-dev-engine-token"`, and record each submission's time with `curl -w '%{time_total}'`. A submission rejected because the worker's answer was late is the risk that the decisions accept: record it, and submit again; if the worker stays unknown, stop and find the cause.
+
+1. Submit `smoke` on `[319891, 6399790, 320091, 6399990]` without a target, and again with `"target": "local"`, and poll each until it is `completed`. Expected: `202` for each, and `target` `local` in each status.
+2. Submit it with `"target": "elsewhere"`. Expected: `422`, "Target 'elsewhere' is not configured on this Engine".
+3. With the worker idle, as above, stop it alone: `docker compose --profile engine stop --timeout -1 engine-worker`. Expected: it exits with 0. Count the job records: `docker compose --profile engine exec -T engine-redis redis-cli -n 0 --scan --pattern 'dtcc-engine:job:*' | wc -l`. Submit `smoke` without a target, and again with `"target": "local"`. Expected: `503` for each, "The job was not submitted. Target 'local' is unknown: Its worker did not answer within 0.5 s.", each in about 0.5 s, and the same count of records.
+4. Start the worker with `docker compose --profile engine start engine-worker`, wait until it logs that it is ready, and submit `smoke` without a target. Expected: `202`, and the job completes.
+
+Stop the engine and the worker: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Redis keeps running, with the development jobs and packages. Placement on a remote target is not checked here: the development engine has one host, and Task 31 checks two in a Compose project of their own.
+
+- [ ] **Step 7: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [ ] **Step 8: Stop for review**
+
+Record Task 28's results in Increment 3's status, including Step 6's observations and submission times, leave the changes uncommitted, and report Steps 2, 4, 6, and 7. Suggested commit message: `Feature: Placed each engine job on a target`.
 
 ## Increment 4: Lifecycle behavior
 
