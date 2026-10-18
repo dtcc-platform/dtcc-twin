@@ -87,6 +87,16 @@ export {
   type UserKeyParams,
 } from "./keys/keys.js";
 export {
+  areaBoxSchema,
+  createSavedAreaBodySchema,
+  savedAreaPageSchema,
+  savedAreaSchema,
+  type AreaBox,
+  type CreateSavedAreaBody,
+  type SavedArea,
+  type SavedAreaPage,
+} from "./saved-areas/saved-areas.js";
+export {
   settingsSchema,
   themeSchema,
   updateSettingsBodySchema,
