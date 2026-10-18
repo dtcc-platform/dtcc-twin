@@ -68,6 +68,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 33. A remote target's job completes, and its host keeps its package, has lost it, or cannot deliver it because the host cannot be reached, rejects the token, redirects, answers another status, or serves another target, or the target is not configured; or the host sends the package compressed or stops sending midway, or the client abandons the download: the entry's status reports the package as available, unavailable, or unknown, `null`; its download streams the host's package unchanged, decoded if the host encoded it, and keeps no copy, or answers `409` or `503` without the host's answer; a stream that fails midway fails the download; an abandoned download closes the entry's request to the host; a host's host-local route serves only its own target's packages and never forwards; and a remote job past its retention is unknown at the entry and at its host, though its file remains. Pinned in Task 27 (`test_remote_job_is_polled_and_downloaded_through_the_entry`, `test_remote_package_its_host_no_longer_has_is_unavailable`, `test_remote_package_whose_host_does_not_deliver_it_is_unknown`, `test_host_answer_that_is_not_a_package_is_not_passed_on`, `test_package_its_host_stops_sending_is_not_delivered_whole`, `test_package_its_host_sends_compressed_is_delivered_as_the_archive`, `test_download_the_client_abandons_releases_its_hosts_connection`, `test_host_serves_its_own_packages_and_forwards_none`, `test_remote_package_past_its_retention_is_unknown_though_its_file_remains`).
 34. A job is submitted without a target while this host's worker is ready, busy, unavailable, incompatible, or does not answer, and the remote targets' workers are in any of these states; or a target is named that is ready, busy, cannot accept the job, or is not configured; or several jobs are submitted at once: the job goes to the first ready target, this host's first and then the remote ones in configured order, observing no further, or else to the first busy one in the same order; a named target takes the job if it is ready or busy and is never replaced by another; the job's record names its target, and its message goes to that target's queue, whose worker runs it, and it is polled and downloaded through the entry; a job that no observed target can accept is `503` with each observed target's state and reason, and is neither recorded nor queued; an identifier that is not configured is `422` before any observation; and concurrent submissions never run more jobs on a host than its worker's limit. Pinned in Task 28 (`test_automatic_placement_takes_the_first_ready_target_or_else_the_first_busy_one`, `test_job_no_target_can_accept_is_rejected_with_each_ones_reason`, `test_requested_target_that_is_ready_or_busy_takes_the_job`, `test_requested_target_that_cannot_accept_the_job_is_rejected_and_no_other_takes_it`, `test_requested_target_that_is_not_configured_is_rejected_without_an_observation`, `test_job_whose_targets_do_not_answer_is_rejected_and_not_recorded`, `test_job_submitted_through_the_entry_runs_on_its_target_and_is_delivered_through_the_entry`, `test_automatic_placement_follows_the_configured_order_of_the_remote_targets`, `test_jobs_pass_a_busy_target_and_queue_on_one_when_none_is_ready`, `test_concurrent_submissions_run_no_more_jobs_on_a_host_than_its_limit`).
 35. A worker claims a job, with or without an image digest, and another delivery of it comes later; or a job is queued, is cancelled before a claim, or was claimed before Engine recorded environments; or a record holds an environment without a claim, an image digest without versions, or versions that are not JSON: the job's status reports, as `environment`, the claiming worker's image digest, or null, and its versions, which the later delivery does not change, through the entry for a remote job too; it reports null when no worker's environment was recorded; and an inconsistent record is unavailable, `503`, for status, download, and cancellation, and never runs. Pinned in Task 29 (`test_claim_records_the_environment_of_the_worker_that_made_it`, `test_job_without_a_recorded_environment_reports_none`, `test_completed_job_reports_the_environment_of_its_worker`, `test_remote_job_reports_the_environment_of_the_worker_that_ran_it`, and the cases `environment-without-a-claim`, `image-digest-without-versions`, and `unreadable-versions` of `test_unusable_record_is_reported_unavailable_and_never_runs` and `test_cancel_of_an_unusable_record_is_unavailable_and_changes_nothing`).
+36. The Datasets are listed through the entry while this host's and the remote targets' workers are ready, busy, incompatible, or do not answer, or while the broker does not answer; and host-local discovery is asked: each Dataset lists every configured target in placement order, with its observed state and reason and its runtime availability `unknown`, each target observed once per listing; the Datasets are still listed while the broker does not answer, and each target is `unknown`; the catalog revision does not change with the targets' states; host-local discovery observes no target and lists none; and an observation while the broker refuses the connection, accepts it and never answers, or stops answering once the observation's command is published, ends within seconds, `unknown`. Pinned in Task 30 (`test_listing_reports_every_target_of_each_dataset_as_observed_with_runtime_availability_unknown`, `test_revision_does_not_change_with_the_targets_states`, `test_listing_while_the_broker_does_not_answer_reports_every_dataset_and_its_target_unknown`, `test_host_local_discovery_observes_no_target`, `test_entry_lists_each_dataset_with_both_targets_as_their_workers_answer`, `test_observation_ends_within_seconds_while_the_broker_does_not_answer`).
 
 ---
 
@@ -2555,7 +2556,7 @@ Record Task 16's results in Increment 2b's status, set the status to executed wi
 
 ## Increment 3: Remote targets and delivery
 
-Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for changes, which were made the same day; its second review, of 2026-10-15 and 2026-10-16, accepted it, and Step 6.5's wording was narrowed after it. The plan is committed in `2e6eb02`. Task 25 was executed 2026-10-16 and committed in `37c31f1`. Its results: with the tests written, `engine:check tests/test_discovery.py tests/test_targets.py` gave 25 failed and 30 passed in 121.6 s, each as Step 2 expects: `/api/v1/host` answered `404` where the four token cases expect `401` and the three host cases `200`, the 8 target identifiers and 6 image digests raised no `ValueError`, and the four worker cases ended in `TimeoutExpired` after 30 s. With the implementation, `engine:check` gave 159 passed in 72.6 s. `engine` and `engine-worker` were stopped and development Redis was running; database 0 held 5 job records, one claimed by `celery@engine-worker`, which had an outcome, so Step 6.1 listed none. With `pnpm dev:engine`, the worker's banner named `celery@local` and its queue `local`. A `smoke` job completed with the claim `celery@local c130156e67cc42d6b4e6678f4f64d594 32`. `/api/v1/host` answered target `local`, `image_digest` null, and the versions, catalog revision, and 28 Datasets of `/api/v1/datasets`, and `401` without the token. With `city_volume_mesh` `running`, a second worker exited with 1 after 5 s, having logged `Unrecoverable error: RuntimeError('Another running worker answers as celery@local, so this one does not start')`. The job was still `running` without a finish time when it had exited, so the attempt was conclusive; it completed after 115 s in the worker, and its 68,525-byte package downloaded. Under `celery@engine-worker`, a worker exited with 1, having logged that a worker of target `local` must run as `celery@local`; with `--queues other`, one exited with 1, having logged that it must consume only the queue `local`. The running worker logged no error; stopped, it logged a warm shutdown, and both containers exited with 0. Prettier passed for `compose.yaml`, `DESIGN.md`, and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` failed once, on two backend e2e tests in `auth.e2e-spec.ts` that each log in twice and timed out at 5 s, at a load average of about 6; its rerun passed. Both reviews of the execution, of 2026-10-16, accepted it; the worker module's docstring now gives the launch command with `--hostname`, which Codex's review found missing. Task 26 was expanded on 2026-10-16; its first review asked for changes, which were made the same day, its second review asked for two more, to Step 6 and to wording, and its third for Step 6's stops to wait for the worker without a deadline; each was made the same day. Gemini's second and third reviews and Codex's fourth accepted it. The plan is committed in `9d423b1`. Task 26 was executed 2026-10-17. Its results: with the tests and the skeleton written, `engine:check tests/test_discovery.py tests/test_targets.py tests/test_hosts.py` gave 40 failed and 56 passed in 47.2 s, each as Step 2 expects: `/api/v1/targets` answered `404` where the four token cases expect `401` and the 11 listings `200`, the 17 remote-target values raised no `ValueError`, and the eight direct observations raised `NotImplementedError`. With the implementation, `engine:check` gave 200 passed in 129.6 s; the image has `requests` 2.34.2, and its dependency layers came from Docker's build cache, which the reviews' builds of the same `pyproject.toml` had filled. `engine` and `engine-worker` were stopped, having exited with 0 after Task 25, and the queue `local` was empty, so no job had to finish first. With `pnpm dev:engine`, the targets listed `local` `ready`, with no reason; `worker` with `image_digest` null, the versions of `/api/v1/datasets`, `job_limit` 1, `reserved` 0, and `queues` `["local"]`; `waiting` 0; and `host` with `image_digest` null and the versions, catalog revision, and 28 Dataset names of `/api/v1/datasets`, sorted, with `host_error` null; and `401` without the token. Step 6's two `celery` commands need the image's path, `/opt/conda/envs/engine/bin/celery`, as earlier tasks' do, because `exec` does not activate the environment; they were corrected. `inspect engine_worker` answered `celery@local` with the same `worker`. With `city_volume_mesh` `running` and `smoke` `queued` when they were read right after the listing, the target was `busy`, with `reserved` 1 and `waiting` 1, and the answer did not contain the bounds. `city_volume_mesh` then failed after 8 min 34 s, with `TimeoutError` in Core's lidar download: `compute.dtcc.chalmers.se:8000` sent a 74 MB lidar file to this machine at about 650 KB/s, and each of the download's four attempts timed out. Engine's code was not involved, and the busy listing stands, since the job was running when it was taken. `smoke` completed, and the target was then `ready`, with `reserved` and `waiting` 0. Stopped with `--timeout -1`, the worker logged a warm shutdown and exited with 0, and the target was `unknown`, with the reason "Its worker did not answer within 0.5 s", `worker` null, `waiting` 0, and `host` as before; started again, it was `ready`. Both containers were then stopped with `--timeout -1` and exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Both reviews of the execution, of 2026-10-17, accepted it, and it is committed in `666dc12`. Task 27 was expanded on 2026-10-17; its first review asked for one change, to the length a compressed package is forwarded with, which was made the same day, and Gemini's accepted it; both second reviews accepted the revision. The plan is committed in `551ee92`. Before its execution, on 2026-10-17, the image was set to start PETSc without its signal handlers, because Task 27's prototype found that they abort a process that writes to a dropped connection, and they also catch SIGTERM (Engine image in DESIGN.md). `test_write_to_a_closed_connection_raises_in_an_engine_process` pins it: written first, it failed with the process aborted, exit code 15; with the setting, `engine:check` gave 201 passed, `engine:check:prod` 19 passed with its token checks, and `pnpm check` passed. Task 27's plan was then brought up to date: its stub host writes without `MSG_NOSIGNAL`, and its note on PETSc describes the image with the setting. Both reviews of the fix and the update, of 2026-10-17, accepted them, and they are committed in `d441371` and `500e16b`. Task 27 was executed 2026-10-17. Its results: with the tests written, `engine:check tests/test_hosts.py tests/test_jobs.py` gave 16 failed and 92 passed in 52.5 s, each as Step 2 expects: the host-local route answered `404` "Not Found", the entry reported a remote job's package as `available` `false`, from its own disk, and its download answered `409` with the local detail, so the stub that stops sending raised no `ChunkedEncodingError`. With the implementation, `engine:check` gave 217 passed in 148.3 s. `engine` and `engine-worker` had exited with 0, so no job had to finish first. With `pnpm dev:engine`, a `smoke` job completed with `package.available` `true`; its package downloaded with `200` from the public route and from the host-local route, and the two files, of 114,403 bytes, were identical; `HEAD` on the host-local route answered `200` with that `content-length`, and `401` without the token; a new UUID answered `404`, "unknown or expired". Stopped with `--timeout -1`, both containers exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 19 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Of the reviews of the execution, of 2026-10-17, Codex's asked for one change, that an error while the entry streams a remote package not put the host's address and answer in its log, and withdrew it, because DESIGN.md lets operational diagnostics keep them; Gemini's accepted it. It is committed in `bdf326a`. Task 28 was expanded on 2026-10-17; its prototype's measurements led the user to choose one observation per target and request, without a retry. Both reviews of the plan, of 2026-10-17, accepted it, and it is committed in `95cdc0f`. Task 28 was executed 2026-10-17. Its results: with the tests written, `engine:check tests/test_targets.py tests/test_hosts.py tests/test_jobs.py` gave 21 failed and 156 passed in 90.5 s, each as Step 2 expects: the API observed no target, placed every job on its own, and refused remote targets with `422`; the two new cases that already pass did. With the implementation, `engine:check` gave 240 passed in 160.0 s. `engine` and `engine-worker` had exited with 0, so no job had to finish first. With `pnpm dev:engine`, `smoke` was accepted without a target in 45 ms and with `"target": "local"` in 12 ms, and each completed on `local`; `"target": "elsewhere"` was `422`, "Target 'elsewhere' is not configured on this Engine". With the worker stopped, which exited with 0 after a warm shutdown, both submissions were `503`, "The job was not submitted. Target 'local' is unknown: Its worker did not answer within 0.5 s.", in 1.04 s and 1.11 s, and the 12 job records stayed 12. Step 6 had expected about 0.5 s; in the prototype, an observation of a target without an answering worker took 1,035 ms, half of it closing its broker connection, which Kombu's Redis channel holds until the pending `BRPOP`'s 1 s timeout expires. Interfaces verified and Step 6 now say so; the user's choice of one observation was made on the figure of 0.5 s. Started again, the worker logged that it was ready; the attached `pnpm dev:engine` output did not show the restarted worker's log, which `docker compose logs` did, and a submission after it was accepted in 25 ms and completed on `local`. Both containers were then stopped with `--timeout -1` and exited with 0; Redis kept running. Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`. `engine:check:prod` gave 19 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Both reviews of the execution, of 2026-10-17, accepted it. They also found that Tasks 25 and 26 had already recorded 1.04 s for an unanswered call with a 0.5 s timeout, which Task 28's plan, its review brief, and the question put to the user did not take into account. It is committed in `65c2187`. Task 29 was expanded on 2026-10-17. Of the reviews of the plan, Codex's, of 2026-10-17, asked for one change, that the docstrings of `Jobs.status` and `Jobs.claim` not say that a job without an environment was never claimed, or that one with an environment ran its Dataset, which was made on 2026-10-18; Gemini's, of 2026-10-18, accepted it. The plan is committed in `4a8cfc4`. Task 29 was executed 2026-10-18. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_hosts.py` gave 13 failed and 112 passed in 62.7 s, each as Step 2 expects: the status had no `environment`, a `KeyError` in six tests, and the queued job's status was one item short; the three new unusable records answered `(200, 409)` for status and download where the tests expect `(503, 503)`, and cancelling them answered `200` for the waiting one and `409` for the two started ones where they expect `503`. With the implementation, `engine:check` gave 252 passed in 159.4 s. `engine` and `engine-worker` had exited with 0, and the queue `local` was empty, so no job had to finish first. With `pnpm dev:engine`, a `smoke` job completed with `environment` `image_digest` null and the versions of `/api/v1/datasets`, `dtcc-engine` 0.1.0, `dtcc-core` 0.9.8dev, and `dtcc-sim` 0.1.0; its record held the same versions as JSON in `worker_versions`, and no `worker_image_digest`. The last job of Task 28's Step 6, claimed without an environment, answered `200`, `completed`, with `environment` null. Stopped with `--timeout -1`, the worker logged a warm shutdown, and both containers exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 19 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` failed once, on `answers 404 NOT_FOUND for another user's session` in `auth.e2e-spec.ts`, whose login answered `401`, at a load average of about 6; the backend is unchanged by this task, and its rerun passed. Tasks 30 and 31 are outlined under Expansion and are expanded one at a time. An expanded task is not an accepted one until review accepts it, and an accepted plan is not an executed task.
+Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for changes, which were made the same day; its second review, of 2026-10-15 and 2026-10-16, accepted it, and Step 6.5's wording was narrowed after it. The plan is committed in `2e6eb02`. Task 25 was executed 2026-10-16 and committed in `37c31f1`. Its results: with the tests written, `engine:check tests/test_discovery.py tests/test_targets.py` gave 25 failed and 30 passed in 121.6 s, each as Step 2 expects: `/api/v1/host` answered `404` where the four token cases expect `401` and the three host cases `200`, the 8 target identifiers and 6 image digests raised no `ValueError`, and the four worker cases ended in `TimeoutExpired` after 30 s. With the implementation, `engine:check` gave 159 passed in 72.6 s. `engine` and `engine-worker` were stopped and development Redis was running; database 0 held 5 job records, one claimed by `celery@engine-worker`, which had an outcome, so Step 6.1 listed none. With `pnpm dev:engine`, the worker's banner named `celery@local` and its queue `local`. A `smoke` job completed with the claim `celery@local c130156e67cc42d6b4e6678f4f64d594 32`. `/api/v1/host` answered target `local`, `image_digest` null, and the versions, catalog revision, and 28 Datasets of `/api/v1/datasets`, and `401` without the token. With `city_volume_mesh` `running`, a second worker exited with 1 after 5 s, having logged `Unrecoverable error: RuntimeError('Another running worker answers as celery@local, so this one does not start')`. The job was still `running` without a finish time when it had exited, so the attempt was conclusive; it completed after 115 s in the worker, and its 68,525-byte package downloaded. Under `celery@engine-worker`, a worker exited with 1, having logged that a worker of target `local` must run as `celery@local`; with `--queues other`, one exited with 1, having logged that it must consume only the queue `local`. The running worker logged no error; stopped, it logged a warm shutdown, and both containers exited with 0. Prettier passed for `compose.yaml`, `DESIGN.md`, and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` failed once, on two backend e2e tests in `auth.e2e-spec.ts` that each log in twice and timed out at 5 s, at a load average of about 6; its rerun passed. Both reviews of the execution, of 2026-10-16, accepted it; the worker module's docstring now gives the launch command with `--hostname`, which Codex's review found missing. Task 26 was expanded on 2026-10-16; its first review asked for changes, which were made the same day, its second review asked for two more, to Step 6 and to wording, and its third for Step 6's stops to wait for the worker without a deadline; each was made the same day. Gemini's second and third reviews and Codex's fourth accepted it. The plan is committed in `9d423b1`. Task 26 was executed 2026-10-17. Its results: with the tests and the skeleton written, `engine:check tests/test_discovery.py tests/test_targets.py tests/test_hosts.py` gave 40 failed and 56 passed in 47.2 s, each as Step 2 expects: `/api/v1/targets` answered `404` where the four token cases expect `401` and the 11 listings `200`, the 17 remote-target values raised no `ValueError`, and the eight direct observations raised `NotImplementedError`. With the implementation, `engine:check` gave 200 passed in 129.6 s; the image has `requests` 2.34.2, and its dependency layers came from Docker's build cache, which the reviews' builds of the same `pyproject.toml` had filled. `engine` and `engine-worker` were stopped, having exited with 0 after Task 25, and the queue `local` was empty, so no job had to finish first. With `pnpm dev:engine`, the targets listed `local` `ready`, with no reason; `worker` with `image_digest` null, the versions of `/api/v1/datasets`, `job_limit` 1, `reserved` 0, and `queues` `["local"]`; `waiting` 0; and `host` with `image_digest` null and the versions, catalog revision, and 28 Dataset names of `/api/v1/datasets`, sorted, with `host_error` null; and `401` without the token. Step 6's two `celery` commands need the image's path, `/opt/conda/envs/engine/bin/celery`, as earlier tasks' do, because `exec` does not activate the environment; they were corrected. `inspect engine_worker` answered `celery@local` with the same `worker`. With `city_volume_mesh` `running` and `smoke` `queued` when they were read right after the listing, the target was `busy`, with `reserved` 1 and `waiting` 1, and the answer did not contain the bounds. `city_volume_mesh` then failed after 8 min 34 s, with `TimeoutError` in Core's lidar download: `compute.dtcc.chalmers.se:8000` sent a 74 MB lidar file to this machine at about 650 KB/s, and each of the download's four attempts timed out. Engine's code was not involved, and the busy listing stands, since the job was running when it was taken. `smoke` completed, and the target was then `ready`, with `reserved` and `waiting` 0. Stopped with `--timeout -1`, the worker logged a warm shutdown and exited with 0, and the target was `unknown`, with the reason "Its worker did not answer within 0.5 s", `worker` null, `waiting` 0, and `host` as before; started again, it was `ready`. Both containers were then stopped with `--timeout -1` and exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 18 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Both reviews of the execution, of 2026-10-17, accepted it, and it is committed in `666dc12`. Task 27 was expanded on 2026-10-17; its first review asked for one change, to the length a compressed package is forwarded with, which was made the same day, and Gemini's accepted it; both second reviews accepted the revision. The plan is committed in `551ee92`. Before its execution, on 2026-10-17, the image was set to start PETSc without its signal handlers, because Task 27's prototype found that they abort a process that writes to a dropped connection, and they also catch SIGTERM (Engine image in DESIGN.md). `test_write_to_a_closed_connection_raises_in_an_engine_process` pins it: written first, it failed with the process aborted, exit code 15; with the setting, `engine:check` gave 201 passed, `engine:check:prod` 19 passed with its token checks, and `pnpm check` passed. Task 27's plan was then brought up to date: its stub host writes without `MSG_NOSIGNAL`, and its note on PETSc describes the image with the setting. Both reviews of the fix and the update, of 2026-10-17, accepted them, and they are committed in `d441371` and `500e16b`. Task 27 was executed 2026-10-17. Its results: with the tests written, `engine:check tests/test_hosts.py tests/test_jobs.py` gave 16 failed and 92 passed in 52.5 s, each as Step 2 expects: the host-local route answered `404` "Not Found", the entry reported a remote job's package as `available` `false`, from its own disk, and its download answered `409` with the local detail, so the stub that stops sending raised no `ChunkedEncodingError`. With the implementation, `engine:check` gave 217 passed in 148.3 s. `engine` and `engine-worker` had exited with 0, so no job had to finish first. With `pnpm dev:engine`, a `smoke` job completed with `package.available` `true`; its package downloaded with `200` from the public route and from the host-local route, and the two files, of 114,403 bytes, were identical; `HEAD` on the host-local route answered `200` with that `content-length`, and `401` without the token; a new UUID answered `404`, "unknown or expired". Stopped with `--timeout -1`, both containers exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 19 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Of the reviews of the execution, of 2026-10-17, Codex's asked for one change, that an error while the entry streams a remote package not put the host's address and answer in its log, and withdrew it, because DESIGN.md lets operational diagnostics keep them; Gemini's accepted it. It is committed in `bdf326a`. Task 28 was expanded on 2026-10-17; its prototype's measurements led the user to choose one observation per target and request, without a retry. Both reviews of the plan, of 2026-10-17, accepted it, and it is committed in `95cdc0f`. Task 28 was executed 2026-10-17. Its results: with the tests written, `engine:check tests/test_targets.py tests/test_hosts.py tests/test_jobs.py` gave 21 failed and 156 passed in 90.5 s, each as Step 2 expects: the API observed no target, placed every job on its own, and refused remote targets with `422`; the two new cases that already pass did. With the implementation, `engine:check` gave 240 passed in 160.0 s. `engine` and `engine-worker` had exited with 0, so no job had to finish first. With `pnpm dev:engine`, `smoke` was accepted without a target in 45 ms and with `"target": "local"` in 12 ms, and each completed on `local`; `"target": "elsewhere"` was `422`, "Target 'elsewhere' is not configured on this Engine". With the worker stopped, which exited with 0 after a warm shutdown, both submissions were `503`, "The job was not submitted. Target 'local' is unknown: Its worker did not answer within 0.5 s.", in 1.04 s and 1.11 s, and the 12 job records stayed 12. Step 6 had expected about 0.5 s; in the prototype, an observation of a target without an answering worker took 1,035 ms, half of it closing its broker connection, which Kombu's Redis channel holds until the pending `BRPOP`'s 1 s timeout expires. Interfaces verified and Step 6 now say so; the user's choice of one observation was made on the figure of 0.5 s. Started again, the worker logged that it was ready; the attached `pnpm dev:engine` output did not show the restarted worker's log, which `docker compose logs` did, and a submission after it was accepted in 25 ms and completed on `local`. Both containers were then stopped with `--timeout -1` and exited with 0; Redis kept running. Prettier passed for `README.md`, `DESIGN.md`, and `PLAN.md`. `engine:check:prod` gave 19 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` passed. Both reviews of the execution, of 2026-10-17, accepted it. They also found that Tasks 25 and 26 had already recorded 1.04 s for an unanswered call with a 0.5 s timeout, which Task 28's plan, its review brief, and the question put to the user did not take into account. It is committed in `65c2187`. Task 29 was expanded on 2026-10-17. Of the reviews of the plan, Codex's, of 2026-10-17, asked for one change, that the docstrings of `Jobs.status` and `Jobs.claim` not say that a job without an environment was never claimed, or that one with an environment ran its Dataset, which was made on 2026-10-18; Gemini's, of 2026-10-18, accepted it. The plan is committed in `4a8cfc4`. Task 29 was executed 2026-10-18. Its results: with the tests written, `engine:check tests/test_jobs.py tests/test_hosts.py` gave 13 failed and 112 passed in 62.7 s, each as Step 2 expects: the status had no `environment`, a `KeyError` in six tests, and the queued job's status was one item short; the three new unusable records answered `(200, 409)` for status and download where the tests expect `(503, 503)`, and cancelling them answered `200` for the waiting one and `409` for the two started ones where they expect `503`. With the implementation, `engine:check` gave 252 passed in 159.4 s. `engine` and `engine-worker` had exited with 0, and the queue `local` was empty, so no job had to finish first. With `pnpm dev:engine`, a `smoke` job completed with `environment` `image_digest` null and the versions of `/api/v1/datasets`, `dtcc-engine` 0.1.0, `dtcc-core` 0.9.8dev, and `dtcc-sim` 0.1.0; its record held the same versions as JSON in `worker_versions`, and no `worker_image_digest`. The last job of Task 28's Step 6, claimed without an environment, answered `200`, `completed`, with `environment` null. Stopped with `--timeout -1`, the worker logged a warm shutdown, and both containers exited with 0; Redis kept running. Prettier passed for `DESIGN.md` and `PLAN.md`. `engine:check:prod` gave 19 passed with `engine-redis` in its own Compose project, and its token checks passed. `pnpm check` failed once, on `answers 404 NOT_FOUND for another user's session` in `auth.e2e-spec.ts`, whose login answered `401`, at a load average of about 6; the backend is unchanged by this task, and its rerun passed. Both reviews of the execution, of 2026-10-18, accepted it, and it is committed in `9379dfc`. Task 29 lets a job queued before its target's image changes run in the new environment; Core's validation catches only parameters the new Core rejects, not a changed default or model, so this falls short of DESIGN.md's rule to reject incompatible targets rather than silently change a model's meaning. On 2026-10-18 the user chose to add Task 31, which fails such a job at its claim, before the checks across two hosts, now Task 32. Task 30 was expanded on 2026-10-18; the user chose that the Dataset listing observe each target on every request, over leaving the targets' states to `GET /api/v1/targets`. Of the reviews of the plan, of 2026-10-18, Codex's first found that a broker that accepts the connection and never answers kept the listing from returning, and the user chose to bound the observation's broker connection in this task; Codex's second found that the observation's command, published through Celery's pool with retries for ever, still could, and the user chose to bound its publication too. Both changes were made the same day. Codex's third found that the plan took Kombu for pinned, which it is not, and that a broker that stops while an answer is collected costs more than 2 s; the observation now publishes through Kombu's public `Mailbox.call`, and the plan states those costs. Gemini's first to fourth reviews and Codex's fourth accepted the plan; the user then chose to pin Kombu at 5.6.2 in this task, and both reviews of the pin accepted it. Codex's noted that changing `pyproject.toml` resolves again, in the rebuilt image, the packages that no pin fixes, so Step 6 compares the installed packages before and after. Tasks 31 and 32 are outlined under Expansion and are expanded one at a time. An expanded task is not an accepted one until review accepts it, and an accepted plan is not an executed task.
 
 **Scope:** configured remote targets, automatic local-first routing, explicit targets, per-host job limits, all-hosts-busy queueing, the compute-targets operation (target identifiers, versions, local capabilities, observed availability), aggregated discovery at the entry service that reports target availability and includes remote-only capabilities without executing them locally, and package transfer from a remote Engine HTTP service to the entry service without a shared filesystem. Remote discovery and delivery use the shared token.
 
@@ -2577,11 +2578,12 @@ Status: expansion started 2026-10-15. Task 25's review of 2026-10-15 asked for c
 **Decisions:**
 
 - Identity: a target identifier names the target's queue and its worker's node, `celery@<target>`; the deployment supplies the host's image digest (Task 25).
-- Observation: one call per target, aimed at its node name, to an inspect command that Engine's worker registers. It answers the worker's image digest, versions, job limit, reserved count, and consumed queues, never job arguments; the node name it is aimed at identifies the target (Task 26). Each call uses a broker connection of its own and a 0.5 s timeout; the waiting count comes from Kombu's passive queue declaration. A target that does not answer is unknown, not stopped; one whose worker does not consume exactly its target's queue is unavailable. No cache.
+- Observation: one call per target, aimed at its node name, to an inspect command that Engine's worker registers. It answers the worker's image digest, versions, job limit, reserved count, and consumed queues, never job arguments; the node name it is aimed at identifies the target (Task 26). Each call uses a broker connection of its own, on which it also publishes its command, whose connects take at most 1 s and reads 2 s, and which neither reconnects nor retries (Task 30), and a 0.5 s timeout; the waiting count comes from Kombu's passive queue declaration. A target that does not answer is unknown, not stopped; one whose worker does not consume exactly its target's queue is unavailable. No cache.
 - Compatibility: the worker's reported image digest equals the entry's. A remote target needs both present; the local target is compared when both are set, so a development deployment without digests runs locally only.
 - Routing: DESIGN.md's table, in which an unknown observation counts as unavailable. Each target is observed once per request, in placement order until one is ready; a target that is not configured is `422`, and a job that no observed target can accept `503` (Task 28).
 - Delivery: each host serves its own packages through a host-local route that never forwards (Task 27). Status asks the owning host whether a completed remote job's package is available, and reports `null` when that host does not answer. The download streams from the owning host without asking for the status first, stores nothing at the entry, follows no redirects, and sends the shared token only to configured addresses. The HTTP client is `requests`, declared at 2.34.2.
 - Execution environment: the claim records the worker's versions and image digest in fields of their own. The job's status reports them as its `environment` (Task 29).
+- Aggregated discovery: the entry's listing reports each Dataset's targets, each observed on every request, and the Dataset's runtime availability on it (Task 30).
 - Runtime availability: unknown until Core provides an interface (Blockers).
 
 The tasks:
@@ -2592,7 +2594,8 @@ The tasks:
 - Task 28: routing at submission, with explicit targets, rejections, and their status codes (Routing, Concurrency, and Validation rows).
 - Task 29: recording the execution environment at claim.
 - Task 30: aggregated discovery, with each Dataset's targets and their availability (Generic discovery row).
-- Task 31: checks across two hosts in a Compose project of their own, and the baseline measurements.
+- Task 31: rejecting a job whose worker's image changed after submission: the record keeps the entry's image digest at submission, and a claim by a worker with another digest fails the job instead of running it (Discovery and compatibility). Without image digests, as in development, nothing is compared.
+- Task 32: checks across two hosts in a Compose project of their own, and the baseline measurements.
 
 ### Task 25: Name each worker after its target, and report a host's own discovery
 
@@ -3073,7 +3076,7 @@ Routing places a job by what each target's worker can take (Task 28), and consum
 - Observation: `Jobs.observe(target)` counts the waiting jobs by Kombu's passive queue declaration on a broker connection of its own, then sends Engine's inspect command, `engine_worker`, to `celery@<target>` on the same connection and waits `OBSERVATION_TIMEOUT`, 0.5 s, for the answer. Counting first means that a job the worker takes from the queue in between is counted twice rather than missed, so that race errs towards busy. The worker answers with its image digest, versions, job limit, which is the limit Celery applies with prefetch disabled, the count of jobs it holds, and the queues it consumes, never with a job's arguments. The increment's decision also listed the worker's target; the node name the command is aimed at identifies it, and the worker checked that name when it started (Task 25), so the answer leaves it out. Celery registers commands per process, not per app, so the command finds the worker's `Jobs` through its Celery app.
 - States, checked in this order: `unknown` if the broker does not answer, the worker does not answer within the timeout, or its answer is malformed, as a worker without the command answers; `unavailable` if the worker does not consume exactly its target's queue; `incompatible` if its image digest does not match; `ready` if it holds fewer jobs than its limit and none wait in its queue; `busy` otherwise. Unknown does not say that the worker stopped. Every state but ready and busy has a reason. There is no cache: each call observes again.
 - Compatibility: a remote target's worker must report the entry's digest, and both must be set; the local target's worker is compared when both are set, so a development deployment without digests runs locally only.
-- `GET /api/v1/targets` lists the local target, then the remote ones in configured order. Each has its observation and its host-local discovery without the Datasets' descriptions: the image digest, versions, catalog revision, and the Datasets' names. The local host's is read in the process. A remote host's is read from its `GET /api/v1/host` with the shared token as the request's own authentication, so that requests sends no `.netrc` credentials in its place, with `HOST_TIMEOUT`, 5 s, as the timeout to connect and for each read, and with no redirects; the environment's proxy and CA settings still apply. if the host cannot be reached, rejects the token, answers another status, answers with a malformed body, or answers as another target, `host` is null and `host_error` says which, without the host's body. The state comes from the worker alone: a host whose HTTP service answers is not thereby ready, and a ready worker is not made unavailable by its host's HTTP service. Targets are read one after another. A stopped remote host costs about 1 s for its worker, and for its HTTP service as long as its connection takes to fail: when the host does not refuse it, `HOST_TIMEOUT` for each address its name resolves to, after a name resolution that no setting bounds. A host that answers slowly can take longer, because no setting bounds the whole request or the route. Task 31 measures them.
+- `GET /api/v1/targets` lists the local target, then the remote ones in configured order. Each has its observation and its host-local discovery without the Datasets' descriptions: the image digest, versions, catalog revision, and the Datasets' names. The local host's is read in the process. A remote host's is read from its `GET /api/v1/host` with the shared token as the request's own authentication, so that requests sends no `.netrc` credentials in its place, with `HOST_TIMEOUT`, 5 s, as the timeout to connect and for each read, and with no redirects; the environment's proxy and CA settings still apply. if the host cannot be reached, rejects the token, answers another status, answers with a malformed body, or answers as another target, `host` is null and `host_error` says which, without the host's body. The state comes from the worker alone: a host whose HTTP service answers is not thereby ready, and a ready worker is not made unavailable by its host's HTTP service. Targets are read one after another. A stopped remote host costs about 1 s for its worker, and for its HTTP service as long as its connection takes to fail: when the host does not refuse it, `HOST_TIMEOUT` for each address its name resolves to, after a name resolution that no setting bounds. A host that answers slowly can take longer, because no setting bounds the whole request or the route. Task 32 measures them.
 - The HTTP client is `requests`, which Core already installs, now declared in Engine's dependencies at 2.34.2. The image installs `pyproject.toml`'s dependencies with pip, so no conda lock changes, but the image is rebuilt from that step on.
 - Submission still accepts only the local target until routing (Task 28). Its refusal no longer says that another target is not configured, which a configured remote target would contradict. The test that pins the refusal checks only that it names the target, and is unchanged.
 - The tests across hosts, `tests/test_hosts.py`, run each target's worker in a process of its own through Celery's command line, as the worker service does, because Celery keeps reserved jobs per process, and the remote host's API through Uvicorn on a free local port. The entry's API is the test's client, which reaches the remote one over HTTP. Both hosts use the tests' Redis, and each has a package directory of its own. The workers' module, `tests/target_worker.py`, adds a Dataset that runs until a test releases it. What one idle worker shows, its digest, its queues, and a missing or malformed answer, is observed with the in-process workers of `start_target_worker`.
@@ -4674,7 +4677,7 @@ Start `pnpm dev:engine` and wait until the worker logs that it is ready. Send ea
 2. Download its package from `GET /api/v1/jobs/<job id>/package` and from `GET /api/v1/host/jobs/<job id>/package` into two files. Expected: both `200`, and `cmp` finds the files identical. `curl -s -I` on the host-local route: `200`, with the file's size as `content-length`. Without the token: `401`.
 3. `GET /api/v1/host/jobs/<a new UUID>/package`. Expected: `404`, "unknown or expired".
 
-Stop the engine and the worker: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Redis keeps running, with the development jobs and packages. A remote job is not checked here: the development engine has one host, and Task 31 checks two in a Compose project of their own.
+Stop the engine and the worker: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Redis keeps running, with the development jobs and packages. A remote job is not checked here: the development engine has one host, and Task 32 checks two in a Compose project of their own.
 
 - [x] **Step 7: Validate**
 
@@ -4703,7 +4706,7 @@ Submission places each job on a target by DESIGN.md's routing table: on the targ
 - Engine observes targets only once the request is otherwise valid, after the checks of the Dataset, `format`, and Core's validation, so a request that cannot run costs no observation.
 - Automatic placement observes this host's target, then the remote ones in configured order, each with `Jobs.observe`, and places the job on the first one that is `ready`, observing no further. If none is ready, it places the job on the first one that is `busy`, in the same order: this is the table's all-busy row, which queues locally if the local host is available and compatible, and otherwise on the first available compatible remote host. A target that is `unknown`, `unavailable`, or `incompatible` is passed over.
 - A named target is observed alone. `ready` or `busy`, it takes the job; otherwise the request is rejected, and no other target takes the job.
-- Each target is observed once per request, with Task 26's 0.5 s timeout and no retry, so a late answer leaves the target `unknown`, and a job that no other target can accept is rejected. The user chose this on 2026-10-17, over retrying or a longer timeout, from the measurements above; Task 31 measures late answers between real hosts.
+- Each target is observed once per request, with Task 26's 0.5 s timeout and no retry, so a late answer leaves the target `unknown`, and a job that no other target can accept is rejected. The user chose this on 2026-10-17, over retrying or a longer timeout, from the measurements above; Task 32 measures late answers between real hosts.
 - A rejection is `503`, with the detail "The job was not submitted." followed by "Target '<identifier>' is <state>: <reason>." for each observed target, in order. Nothing is recorded or queued. The reasons are the observation's, which hold no job argument, address, or credential. The detail is a sentence, as most of the API's errors are; `GET /api/v1/targets` gives the states as data.
 - `Jobs.submit` gains `target`, this host's by default: the job's record names it, and its message goes to its queue, so the target's worker runs it directly. The `202` answer is unchanged; the job's status names its target.
 - The entry validates a request with its own registry, which is the selected target's, because compatible targets run the same image (Task 26): a remote target needs the entry's digest, and a development deployment without digests runs only locally. Runtime availability stays unknown (Blockers).
@@ -5180,7 +5183,7 @@ Start `pnpm dev:engine` and wait until the worker logs that it is ready. Send ea
 3. With the worker idle, as above, stop it alone: `docker compose --profile engine stop --timeout -1 engine-worker`. Expected: it exits with 0. Count the job records: `docker compose --profile engine exec -T engine-redis redis-cli -n 0 --scan --pattern 'dtcc-engine:job:*' | wc -l`. Submit `smoke` without a target, and again with `"target": "local"`. Expected: `503` for each, "The job was not submitted. Target 'local' is unknown: Its worker did not answer within 0.5 s.", each in about 1 s, and the same count of records.
 4. Start the worker with `docker compose --profile engine start engine-worker`, wait until it logs that it is ready, and submit `smoke` without a target. Expected: `202`, and the job completes.
 
-Stop the engine and the worker: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Redis keeps running, with the development jobs and packages. Placement on a remote target is not checked here: the development engine has one host, and Task 31 checks two in a Compose project of their own.
+Stop the engine and the worker: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Redis keeps running, with the development jobs and packages. Placement on a remote target is not checked here: the development engine has one host, and Task 32 checks two in a Compose project of their own.
 
 - [x] **Step 7: Validate**
 
@@ -5485,7 +5488,7 @@ Start `pnpm dev:engine` and wait until the worker logs that it is ready; after a
 1. Submit `smoke` on `[319891, 6399790, 320091, 6399990]` and poll it until it is `completed`. Expected: `environment` with `image_digest` null and the `versions` of `/api/v1/datasets`. `docker compose --profile engine exec -T engine-redis redis-cli -n 0 HGETALL dtcc-engine:job:<job id>`: `worker_versions` holds the same versions as JSON, and there is no `worker_image_digest`.
 2. Poll a job that a worker claimed before this task, for example one that Task 28's Step 6 submitted: find one with `docker compose --profile engine exec -T engine-redis redis-cli -n 0 --scan --pattern 'dtcc-engine:job:*'` and `HGETALL`, a record with `claimed_by` and no `worker_versions`. Expected: `200`, its recorded state, and `environment` null.
 
-Stop the engine and the worker: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Redis keeps running, with the development jobs and packages. A worker with an image digest, and a remote job, are not checked here: the development engine supplies no digest and has one host, and Task 31 checks two in a Compose project of their own.
+Stop the engine and the worker: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Redis keeps running, with the development jobs and packages. A worker with an image digest, and a remote job, are not checked here: the development engine supplies no digest and has one host, and Task 32 checks two in a Compose project of their own.
 
 - [x] **Step 7: Validate**
 
@@ -5495,6 +5498,421 @@ Expected: as in Task 17, Step 7.
 - [x] **Step 8: Stop for review**
 
 Record Task 29's results in Increment 3's status, including Step 6's observations, leave the changes uncommitted, and report Steps 2, 4, 6, and 7. Suggested commit message: `Feature: Recorded the environment of each engine job`.
+
+### Task 30: List each Dataset's targets and their availability
+
+DESIGN.md's listing of Datasets reports "target availability" (Consumer API contract), and Engine reports "each Dataset's runtime availability on each target as unknown" until Core can say whether a Dataset can run on a host (upstream item 6). This task makes `GET /api/v1/datasets` at the entry the aggregated view: beside Core's descriptions, unchanged, each Dataset lists every configured target with its state as the entry observes it for that request, and the Dataset's runtime availability on it (Discovery and compatibility, and the Generic discovery row). Since the listing now depends on the broker, an observation stops waiting for a broker that does not answer after seconds.
+
+**Interfaces verified for the task** (2026-10-18, in a prototype in a Compose project of its own, and in the `engine-integration` branch at `origin/engine-integration`):
+
+- `Jobs.observe` (Task 26) answers `state` and `reason`: `ready` and `busy` without a reason, and `unknown`, `unavailable`, and `incompatible` with one. It is the observation that automatic placement uses (Task 28).
+- Engine sets no socket timeout on its Redis connections, and Kombu 5.6.2's Redis channel has `socket_timeout` and `socket_connect_timeout` None; the first channel of a connection retries it. On the observation's broker exchange, a broker that accepts the connection and never answers gave no result after 20 s, and a refused connection failed after 6.06 s, as Task 25 found for a ping (6.1 s). With Kombu's transport options `socket_timeout` 2 s, `socket_connect_timeout` 1 s, and `max_retries` 0 on the observation's connection alone, the silent broker failed after 2.05 s, the refused connection after 0.06 s, and a connect to an unroutable address after 1.01 s; a target without a worker took 1.13 s, as before, and a worker answered in 0.01 s. Socket timeouts without `max_retries` 0 still took about 6 s, and without a socket timeout the silent broker still gave no result. A read timeout of 0.5 s also worked in these runs; 2 s keeps it above Kombu's 1 s `BRPOP`, whose answer the connection reads as it closes (Task 28).
+- Celery 5.6.3's `control.broadcast` publishes its command through the app's pool of producers, not on the connection it is given (`Control`'s mailbox has `producer_pool`, which Kombu 5.6.2's `Mailbox.producer_or_acquire` prefers), and Kombu's mailbox publishes with `retry=True` and no retry policy, so `Connection.ensure` retries a recoverable connection error, among them Redis's `TimeoutError`, for ever. Through a proxy that relays Redis until it sees `PUBLISH` and then withholds every answer, an observation gave no result after 25 s with the bound connection, with a separate Celery app whose broker options carry the bound, and with a mailbox that publishes on the bound connection. A mailbox of Engine's own, with Celery's control settings and no producer pool, on a connection whose `ensure` does not retry, failed after 2.03 s; a target without a worker took 1.06 s and a worker answered in 0.01 s, as before. Kombu's public `Mailbox.call` publishes through `_broadcast` with a reply, as Celery's `control.broadcast` does, and the mailbox names its reply queue from the bound copy that each call makes.
+- Kombu is not pinned: `pyproject.toml` pins Celery 5.6.3, which requires `kombu>=5.6.0`, and the image has Kombu 5.6.2, the version these findings hold for. With `kombu==5.6.2` beside the other pins, `pip install --dry-run --no-index` found every requirement already satisfied in the image. The production check runs only `test_environment.py` and the production checks, so it would not notice another Kombu.
+- With the local worker answering, the listing took 52 to 54 ms, for 28 Datasets; with a remote target as well, whose worker does not answer, 1.16 to 1.18 s; host-local discovery took 71 ms. With both bounds and two targets, the listing took 0.08 s while the broker refused connections, 4.10 s while it accepted them and never answered, 4.10 s while it stopped answering once sent `PUBLISH`, and 2.13 s while neither worker answered; with the local worker answering, 55 to 61 ms. A broker that stops answering later costs more, as each command left waits its 2 s: an observation took 2.03 s when the broker stopped at `PUBLISH`, 6.54 s at the `BRPOP` that collects the answer, and 4.52 s at the `SREM` of the reply queue's cleanup, and a two-target listing whose broker stopped at the first `BRPOP` took 8.63 s. Codex's third review measured the same: 6.53 s, 4.52 s, and 12.66 s for four targets. The runs were under emulation on Apple silicon.
+- The `engine-integration` branch reads only `datasets` from the listing, through a Zod object that drops other keys (`engineCatalogSchema`), and reads `GET /api/v1/datasets/{name}` as a bare descriptor. Its client gives a JSON request 10 s (`jsonTimeoutMs`).
+- `test_host_reports_its_target_image_digest_and_catalog` compares host-local discovery with the listing; it fails on the listing's new field until it compares with the catalog itself.
+- The prototype's suite gave 260 passed, in 162 s.
+
+**Decisions** (proposed with the task):
+
+- `GET /api/v1/datasets` keeps `versions`, `catalog_revision`, and `datasets`, Core's `describe()` output, unchanged, and adds `targets`: for each Dataset, every configured target in placement order, this host's first and then the remote ones in configured order, each with its `state` and `reason` and `"runtime_availability": "unknown"`. Each target is observed once per listing, without a cache (Expansion). The user chose on 2026-10-18 that the listing observe the targets on every request, over leaving their states to `GET /api/v1/targets` and the listing as fast as before.
+- The listing reads no other host's discovery. Under the digest rule, a compatible target runs the entry's image and so offers the entry's Datasets, and an incompatible one is listed as `incompatible`; a Dataset that only another image has is not listed, since no target that runs it can take a job (Task 28). Every configured target is listed under every Dataset, whatever its state, so that a consumer sees why a target cannot take a job now. Runtime availability is given per Dataset and target, as DESIGN.md asks, although it is unknown for each until Core reports it.
+- The catalog revision still covers the versions and descriptions only: a target's state is not part of the contract.
+- `GET /api/v1/datasets/{name}` keeps returning Core's description alone, which the `engine-integration` branch reads, and host-local discovery, `GET /api/v1/host`, keeps reporting only its own catalog, without observing any target. The listing's new field is one that branch ignores.
+- An observation's broker connection, its own since Task 26, has Kombu's transport options `socket_timeout` 2 s, `socket_connect_timeout` 1 s, and `max_retries` 0, as `OBSERVATION_BROKER`, and is an `ObservationConnection`, whose `ensure` does not retry. The observation publishes its command on that connection, through a Kombu mailbox of Engine's own with Celery's control settings and its public `call`. A broker that refuses the connection, accepts it and never answers, or stops answering during the observation leaves the target `unknown`, "The broker did not answer". The options bound each connect and read, not the observation as a whole: it ends within about 2 s when the broker stops answering before or at the command's publication, and within about 6.5 s when it stops while the answer is collected, since the reply queue's cleanup and the connection's closing each wait as well. Codex's first review of the plan found that without the connection's bound a silent broker kept the listing from returning, and its second that the command's publication, through Celery's pool, still did; the user chose on 2026-10-18 to bound both in this task. `pyproject.toml` declares `kombu==5.6.2` beside Celery, as Task 26 declared `requests`: Engine imports Kombu, these findings hold for that version, and Celery 5.6.3 would accept any `kombu>=5.6.0` in a build without Docker's cache. The image already has 5.6.2, so the pin changes none of its packages; but changing `pyproject.toml` rebuilds the image's dependency layer, in which a package that no pin fixes can resolve to a newer version, so Step 6 compares the installed packages before and after the rebuild. The user chose the pin on 2026-10-18. Routing and `GET /api/v1/targets` observe the same way, so they are bounded too; Engine's other Redis connections, which status, submission, and cancellation use, still have no socket timeout.
+- A listing costs one observation per target, as a submission does: milliseconds for a worker that answers, about 1 s for one that does not, about 2 s while the broker accepts connections and does not answer, up to about 6.5 s for the target during which it stops answering, and next to nothing while it refuses them. The `engine-integration` branch's 10 s request limit holds a listing of four targets under a broker silent from the start, but not one of three targets or more under a broker that stops while an answer is collected. Task 32 measures it between real hosts.
+- Tests: in `tests/test_discovery.py`, a listing whose three targets are observed in three states, a revision that the states do not change, a listing while the broker does not answer, and host-local discovery, which observes nothing; the `client` fixture answers each observation at once, as its target has no worker. In `tests/test_hosts.py`, the entry's listing with both hosts' workers answering. In `tests/test_targets.py`, an observation while the broker refuses the connection, while it accepts it and never answers, and while it relays the tests' Redis until sent `PUBLISH` and then never answers, each run in a thread of its own so that one that never ends fails instead of stopping the run. One expectation changes: `test_host_reports_its_target_image_digest_and_catalog` compares host-local discovery with the catalog, because the listing gains `targets`, which host-local discovery must not have.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/api.py`
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/pyproject.toml`
+- Modify: `apps/engine/tests/test_discovery.py`
+- Modify: `apps/engine/tests/test_hosts.py`
+- Modify: `apps/engine/tests/test_targets.py`
+- Modify: `apps/engine/DESIGN.md` (Discovery and compatibility)
+- Modify: `apps/engine/PLAN.md` (Increment 3 status)
+
+**Interfaces:**
+
+- Consumes: from Task 3, `dataset_catalog`; from Task 25, host-local discovery; from Task 26, `Jobs.observe`, `create_app`'s remote targets, and the fixture `hosts`; from Task 27, the helper `fetch`.
+- Produces: `targets` in `GET /api/v1/datasets`; `OBSERVATION_BROKER`, `ObservationConnection`, and `Jobs.observation_mailbox`, which bound every observation.
+
+- [ ] **Step 1: Write the tests**
+
+In `apps/engine/tests/test_discovery.py`, replace the module docstring with:
+
+```python
+"""Tests for Engine's discovery API against the installed DTCC Core and DTCC Sim.
+
+The `client` fixture's target has no worker; its API observes that target as unknown at once, instead of waiting for
+an answer that never comes.
+"""
+```
+
+Add `from typing import Any` after `from pathlib import Path`, and replace `from dtcc_engine.api import create_app, create_app_from_environment` with `from dtcc_engine.api import create_app, create_app_from_environment, dataset_catalog`. Replace the fixture `client` with:
+
+```python
+@pytest.fixture
+def client(jobs: Jobs, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr(jobs, "observe", lambda target: {"state": "unknown", "reason": "Not observed"})
+    return TestClient(create_app(TOKEN, jobs))
+```
+
+In `test_host_reports_its_target_image_digest_and_catalog`, replace the lines from `host = client.get("/api/v1/host", headers=AUTHORIZED)` to the end of the test with:
+
+```python
+    host = client.get("/api/v1/host", headers=AUTHORIZED)
+    assert host.status_code == 200
+    assert host.json() == {"target": "this-host", "image_digest": reported, **json.loads(json.dumps(dataset_catalog()))}
+```
+
+Add at the end of the file:
+
+```python
+def listing_observed(
+    monkeypatch: pytest.MonkeyPatch, jobs: Jobs, states: dict[str, tuple[str, str | None]]
+) -> tuple[dict[str, Any], list[str]]:
+    """List the Datasets through an API whose targets are observed in these states and reasons: its own, then the
+    remote `second` and `first`, configured in that order. Returns the listing and the targets observed, in order.
+    """
+    observed: list[str] = []
+
+    def observe(target: str) -> dict[str, Any]:
+        observed.append(target)
+        state, reason = states[target]
+        return {"state": state, "reason": reason, "worker": None, "waiting": 0}
+
+    monkeypatch.setattr(jobs, "observe", observe)
+    client = TestClient(create_app(TOKEN, jobs, {"second": "http://127.0.0.1:1", "first": "http://127.0.0.1:2"}))
+    response = client.get("/api/v1/datasets", headers=AUTHORIZED)
+    assert response.status_code == 200
+    return response.json(), observed
+
+
+def test_listing_reports_every_target_of_each_dataset_as_observed_with_runtime_availability_unknown(
+    monkeypatch: pytest.MonkeyPatch, jobs: Jobs
+) -> None:
+    states = {
+        "unserved": ("ready", None),
+        "second": ("busy", None),
+        "first": ("incompatible", "Its worker's image digest is missing or differs from this host's"),
+    }
+    listing, observed = listing_observed(monkeypatch, jobs, states)
+    targets = [
+        {"target": target, "state": state, "reason": reason, "runtime_availability": "unknown"}
+        for target, (state, reason) in states.items()
+    ]
+    assert listing["targets"] == {name: targets for name in listing["datasets"]}
+    assert set(listing["datasets"]) == set(registered_datasets())
+    assert observed == ["unserved", "second", "first"]
+
+
+def test_revision_does_not_change_with_the_targets_states(monkeypatch: pytest.MonkeyPatch, jobs: Jobs) -> None:
+    unknown = ("unknown", "Its worker did not answer within 0.5 s")
+    before, _ = listing_observed(monkeypatch, jobs, {"unserved": ("ready", None), "second": unknown, "first": unknown})
+    after, _ = listing_observed(monkeypatch, jobs, {"unserved": unknown, "second": ("busy", None), "first": unknown})
+    assert before["targets"] != after["targets"]
+    assert before["catalog_revision"] == after["catalog_revision"] == dataset_catalog()["catalog_revision"]
+
+
+def test_listing_while_the_broker_does_not_answer_reports_every_dataset_and_its_target_unknown(tmp_path: Path) -> None:
+    client = TestClient(create_app(TOKEN, Jobs("redis://127.0.0.1:1/0", "unreachable", tmp_path)))
+    response = client.get("/api/v1/datasets", headers=AUTHORIZED)
+    assert response.status_code == 200
+    listing = response.json()
+    unknown = {"state": "unknown", "reason": "The broker did not answer", "runtime_availability": "unknown"}
+    assert set(listing["datasets"]) == set(registered_datasets())
+    assert listing["targets"] == {name: [{"target": "unreachable", **unknown}] for name in listing["datasets"]}
+
+
+def test_host_local_discovery_observes_no_target(monkeypatch: pytest.MonkeyPatch, jobs: Jobs) -> None:
+    observed: list[str] = []
+    monkeypatch.setattr(jobs, "observe", observed.append)
+    client = TestClient(create_app(TOKEN, jobs, {"remote": "http://127.0.0.1:1"}))
+    host = client.get("/api/v1/host", headers=AUTHORIZED)
+    assert host.status_code == 200
+    assert "targets" not in host.json()
+    assert observed == []
+```
+
+In `apps/engine/tests/test_hosts.py`, add before `test_target_whose_worker_holds_its_limit_or_has_jobs_waiting_is_busy`:
+
+```python
+def fetch_listing(hosts: dict[str, Any]) -> dict[str, Any]:
+    """List the Datasets through the entry's API process."""
+    response = fetch(hosts["entry_address"], "/api/v1/datasets")
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_entry_lists_each_dataset_with_both_targets_as_their_workers_answer(hosts: dict[str, Any]) -> None:
+    # A late answer leaves a worker unknown for the moment, so the listing is read until both have answered.
+    listing, deadline = fetch_listing(hosts), time.monotonic() + 120
+    while any(target["state"] == "unknown" for target in listing["targets"]["smoke"]):
+        assert time.monotonic() < deadline, listing
+        time.sleep(0.2)
+        listing = fetch_listing(hosts)
+    ready = {"state": "ready", "reason": None, "runtime_availability": "unknown"}
+    targets = [{"target": "entry", **ready}, {"target": "remote", **ready}]
+    assert listing["targets"] == {name: targets for name in listing["datasets"]}
+```
+
+In `apps/engine/tests/test_targets.py`, add `import socket` after `import os`, `import threading` after `import sys`, and `from urllib.parse import urlsplit` after `from typing import Any`, replace `from collections.abc import Callable` with `from collections.abc import Callable, Iterator`, and add before `test_worker_without_engines_inspect_command_is_unknown`:
+
+```python
+@pytest.fixture
+def silent_broker() -> Iterator[str]:
+    """The address of a broker that accepts connections and never answers, as one that has stopped responding would."""
+    server = socket.create_server(("127.0.0.1", 0))
+    accepted: list[socket.socket] = []
+
+    def accept() -> None:
+        while True:
+            try:
+                accepted.append(server.accept()[0])
+            except OSError:
+                return
+
+    threading.Thread(target=accept, daemon=True).start()
+    try:
+        yield f"redis://127.0.0.1:{server.getsockname()[1]}/0"
+    finally:
+        server.close()
+        for connection in accepted:
+            connection.close()
+
+
+@pytest.fixture
+def broker_silent_after_publishing(redis_url: str) -> Iterator[str]:
+    """The address of a broker that relays the tests' Redis until it is sent a PUBLISH, as an observation's command is,
+    and from then on never answers, as one that stops responding during an observation would."""
+    upstream = urlsplit(redis_url)
+    server = socket.create_server(("127.0.0.1", 0))
+    sockets = [server]
+    published = threading.Event()
+
+    def relay(source: socket.socket, sink: socket.socket, from_client: bool) -> None:
+        try:
+            while data := source.recv(65536):
+                if from_client and b"PUBLISH" in data:
+                    published.set()
+                if from_client or not published.is_set():
+                    sink.sendall(data)
+        except OSError:
+            pass
+
+    def accept() -> None:
+        while True:
+            try:
+                client = server.accept()[0]
+            except OSError:
+                return
+            redis = socket.create_connection((upstream.hostname, upstream.port or 6379))
+            sockets.extend([client, redis])
+            threading.Thread(target=relay, args=(client, redis, True), daemon=True).start()
+            threading.Thread(target=relay, args=(redis, client, False), daemon=True).start()
+
+    threading.Thread(target=accept, daemon=True).start()
+    try:
+        yield f"redis://127.0.0.1:{server.getsockname()[1]}{upstream.path}"
+    finally:
+        for open_socket in sockets:
+            open_socket.close()
+
+
+@pytest.mark.parametrize("broker", ["refusing", "silent", "silent-after-publishing"])
+def test_observation_ends_within_seconds_while_the_broker_does_not_answer(
+    silent_broker: str, broker_silent_after_publishing: str, tmp_path: Path, broker: str
+) -> None:
+    addresses = {
+        "refusing": "redis://127.0.0.1:1/0",
+        "silent": silent_broker,
+        "silent-after-publishing": broker_silent_after_publishing,
+    }
+    jobs = Jobs(addresses[broker], "unanswered", tmp_path)
+    observed: list[dict[str, Any]] = []
+    # In a thread of its own, so that an observation that never ends fails the test instead of stopping the run.
+    observation = threading.Thread(target=lambda: observed.append(jobs.observe("unanswered")), daemon=True)
+    start = time.monotonic()
+    observation.start()
+    observation.join(30)
+    assert observed == [{"state": "unknown", "reason": "The broker did not answer", "worker": None, "waiting": None}]
+    assert time.monotonic() - start < 4
+```
+
+- [ ] **Step 2: Run the tests to verify they fail for the right reasons**
+
+Run: `pnpm engine:check tests/test_discovery.py tests/test_hosts.py tests/test_targets.py`
+Expected: 7 failed and 135 passed, in under three minutes, each as follows. The listing has no targets: a `KeyError: 'targets'` in `test_listing_reports_every_target_of_each_dataset_as_observed_with_runtime_availability_unknown`, `test_revision_does_not_change_with_the_targets_states`, `test_listing_while_the_broker_does_not_answer_reports_every_dataset_and_its_target_unknown`, and `test_entry_lists_each_dataset_with_both_targets_as_their_workers_answer`. The observation is not bounded: in `test_observation_ends_within_seconds_while_the_broker_does_not_answer`, the case `refusing` gets its observation after about 6 s, where the test allows 4 s, and the cases `silent` and `silent-after-publishing` get none within 30 s. `test_host_local_discovery_observes_no_target` and the changed `test_host_reports_its_target_image_digest_and_catalog` pass already: they pin what must not change. Stop and report if a test fails in another way.
+
+- [ ] **Step 3: Bound the observation, and list each Dataset's targets**
+
+In `apps/engine/dtcc_engine/jobs.py`, add after `OBSERVATION_TIMEOUT = 0.5`:
+
+```python
+# Kombu's transport options for an observation's broker connection: no reconnection, and no read longer than 2 s, which
+# still outlasts the 1 s BRPOP whose answer the connection reads as it closes.
+OBSERVATION_BROKER = {"socket_connect_timeout": 1, "socket_timeout": 2, "max_retries": 0}
+```
+
+Add `from kombu import Connection` before `from kombu.exceptions import ChannelError, OperationalError`, and `from kombu.pidbox import Mailbox` after it. Add before the class `Jobs`:
+
+```python
+class ObservationConnection(Connection):
+    """A broker connection whose operations, publishing among them, fail at once instead of reconnecting and retrying."""
+
+    def ensure(self, obj: Any, fun: Any, **options: Any) -> Any:
+        # Kombu's mailbox publishes with retries for ever, which a broker that stopped answering would never end.
+        return super().ensure(obj, fun, **{**options, "max_retries": 0})
+```
+
+In `Jobs.__init__`, add after `self.sender.conf.update(task_publish_retry=False)`:
+
+```python
+        # Celery's control mailbox publishes through its pool of connections; this one publishes on the observation's.
+        self.observation_mailbox = Mailbox(
+            self.celery_app.conf.control_exchange,
+            type="fanout",
+            accept=self.celery_app.conf.accept_content,
+            serializer=self.celery_app.conf.task_serializer,
+        )
+```
+
+Replace the method `Jobs.observe` with:
+
+```python
+    def observe(self, target: str) -> dict[str, Any]:
+        """Observe a target's worker through the broker, with the count of jobs waiting in its queue.
+
+        Returns:
+            `state`, `reason`, `worker`, the worker's answer, and `waiting`. The state is `ready` if the worker can
+            start a job now; `busy` if it holds as many jobs as its limit, or jobs wait; `unavailable` if it does not
+            consume exactly its target's queue; `incompatible` if its image digest does not match this host's; and
+            `unknown` if the broker or the worker did not answer, or the answer is malformed, which does not show that
+            the worker stopped. Only ready and busy have no reason; a value not obtained is None.
+        """
+        node = f"celery@{target}"
+        try:
+            # A connection of its own: on a pooled one, an earlier call that timed out can lose this answer.
+            with ObservationConnection(
+                self.celery_app.conf.broker_url, transport_options=OBSERVATION_BROKER
+            ) as connection:
+                # Before the worker answers: a job it takes from the queue in between is counted twice, not missed.
+                try:
+                    waiting = connection.default_channel.queue_declare(queue=target, passive=True).message_count
+                except ChannelError:
+                    # Kombu keeps no list for an empty queue, so its passive declaration finds none.
+                    waiting = 0
+                answers = self.observation_mailbox(connection).call(
+                    [node], DESCRIBE_WORKER, timeout=OBSERVATION_TIMEOUT
+                )
+        except (OperationalError, redis.RedisError):
+            logger.warning("Could not observe the worker of %s", target, exc_info=True)
+            return {"state": "unknown", "reason": "The broker did not answer", "worker": None, "waiting": None}
+        answer = next((reply[node] for reply in answers if node in reply), None)
+        if answer is None:
+            reason = f"Its worker did not answer within {OBSERVATION_TIMEOUT} s"
+            return {"state": "unknown", "reason": reason, "worker": None, "waiting": waiting}
+        try:
+            worker = WorkerDescription.model_validate(answer).model_dump()
+        except ValidationError:
+            return {
+                "state": "unknown",
+                "reason": "Its worker's answer is malformed",
+                "worker": None,
+                "waiting": waiting,
+            }
+        digests = (self.image_digest, worker["image_digest"])
+        if target == self.target:
+            # Compared only when both are set: a development deployment supplies none, and runs locally only.
+            compatible = None in digests or digests[0] == digests[1]
+        else:
+            compatible = None not in digests and digests[0] == digests[1]
+        reason = None
+        if worker["queues"] != [target]:
+            state, reason = "unavailable", f"Its worker does not consume exactly the queue '{target}'"
+        elif not compatible:
+            state, reason = "incompatible", "Its worker's image digest is missing or differs from this host's"
+        elif worker["reserved"] < worker["job_limit"] and waiting == 0:
+            state = "ready"
+        else:
+            state = "busy"
+        return {"state": state, "reason": reason, "worker": worker, "waiting": waiting}
+```
+
+In `apps/engine/pyproject.toml`, add `"kombu==5.6.2",` after `"fastapi==0.141.1",`.
+
+In `apps/engine/dtcc_engine/api.py`, replace the route `list_datasets`, with its decorator, with:
+
+```python
+    @app.get("/api/v1/datasets", dependencies=[Depends(require_token)])
+    def list_datasets() -> dict[str, Any]:
+        catalog = dataset_catalog()
+        observations = {target: jobs.observe(target) for target in [jobs.target, *remote_targets]}
+        # Each target as routing observes it: compatible hosts run this image, so they offer these Datasets. Whether a
+        # Dataset can run on a host is unknown until Core can tell (DESIGN.md, upstream item 6).
+        targets = [
+            {
+                "target": target,
+                "state": observed["state"],
+                "reason": observed["reason"],
+                "runtime_availability": "unknown",
+            }
+            for target, observed in observations.items()
+        ]
+        return {**catalog, "targets": {name: targets for name in catalog["datasets"]}}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: 260 passed: the 252 earlier tests and the 8 new cases.
+
+- [ ] **Step 5: Document the listing**
+
+In `apps/engine/DESIGN.md`, in Discovery and compatibility, add after the paragraph that ends "credentials, data, hardware, or provider access, not because different code is installed there.":
+
+```markdown
+The entry's Dataset listing reports each Dataset's targets: every configured
+target, in placement order, with its state and reason as the entry observes
+them for that request, and the Dataset's runtime availability on it, which is
+unknown until Core can report it. The listing reads no other host's discovery:
+a compatible target runs the entry's image and so offers its Datasets, and an
+incompatible one is reported as such. An observation waits only seconds for a
+broker that does not answer, so the listing still answers then, with each
+target unknown. The catalog revision covers the versions and descriptions, not
+the targets' states. Describing one Dataset returns its Core description
+alone, and host-local discovery reports only its own catalog.
+```
+
+Run: `npx --yes prettier@3.9.6 --check apps/engine/DESIGN.md apps/engine/PLAN.md`
+Expected: all files use Prettier code style.
+
+- [ ] **Step 6: List the Datasets through the development engine**
+
+This step starts and stops the development worker, so it needs the development engine to itself: submit nothing else while it runs, and clear no job. Start its Redis, if it is not running: `docker compose --profile engine up -d --wait engine-redis`.
+
+If the worker is running, through `pnpm dev:engine` or otherwise (`docker compose --profile engine ps --status running --services` lists `engine-worker`), wait until it has no job queued or running before anything stops or rebuilds it, as in Task 26, Step 6: `docker compose --profile engine exec -T engine-redis redis-cli -n 0 LLEN local` answers 0, and `docker compose --profile engine exec -T engine-worker /opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect active --destination celery@local` lists none; an answer that does not come is not an empty list. Then stop the engine and the worker without a deadline: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Expected: `docker compose --profile engine ps -a engine-worker` shows that the worker exited with 0. Never kill the worker, and start or rebuild nothing while it runs; if it does not exit, stop and report it, as any other exit code.
+
+Before `pnpm dev:engine` rebuilds the image, record its packages, in a file outside the repository: `docker compose --profile engine run --rm --no-deps -T engine-worker pip freeze`. Start `pnpm dev:engine` and wait until the worker logs that it is ready; after a restart, read it with `docker compose --profile engine logs engine-worker`. Record the packages again with the same command, and compare the two. Expected: `kombu==5.6.2` in both; report every package whose version changed, since the rebuild resolves again what no pin fixes. Send each request below with `-H "Authorization: Bearer local-dev-engine-token"`, and time it with `curl -w '%{time_total}'`.
+
+1. `GET /api/v1/datasets`. Expected: in milliseconds, the 28 Datasets, each with the targets `[{"target": "local", "state": "ready", "reason": null, "runtime_availability": "unknown"}]`, and the `catalog_revision` of `GET /api/v1/host`, which has no `targets`. `GET /api/v1/datasets/smoke` answers Core's description alone.
+2. Stop the worker, `docker compose --profile engine stop --timeout -1 engine-worker`, which must exit with 0, and list again. Expected: in about 1 s, each Dataset's target `local` is `unknown`, with the reason "Its worker did not answer within 0.5 s", and the `catalog_revision` is unchanged.
+3. Start the worker again, `docker compose --profile engine start engine-worker`, and wait until it logs that it is ready. Expected: the listing reports `local` `ready` again.
+
+Stop the engine and the worker: `docker compose --profile engine stop --timeout -1 engine engine-worker`. Redis keeps running, with the development jobs and packages. A remote target is not checked here: the development engine has one host, and Task 32 checks two in a Compose project of their own.
+
+- [ ] **Step 7: Validate**
+
+Run: `pnpm engine:check:prod`, then `pnpm check`.
+Expected: as in Task 17, Step 7.
+
+- [ ] **Step 8: Stop for review**
+
+Record Task 30's results in Increment 3's status, including Step 6's observations, leave the changes uncommitted, and report Steps 2, 4, 6, and 7. Suggested commit message: `Feature: Listed each engine Dataset's targets`.
 
 ## Increment 4: Lifecycle behavior
 
