@@ -32,9 +32,15 @@ export type SavedArea = z.infer<typeof savedAreaSchema>;
 export const savedAreaPageSchema = offsetPage(savedAreaSchema);
 export type SavedAreaPage = z.infer<typeof savedAreaPageSchema>;
 
+const savedAreaNameSchema = z.string().trim().min(1).max(100);
+
 // No owner: a saved area belongs to the user who saves it.
 export const createSavedAreaBodySchema = z.strictObject({
-  name: z.string().trim().min(1).max(100),
+  name: savedAreaNameSchema,
   area: areaBoxSchema,
 });
 export type CreateSavedAreaBody = z.infer<typeof createSavedAreaBodySchema>;
+
+// Only the name changes: a different box is a different saved area.
+export const updateSavedAreaBodySchema = z.strictObject({ name: savedAreaNameSchema });
+export type UpdateSavedAreaBody = z.infer<typeof updateSavedAreaBodySchema>;

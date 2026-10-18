@@ -1,7 +1,9 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { createSavedAreaBodySchema, type SavedArea } from "@repo/contracts";
+import { createSavedAreaBodySchema, updateSavedAreaBodySchema, type SavedArea } from "@repo/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { PencilIcon } from "lucide-react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMap } from "react-map-gl/maplibre";
 import { toast } from "sonner";
@@ -19,6 +21,7 @@ import { workspaceMapId } from "@/features/workspace/map/map-view";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { showSubmitError } from "@/lib/show-submit-error";
 import { defaultAreaName } from "./default-name.ts";
+import { findSavedArea } from "./find-saved-area.ts";
 
 // The backend's largest page; more saved areas than this is not a case to design for yet.
 const limit = 100;
@@ -52,6 +55,9 @@ const nameSchema = createSavedAreaBodySchema.pick({ name: true });
 
 function SaveAreaForm() {
   const area = useAreaStore((state) => state.area);
+  // The list's own query: one request for both.
+  const savedAreas = useQuery(savedAreaQueries.list({ limit }));
+  const alreadySaved = findSavedArea(area, savedAreas.data?.items ?? []);
   const create = useMutation(savedAreaMutations.create());
   const form = useForm({ resolver: zodResolver(nameSchema), defaultValues: { name: defaultAreaName() } });
 
@@ -72,10 +78,11 @@ function SaveAreaForm() {
   return (
     <form onSubmit={(event) => void form.handleSubmit(submit)(event)} noValidate>
       <FieldGroup className="gap-3">
-        <TextField control={form.control} name="name" label="Name" />
+        <TextField control={form.control} name="name" label="Name" id="saved-area-name" />
         <FieldError errors={[form.formState.errors.root]} />
         {!area && <p className="text-sm text-muted-foreground">Draw an area on the map to save it</p>}
-        <Button type="submit" disabled={!area || create.isPending}>
+        {alreadySaved && <p className="text-sm text-muted-foreground">Already saved as {alreadySaved.name}</p>}
+        <Button type="submit" disabled={!area || alreadySaved !== undefined || create.isPending}>
           Save area
         </Button>
       </FieldGroup>
@@ -115,6 +122,7 @@ function SavedAreaList() {
 }
 
 function SavedAreaItem({ savedArea }: { savedArea: SavedArea }) {
+  const [renaming, setRenaming] = useState(false);
   const { setArea } = useAreaStore((state) => state.actions);
   const map = useMap()[workspaceMapId];
   const remove = useMutation(savedAreaMutations.delete());
@@ -131,6 +139,17 @@ function SavedAreaItem({ savedArea }: { savedArea: SavedArea }) {
     );
   }
 
+  if (renaming) {
+    return (
+      <RenameForm
+        savedArea={savedArea}
+        onDone={() => {
+          setRenaming(false);
+        }}
+      />
+    );
+  }
+
   return (
     <li className="flex items-center gap-1">
       <button
@@ -143,6 +162,16 @@ function SavedAreaItem({ savedArea }: { savedArea: SavedArea }) {
           {formatSquareMetres(areaSquareMetres(savedArea.area))} · {formatRelativeTime(savedArea.createdAt)}
         </span>
       </button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Rename ${savedArea.name}`}
+        onClick={() => {
+          setRenaming(true);
+        }}
+      >
+        <PencilIcon />
+      </Button>
       <ConfirmButton
         label="Delete"
         variant="ghost"
@@ -153,6 +182,46 @@ function SavedAreaItem({ savedArea }: { savedArea: SavedArea }) {
           remove.mutate(savedArea.id, { onError: (error) => toast.error(error.message) });
         }}
       />
+    </li>
+  );
+}
+
+function RenameForm({ savedArea, onDone }: { savedArea: SavedArea; onDone: () => void }) {
+  const rename = useMutation(savedAreaMutations.rename());
+  const form = useForm({ resolver: zodResolver(updateSavedAreaBodySchema), defaultValues: { name: savedArea.name } });
+
+  function submit({ name }: { name: string }) {
+    rename.mutate(
+      { id: savedArea.id, name },
+      { onSuccess: onDone, onError: (error) => showSubmitError(form.setError, error) },
+    );
+  }
+
+  return (
+    <li className="px-2 py-2">
+      <form
+        onSubmit={(event) => void form.handleSubmit(submit)(event)}
+        // Esc cancels the rename; stopped here so it doesn't also close the panel.
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.stopPropagation();
+          onDone();
+        }}
+        noValidate
+      >
+        <FieldGroup className="gap-2">
+          <TextField control={form.control} name="name" label="New name" id={`rename-${savedArea.id}`} autoFocus />
+          <FieldError errors={[form.formState.errors.root]} />
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" disabled={rename.isPending}>
+              Save
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={onDone}>
+              Cancel
+            </Button>
+          </div>
+        </FieldGroup>
+      </form>
     </li>
   );
 }

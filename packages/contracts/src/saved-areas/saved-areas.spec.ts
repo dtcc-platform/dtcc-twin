@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSavedAreaBodySchema, savedAreaSchema } from "./saved-areas.js";
+import { createSavedAreaBodySchema, savedAreaSchema, updateSavedAreaBodySchema } from "./saved-areas.js";
 
 const area = { west: 11.97, south: 57.686, east: 11.98, north: 57.692 };
 const savedArea = {
@@ -46,5 +46,17 @@ describe("createSavedAreaBodySchema", () => {
     expect(createSavedAreaBodySchema.safeParse({ name: "Chalmers", area: { ...area, crs: "EPSG:4326" } }).success).toBe(
       false,
     );
+  });
+});
+
+describe("updateSavedAreaBodySchema", () => {
+  it("renames: it takes a trimmed name and nothing else", () => {
+    expect(updateSavedAreaBodySchema.parse({ name: "  Campus  " })).toEqual({ name: "Campus" });
+    expect(updateSavedAreaBodySchema.safeParse({ name: "Campus", area }).success).toBe(false);
+  });
+
+  it("needs a name that isn't blank", () => {
+    expect(updateSavedAreaBodySchema.safeParse({}).success).toBe(false);
+    expect(updateSavedAreaBodySchema.safeParse({ name: " " }).success).toBe(false);
   });
 });

@@ -1,15 +1,17 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from "@nestjs/common";
 import {
   createSavedAreaBodySchema,
   idParamsSchema,
   offsetPaginationQuerySchema,
   savedAreaPageSchema,
   savedAreaSchema,
+  updateSavedAreaBodySchema,
   type CreateSavedAreaBody,
   type IdParams,
   type OffsetPaginationQuery,
   type SavedArea,
   type SavedAreaPage,
+  type UpdateSavedAreaBody,
 } from "@repo/contracts";
 import { CurrentUser, Roles, type AuthUser } from "../../common/decorators/auth.decorators.js";
 import { Serialize } from "../../common/decorators/serialize.decorator.js";
@@ -37,6 +39,16 @@ export class SavedAreasController {
     @Body({ schema: createSavedAreaBodySchema }) body: CreateSavedAreaBody,
   ): Promise<SavedArea> {
     return this.savedAreas.create(user.userId, body);
+  }
+
+  @Patch(":id")
+  @Serialize(savedAreaSchema)
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param({ schema: idParamsSchema }) { id }: IdParams,
+    @Body({ schema: updateSavedAreaBodySchema }) body: UpdateSavedAreaBody,
+  ): Promise<SavedArea> {
+    return this.savedAreas.update(user.userId, id, body);
   }
 
   @Delete(":id")

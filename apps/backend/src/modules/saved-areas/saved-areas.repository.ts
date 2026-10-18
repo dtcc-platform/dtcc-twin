@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { InjectDrizzle } from "@nestjs/drizzle";
-import type { CreateSavedAreaBody, SavedArea } from "@repo/contracts";
+import type { CreateSavedAreaBody, SavedArea, UpdateSavedAreaBody } from "@repo/contracts";
 import { and, desc, eq } from "drizzle-orm";
 import type { Database } from "../../infra/database/database.js";
 import { savedAreas } from "./saved-areas.table.js";
@@ -32,6 +32,15 @@ export class SavedAreasRepository {
       .returning();
     if (!row) throw new Error("INSERT … RETURNING returned no row");
     return toSavedArea(row);
+  }
+
+  async update(userId: string, id: string, changes: UpdateSavedAreaBody): Promise<SavedArea | undefined> {
+    const [row] = await this.db
+      .update(savedAreas)
+      .set(changes)
+      .where(and(eq(savedAreas.userId, userId), eq(savedAreas.id, id)))
+      .returning();
+    return row && toSavedArea(row);
   }
 
   async delete(userId: string, id: string): Promise<boolean> {

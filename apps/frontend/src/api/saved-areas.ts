@@ -1,4 +1,4 @@
-import type { CreateSavedAreaBody, SavedArea, SavedAreaPage } from "@repo/contracts";
+import type { CreateSavedAreaBody, SavedArea, SavedAreaPage, UpdateSavedAreaBody } from "@repo/contracts";
 import { mutationOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "./client/api-client.ts";
 
@@ -18,6 +18,12 @@ export const savedAreaMutations = {
   create: () =>
     mutationOptions({
       mutationFn: async (body: CreateSavedAreaBody) => (await api.post<SavedArea>("/saved-areas", body)).data,
+      onSuccess: (_area, _body, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: all }),
+    }),
+  rename: () =>
+    mutationOptions({
+      mutationFn: async ({ id, ...body }: UpdateSavedAreaBody & { id: string }) =>
+        (await api.patch<SavedArea>(`/saved-areas/${id}`, body)).data,
       onSuccess: (_area, _body, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: all }),
     }),
   delete: () =>

@@ -91,10 +91,12 @@ export {
   createSavedAreaBodySchema,
   savedAreaPageSchema,
   savedAreaSchema,
+  updateSavedAreaBodySchema,
   type AreaBox,
   type CreateSavedAreaBody,
   type SavedArea,
   type SavedAreaPage,
+  type UpdateSavedAreaBody,
 } from "./saved-areas/saved-areas.js";
 export {
   settingsSchema,

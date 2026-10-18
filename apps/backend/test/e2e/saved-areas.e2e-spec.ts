@@ -83,6 +83,36 @@ describe("Saved areas (e2e)", () => {
     });
   });
 
+  describe("PATCH /api/saved-areas/:id", () => {
+    it("renames the user's area and bumps updatedAt, leaving the box", async () => {
+      const saved = await save(ada, "Chalmers");
+
+      const response = await ada.patch(`/api/saved-areas/${saved.id}`).send({ name: "  Campus  " }).expect(200);
+
+      const renamed = savedAreaSchema.parse(response.body);
+      expect(renamed).toMatchObject({ id: saved.id, name: "Campus", area: chalmers, createdAt: saved.createdAt });
+      expect(Date.parse(renamed.updatedAt)).toBeGreaterThan(Date.parse(saved.updatedAt));
+    });
+
+    it("rejects a blank name", async () => {
+      const saved = await save(ada, "Chalmers");
+
+      const response = await ada.patch(`/api/saved-areas/${saved.id}`).send({ name: " " }).expect(400);
+
+      expect(errorResponseSchema.parse(response.body).error.errors?.map((issue) => issue.path)).toEqual(["name"]);
+    });
+
+    it("answers NOT_FOUND for another user's area, as for one that does not exist, and leaves it", async () => {
+      const graces = await save(grace, "Grace's");
+
+      await ada.patch(`/api/saved-areas/${graces.id}`).send({ name: "Mine now" }).expect(404);
+      await ada.patch(`/api/saved-areas/${missingId}`).send({ name: "Nothing" }).expect(404);
+
+      const list = savedAreaPageSchema.parse((await grace.get("/api/saved-areas").expect(200)).body);
+      expect(list.items.map((area) => area.name)).toEqual(["Grace's"]);
+    });
+  });
+
   describe("DELETE /api/saved-areas/:id", () => {
     it("deletes the user's area", async () => {
       const saved = await save(ada, "Chalmers");

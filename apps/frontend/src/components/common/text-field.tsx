@@ -8,6 +8,9 @@ type TextFieldProps<TValues extends FieldValues, TOutput> = {
   label: string;
   type?: "text" | "email" | "password";
   autoComplete?: string;
+  /** The input's id, for a page with two forms that share a field name; the name by default. */
+  id?: string;
+  autoFocus?: boolean;
 };
 
 /** A labelled input bound to a react-hook-form field, with the field's error under it. */
@@ -17,6 +20,8 @@ export function TextField<TValues extends FieldValues, TOutput>({
   label,
   type = "text",
   autoComplete,
+  id = name,
+  autoFocus,
 }: TextFieldProps<TValues, TOutput>) {
   return (
     <Controller
@@ -24,8 +29,15 @@ export function TextField<TValues extends FieldValues, TOutput>({
       name={name}
       render={({ field, fieldState }) => (
         <Field data-invalid={fieldState.invalid}>
-          <FieldLabel htmlFor={name}>{label}</FieldLabel>
-          <Input {...field} id={name} type={type} autoComplete={autoComplete} aria-invalid={fieldState.invalid} />
+          <FieldLabel htmlFor={id}>{label}</FieldLabel>
+          <Input
+            {...field}
+            id={id}
+            type={type}
+            autoComplete={autoComplete}
+            autoFocus={autoFocus}
+            aria-invalid={fieldState.invalid}
+          />
           <FieldError errors={[fieldState.error]} />
         </Field>
       )}
