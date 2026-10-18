@@ -6,6 +6,11 @@ export type Area = { west: number; south: number; east: number; north: number };
 /** EPSG:3006 bounds in whole metres, `[minX, minY, maxX, maxY]`: what Datasets take as `bounds`. */
 export type SwerefBounds = [number, number, number, number];
 
+/** Degrees to six decimals, about 10 cm: the precision the bounds inspector shows and sets. */
+export function roundDegrees(degrees: number): number {
+  return Number(degrees.toFixed(6));
+}
+
 export const minSquareMetres = 25;
 export const maxSquareMetres = 25_000_000;
 

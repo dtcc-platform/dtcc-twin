@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { areaSizeProblem, areaSizeProblemText, areaSquareMetres, type Area } from "@/features/area/area";
+import { areaSizeProblem, areaSizeProblemText, areaSquareMetres, roundDegrees, type Area } from "@/features/area/area";
 
 const decimalDegrees = z
   .string()
@@ -46,7 +46,7 @@ export function toBoundsFields(area: Area | null): BoundsFields {
   };
 }
 
-// Six decimals is about 10 cm, without the trailing zeros.
+// Without the trailing zeros.
 function formatDegrees(degrees: number): string {
-  return String(Number(degrees.toFixed(6)));
+  return String(roundDegrees(degrees));
 }

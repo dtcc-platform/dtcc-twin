@@ -21,8 +21,15 @@ describe("findSavedArea", () => {
     expect(findSavedArea({ ...chalmers }, savedAreas)?.name).toBe("Chalmers");
   });
 
-  it("finds none for a box that differs on any side", () => {
-    expect(findSavedArea({ ...chalmers, north: 57.6921 }, savedAreas)).toBeUndefined();
+  it("finds a drawn area again after the bounds inspector has set it, rounded to its six decimals", () => {
+    const drawn = { west: 11.973479774, south: 57.681873693, east: 11.993160089, north: 57.687844855 };
+    const setByInspector = { west: 11.97348, south: 57.681874, east: 11.99316, north: 57.687845 };
+
+    expect(findSavedArea(setByInspector, [saved("cham", drawn)])?.name).toBe("cham");
+  });
+
+  it("finds none for a box that differs on any side, at the inspector's precision", () => {
+    expect(findSavedArea({ ...chalmers, north: 57.692001 }, savedAreas)).toBeUndefined();
   });
 
   it("finds none without an area", () => {

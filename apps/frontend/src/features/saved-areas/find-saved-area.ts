@@ -1,14 +1,13 @@
 import type { SavedArea } from "@repo/contracts";
-import type { Area } from "@/features/area/area";
+import { roundDegrees, type Area } from "@/features/area/area";
+
+const sides = ["west", "south", "east", "north"] as const;
 
 /**
- * The saved area with exactly this box, if any. Loading a saved area sets its exact numbers, so this catches saving it
- * again; a drawn box that only comes close is a different area.
+ * The saved area with this box, if any, compared at the bounds inspector's precision: setting a loaded area again
+ * through the inspector rounds it to six decimals, and it is still the same area.
  */
 export function findSavedArea(area: Area | null, savedAreas: SavedArea[]): SavedArea | undefined {
   if (!area) return undefined;
-  return savedAreas.find(
-    ({ area: saved }) =>
-      saved.west === area.west && saved.south === area.south && saved.east === area.east && saved.north === area.north,
-  );
+  return savedAreas.find((saved) => sides.every((side) => roundDegrees(saved.area[side]) === roundDegrees(area[side])));
 }
