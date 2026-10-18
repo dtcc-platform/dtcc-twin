@@ -10,11 +10,15 @@ import {
   WavesIcon,
   XIcon,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
+import { authQueries } from "@/api/auth";
+import { isActiveJob, jobQueries } from "@/api/jobs";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useAreaStore } from "@/features/area/area-store";
 import { useWorkspaceStore, type LeftContent, type RightContent } from "@/features/workspace/workspace-store";
+import { cn } from "@/lib/utils";
 
 const item =
   "h-10.5 w-full justify-start gap-3 px-0.75 aria-expanded:bg-primary/10 aria-expanded:text-primary aria-pressed:bg-primary/10 aria-pressed:text-primary [&_svg]:stroke-[1.5] [&_svg:not([class*='size-'])]:size-7.5";
@@ -29,6 +33,10 @@ export function Toolbar() {
   const drawing = useAreaStore((state) => state.drawing);
   const hasArea = useAreaStore((state) => state.area !== null);
   const { startDrawing, cancelDrawing, clearArea } = useAreaStore((state) => state.actions);
+  // The same first page as the Downloads panel's, so both share one poll.
+  const me = useQuery(authQueries.me());
+  const jobs = useQuery({ ...jobQueries.list({ limit: 20 }), enabled: Boolean(me.data) });
+  const activeJobs = me.data ? (jobs.data?.items.filter(isActiveJob).length ?? 0) : 0;
 
   function openOrCloseRight(content: RightContent) {
     if (right === content) closeRight();
@@ -127,7 +135,7 @@ export function Toolbar() {
       </Button>
       <Button
         variant="ghost"
-        className={item}
+        className={cn(item, "relative")}
         aria-expanded={right === "downloads"}
         onClick={() => {
           openOrCloseRight("downloads");
@@ -135,6 +143,17 @@ export function Toolbar() {
       >
         <DownloadIcon />
         Downloads
+        {activeJobs > 0 && (
+          <>
+            <span
+              aria-hidden
+              className="absolute top-0.5 left-6 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 font-semibold text-primary-foreground"
+            >
+              {activeJobs}
+            </span>
+            <span className="sr-only">, {activeJobs} running</span>
+          </>
+        )}
       </Button>
       <Button
         variant="ghost"

@@ -11,6 +11,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { FieldError, FieldGroup } from "@/components/ui/field";
 import { areaBounds } from "@/features/area/area";
 import { useAreaStore } from "@/features/area/area-store";
+import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { DatasetFieldControl } from "./dataset-field-control.tsx";
 import { datasetFields } from "./dataset-fields.ts";
 import { initialValues, jobParameters, valuesSchema, type DatasetFormValues } from "./dataset-values.ts";
@@ -27,6 +28,7 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
   const area = useAreaStore((state) => state.area);
 
   const create = useMutation(jobMutations.create());
+  const { setRight } = useWorkspaceStore((state) => state.actions);
 
   function submit(values: DatasetFormValues) {
     if (!area) return;
@@ -34,7 +36,11 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
     create.mutate(
       { dataset: dataset.name, parameters },
       {
-        onSuccess: () => toast.success("Job submitted", { description: dataset.title }),
+        onSuccess: () =>
+          toast.success("Job submitted", {
+            description: dataset.title,
+            action: { label: "View in Downloads", onClick: () => setRight("downloads") },
+          }),
         onError: (error) => {
           const errors = submitErrors(fields, error);
           for (const [name, message] of Object.entries(errors.fields)) form.setError(name, { message });
