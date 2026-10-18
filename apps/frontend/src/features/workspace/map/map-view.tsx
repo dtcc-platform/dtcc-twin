@@ -11,12 +11,16 @@ setWorkerUrl(workerUrl);
 const brightStyle = "https://tiles.openfreemap.org/styles/bright";
 const chalmersView = { longitude: 11.975, latitude: 57.689, zoom: 13 };
 
+/** The map's id under the workspace's `MapProvider`, for code outside the map: `useMap()[workspaceMapId]`. */
+export const workspaceMapId = "workspace";
+
 /** The full-screen map the workspace is built on; its children render inside the map once it has loaded. */
 export function MapView({ children }: { children?: ReactNode }) {
   const [loaded, setLoaded] = useState(false);
 
   return (
     <Map
+      id={workspaceMapId}
       initialViewState={chalmersView}
       mapStyle={brightStyle}
       onLoad={() => {
