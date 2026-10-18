@@ -10,6 +10,7 @@ import { HealthModule } from "./modules/health/health.module.js";
 import { ItemsModule } from "./modules/items/items.module.js";
 import { JobsModule } from "./modules/jobs/jobs.module.js";
 import { KeysModule } from "./modules/keys/keys.module.js";
+import { SavedAreasModule } from "./modules/saved-areas/saved-areas.module.js";
 import { SettingsModule } from "./modules/settings/settings.module.js";
 import { UsersModule } from "./modules/users/users.module.js";
 
@@ -26,6 +27,7 @@ import { UsersModule } from "./modules/users/users.module.js";
     ItemsModule,
     DatasetsModule,
     JobsModule,
+    SavedAreasModule,
   ],
 })
 export class AppModule {}
