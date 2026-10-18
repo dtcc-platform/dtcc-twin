@@ -415,6 +415,11 @@ def test_remote_job_is_polled_and_downloaded_through_the_entry(hosts: dict[str, 
     assert set(hosts["entry_packages"].iterdir()) == kept
 
 
+def test_remote_job_reports_the_environment_of_the_worker_that_ran_it(hosts: dict[str, Any], remote_job: str) -> None:
+    job = fetch(hosts["entry_address"], f"/api/v1/jobs/{remote_job}").json()
+    assert job["environment"] == {"image_digest": DIGEST, "versions": installed_versions()}
+
+
 def test_remote_package_its_host_no_longer_has_is_unavailable(hosts: dict[str, Any]) -> None:
     job_id = completed_job(hosts["remote"])
     hosts["remote"].package_path(job_id).unlink()

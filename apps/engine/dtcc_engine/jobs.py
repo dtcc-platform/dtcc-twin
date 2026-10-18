@@ -58,7 +58,8 @@ redis.call('HSET', KEYS[1], 'queued_at', ARGV[1])
 return 'recorded'
 """
 # Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started, records its
-# claim, and restarts the record's lifetime: ARGV is the claim and the lifetime.
+# claim and the claiming worker's environment, and restarts the record's lifetime: ARGV is the claim, the lifetime, the
+# worker's versions, and its image digest, or '' if it has none.
 START = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
   return 'missing'
@@ -67,7 +68,10 @@ local gate, outcome, finished = unpack(redis.call('HMGET', KEYS[1], 'execution_g
 if gate ~= 'waiting' or outcome or finished then
   return 'refused'
 end
-redis.call('HSET', KEYS[1], 'execution_gate', 'started', 'claimed_by', ARGV[1])
+redis.call('HSET', KEYS[1], 'execution_gate', 'started', 'claimed_by', ARGV[1], 'worker_versions', ARGV[3])
+if ARGV[4] ~= '' then
+  redis.call('HSET', KEYS[1], 'worker_image_digest', ARGV[4])
+end
 redis.call('EXPIRE', KEYS[1], ARGV[2])
 return 'started'
 """
@@ -397,6 +401,8 @@ class Jobs:
                 and ("error_type" in record) == (outcome == "failed")
                 and ("error_upstream" not in record or outcome == "failed")
                 and ("claimed_by" not in record or record["execution_gate"] == "started")
+                and ("worker_versions" not in record or "claimed_by" in record)
+                and ("worker_image_digest" not in record or "worker_versions" in record)
             )
             if not consistent:
                 raise JobStateUnavailable(job_id)
@@ -412,12 +418,24 @@ class Jobs:
                 "error_type": record.get("error_type"),
                 "error_upstream": json.loads(record["error_upstream"]) if "error_upstream" in record else None,
                 "claimed_by": record.get("claimed_by"),
+                # Optional even with a claim: records claimed by an earlier Engine lack it.
+                "environment": (
+                    {
+                        "image_digest": record.get("worker_image_digest"),
+                        "versions": json.loads(record["worker_versions"]),
+                    }
+                    if "worker_versions" in record
+                    else None
+                ),
             }
         except (KeyError, ValueError) as error:
             raise JobStateUnavailable(job_id) from error
 
     def status(self, job_id: str) -> dict[str, Any] | None:
-        """Return the job's state, progress, error, and package, or None if the job is unknown or expired.
+        """Return the job's state, progress, error, environment, and package, or None if the job is unknown or expired.
+
+        The environment is the image digest and versions of the worker that claimed the job, or None if none is
+        recorded: no worker has claimed the job, or an earlier Engine's worker did.
 
         Raises:
             JobStateUnavailable: If the job's state cannot be established from its record and Celery's state.
@@ -448,6 +466,7 @@ class Jobs:
             "state": state,
             "progress": meta["result"] if state == "running" and meta["status"] == "PROGRESS" else None,
             "error": error,
+            "environment": record["environment"],
             "package": (
                 {
                     # Another target's package is on its host, which only the API can ask.
@@ -521,13 +540,16 @@ class Jobs:
     def claim(self, job_id: str, claim: str) -> bool:
         """Claim permission to run the job's Dataset, which only one caller gets, and only while the job is waiting.
 
-        The claim names the worker's node, the worker run, and the pool process. A claim whose answer Redis did not send
-        is not repeated: it may have been made.
+        The claim names the worker's node, the worker run, and the pool process. With it, the job's record keeps this
+        worker's image digest and versions. A claim whose answer Redis did not send is not repeated: it may have been
+        made.
         """
         try:
             # Checks the acceptance fields, which never change once written; the claim checks the rest.
             self.read_record(job_id)
-            answer = self.start_script(keys=[record_key(job_id)], args=[claim, int(RECORD_LIFETIME.total_seconds())])
+            lifetime = int(RECORD_LIFETIME.total_seconds())
+            environment = [json.dumps(installed_versions()), self.image_digest or ""]
+            answer = self.start_script(keys=[record_key(job_id)], args=[claim, lifetime, *environment])
         except (JobStateUnavailable, redis.RedisError):
             logger.warning("Job %s does not run: its record is unusable or Redis did not answer", job_id, exc_info=True)
             return False

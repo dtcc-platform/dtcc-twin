@@ -200,6 +200,15 @@ the versions used to execute each job and preserve upstream provenance in the
 resulting package. Reject incompatible targets rather than silently changing
 parameters, semantic products, or model meaning.
 
+When a worker claims a job, Engine records that worker's Engine, Core, and Sim
+versions, and its image digest if the deployment supplies one, with the job,
+and the job's status reports them as its environment. A job that no worker has
+claimed has no environment, and a later delivery of a claimed job does not
+change it. Core's provenance in the package stays as Core records it. A job
+queued before its target's image changes runs in the new environment, which
+its status then reports: Core validates the job's parameters again when the
+worker invokes the Dataset.
+
 Compatibility and canonical exchange readiness must be verified from source,
 tests, and representative execution. A descriptor alone is not proof that a
 solver is installed, a provider is reachable, or a returned type satisfies

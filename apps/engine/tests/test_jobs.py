@@ -28,13 +28,14 @@ from kombu.exceptions import OperationalError
 from pydantic import field_validator
 
 from dtcc_engine.api import create_app
-from dtcc_engine.jobs import RECORD_LIFETIME, RETENTION, RUN_DATASET, Jobs, record_key
+from dtcc_engine.jobs import RECORD_LIFETIME, RETENTION, RUN_DATASET, Jobs, installed_versions, record_key
 
 TOKEN = "test-token"
 AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
 BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
 SMOKE = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}}
 PROVIDER_KEY = "provider-key-5e1d"
+DIGEST = "sha256:" + "0123456789abcdef" * 4
 FINISHED = ("completed", "failed")
 
 
@@ -247,6 +248,17 @@ UNUSABLE_CHANGES = {
         "error_type": "DatasetUpstreamError",
         "error_upstream": "not json",
     },
+    "environment-without-a-claim": {"worker_versions": '{"dtcc-engine": "0.1.0"}'},
+    "image-digest-without-versions": {
+        "execution_gate": "started",
+        "claimed_by": "celery@engine-test earlier-run 7",
+        "worker_image_digest": DIGEST,
+    },
+    "unreadable-versions": {
+        "execution_gate": "started",
+        "claimed_by": "celery@engine-test earlier-run 7",
+        "worker_versions": "not json",
+    },
 }
 
 
@@ -287,6 +299,7 @@ def test_submitted_job_is_queued(client: TestClient, jobs: Jobs) -> None:
         "state": "queued",
         "progress": None,
         "error": None,
+        "environment": None,
         "package": None,
     }
 
@@ -865,3 +878,33 @@ def test_confirmation_keeps_the_outcome_and_lifetime_of_a_job_that_finished_firs
     job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
     assert (job["state"], job["error"]) == ("failed", {"type": "RuntimeError"})
     assert jobs.records.ttl(record_key(job_id)) <= 60
+
+
+def test_claim_records_the_environment_of_the_worker_that_made_it(
+    client: TestClient, jobs: Jobs, redis_url: str, tmp_path: Path
+) -> None:
+    job_id = submit(client, SMOKE)
+    # Workers of the API's target: the first with an image digest, which the API lacks, and the second without one.
+    assert Jobs(redis_url, jobs.target, tmp_path, DIGEST).claim(job_id, "celery@unserved first-run 7")
+    assert not jobs.claim(job_id, "celery@unserved second-run 8")
+    environment = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["environment"]
+    assert environment == {"image_digest": DIGEST, "versions": installed_versions()}
+
+
+@pytest.mark.parametrize("how", ["queued", "cancelled", "claimed-by-an-earlier-engine"])
+def test_job_without_a_recorded_environment_reports_none(client: TestClient, jobs: Jobs, how: str) -> None:
+    job_id = submit(client, SMOKE)
+    if how == "cancelled":
+        assert cancel(client, job_id).json()["result"] == "cancelled"
+    elif how == "claimed-by-an-earlier-engine":
+        claim = {"execution_gate": "started", "claimed_by": "celery@unserved earlier-run 7"}
+        jobs.records.hset(record_key(job_id), mapping=claim)
+    polled = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    assert (polled.status_code, polled.json()["environment"]) == (200, None)
+
+
+def test_completed_job_reports_the_environment_of_its_worker(served_client: TestClient) -> None:
+    job_id = submit(served_client, SMOKE)
+    job = wait_until(served_client, job_id, lambda job: job["state"] == "completed")
+    # The worker runs in development's manner, without an image digest.
+    assert job["environment"] == {"image_digest": None, "versions": installed_versions()}
