@@ -323,7 +323,20 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
 
     @app.get("/api/v1/datasets", dependencies=[Depends(require_token)])
     def list_datasets() -> dict[str, Any]:
-        return dataset_catalog()
+        catalog = dataset_catalog()
+        observations = {target: jobs.observe(target) for target in [jobs.target, *remote_targets]}
+        # Each target as routing observes it: compatible hosts run this image, so they offer these Datasets. Whether a
+        # Dataset can run on a host is unknown until Core can tell (DESIGN.md, upstream item 6).
+        targets = [
+            {
+                "target": target,
+                "state": observed["state"],
+                "reason": observed["reason"],
+                "runtime_availability": "unknown",
+            }
+            for target, observed in observations.items()
+        ]
+        return {**catalog, "targets": {name: targets for name in catalog["datasets"]}}
 
     @app.get("/api/v1/host", dependencies=[Depends(require_token)])
     def describe_host() -> dict[str, Any]:

@@ -26,7 +26,9 @@ from celery.worker import state as worker_state
 from celery.worker.control import inspect_command
 from dtcc_core.common.progress import get_progress_callback, set_progress_callback
 from dtcc_core.datasets.dataset import DatasetUpstreamError
+from kombu import Connection
 from kombu.exceptions import ChannelError, OperationalError
+from kombu.pidbox import Mailbox
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 VERSIONED_PACKAGES = ("dtcc-engine", "dtcc-core", "dtcc-sim")
@@ -43,6 +45,9 @@ IMAGE_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 NODE_CHECK_TIMEOUT = 0.5
 # How long an observation waits for a target's worker to answer, once connected.
 OBSERVATION_TIMEOUT = 0.5
+# Kombu's transport options for an observation's broker connection: no reconnection, and no read longer than 2 s, which
+# still outlasts the 1 s BRPOP whose answer the connection reads as it closes.
+OBSERVATION_BROKER = {"socket_connect_timeout": 1, "socket_timeout": 2, "max_retries": 0}
 # Engine's inspect command, which a worker answers with what an observation needs.
 DESCRIBE_WORKER = "engine_worker"
 # Celery's states of a job without a recorded outcome; SUCCESS follows the outcome, so it never appears alone.
@@ -241,6 +246,14 @@ class UnconfirmedSubmission(Exception):
         self.job_id = job_id
 
 
+class ObservationConnection(Connection):
+    """A broker connection whose operations, publishing among them, fail at once instead of reconnecting and retrying."""
+
+    def ensure(self, obj: Any, fun: Any, **options: Any) -> Any:
+        # Kombu's mailbox publishes with retries for ever, which a broker that stopped answering would never end.
+        return super().ensure(obj, fun, **{**options, "max_retries": 0})
+
+
 class Jobs:
     """Dataset jobs on one compute target: submission, execution, status, and packages.
 
@@ -287,6 +300,13 @@ class Jobs:
         self.sender = Celery("dtcc_engine", broker=redis_url, set_as_current=False)
         # Retrying a publish whose acknowledgement was lost could queue the job twice.
         self.sender.conf.update(task_publish_retry=False)
+        # Celery's control mailbox publishes through its pool of connections; this one publishes on the observation's.
+        self.observation_mailbox = Mailbox(
+            self.celery_app.conf.control_exchange,
+            type="fanout",
+            accept=self.celery_app.conf.accept_content,
+            serializer=self.celery_app.conf.task_serializer,
+        )
 
         # Not shared: a shared task joins every app finalized later, and the first registration of a name wins.
         @self.celery_app.task(name=RUN_DATASET, bind=True, shared=False)
@@ -645,15 +665,17 @@ class Jobs:
         node = f"celery@{target}"
         try:
             # A connection of its own: on a pooled one, an earlier call that timed out can lose this answer.
-            with self.celery_app.connection_for_write() as connection:
+            with ObservationConnection(
+                self.celery_app.conf.broker_url, transport_options=OBSERVATION_BROKER
+            ) as connection:
                 # Before the worker answers: a job it takes from the queue in between is counted twice, not missed.
                 try:
                     waiting = connection.default_channel.queue_declare(queue=target, passive=True).message_count
                 except ChannelError:
                     # Kombu keeps no list for an empty queue, so its passive declaration finds none.
                     waiting = 0
-                answers = self.celery_app.control.broadcast(
-                    DESCRIBE_WORKER, destination=[node], reply=True, timeout=OBSERVATION_TIMEOUT, connection=connection
+                answers = self.observation_mailbox(connection).call(
+                    [node], DESCRIBE_WORKER, timeout=OBSERVATION_TIMEOUT
                 )
         except (OperationalError, redis.RedisError):
             logger.warning("Could not observe the worker of %s", target, exc_info=True)

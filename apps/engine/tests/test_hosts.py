@@ -214,6 +214,25 @@ def test_targets_report_each_hosts_discovery_and_its_workers_own_answer(hosts: d
         }
 
 
+def fetch_listing(hosts: dict[str, Any]) -> dict[str, Any]:
+    """List the Datasets through the entry's API process."""
+    response = fetch(hosts["entry_address"], "/api/v1/datasets")
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_entry_lists_each_dataset_with_both_targets_as_their_workers_answer(hosts: dict[str, Any]) -> None:
+    # A late answer leaves a worker unknown for the moment, so the listing is read until both have answered.
+    listing, deadline = fetch_listing(hosts), time.monotonic() + 120
+    while any(target["state"] == "unknown" for target in listing["targets"]["smoke"]):
+        assert time.monotonic() < deadline, listing
+        time.sleep(0.2)
+        listing = fetch_listing(hosts)
+    ready = {"state": "ready", "reason": None, "runtime_availability": "unknown"}
+    targets = [{"target": "entry", **ready}, {"target": "remote", **ready}]
+    assert listing["targets"] == {name: targets for name in listing["datasets"]}
+
+
 def test_target_whose_worker_holds_its_limit_or_has_jobs_waiting_is_busy(hosts: dict[str, Any]) -> None:
     entry, remote = hosts["entry"], hosts["remote"]
     remote_targets = {"remote": hosts["remote_address"]}

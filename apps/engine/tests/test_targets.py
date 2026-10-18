@@ -5,16 +5,20 @@ The worker checks are run through Celery's command line, as the worker service r
 to start ends its process.
 """
 
+import contextlib
 import os
+import socket
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 from celery.worker.control import Panel
@@ -227,6 +231,109 @@ def test_target_is_unknown_while_the_broker_does_not_answer(tmp_path: Path) -> N
         "worker": None,
         "waiting": None,
     }
+
+
+def shut(open_socket: socket.socket) -> None:
+    """Close a socket and wake the threads blocked on it: closing alone wakes none, and their calls keep it open."""
+    with contextlib.suppress(OSError):
+        open_socket.shutdown(socket.SHUT_RDWR)
+    open_socket.close()
+
+
+def end(thread: threading.Thread) -> None:
+    """Wait for a thread whose socket was shut, failing instead of waiting for ever."""
+    thread.join(5)
+    assert not thread.is_alive(), thread
+
+
+@pytest.fixture
+def silent_broker() -> Iterator[str]:
+    """The address of a broker that accepts connections and never answers, as one that has stopped responding would."""
+    server = socket.create_server(("127.0.0.1", 0))
+    accepted: list[socket.socket] = []
+
+    def accept() -> None:
+        while True:
+            try:
+                accepted.append(server.accept()[0])
+            except OSError:
+                return
+
+    accepting = threading.Thread(target=accept, daemon=True)
+    accepting.start()
+    try:
+        yield f"redis://127.0.0.1:{server.getsockname()[1]}/0"
+    finally:
+        shut(server)
+        end(accepting)
+        for connection in accepted:
+            connection.close()
+
+
+@pytest.fixture
+def broker_silent_after_publishing(redis_url: str) -> Iterator[str]:
+    """The address of a broker that relays the tests' Redis until it is sent a PUBLISH, as an observation's command is,
+    and from then on never answers, as one that stops responding during an observation would."""
+    upstream = urlsplit(redis_url)
+    server = socket.create_server(("127.0.0.1", 0))
+    sockets: list[socket.socket] = []
+    relays: list[threading.Thread] = []
+    published = threading.Event()
+
+    def relay(source: socket.socket, sink: socket.socket, from_client: bool) -> None:
+        try:
+            while data := source.recv(65536):
+                if from_client and b"PUBLISH" in data:
+                    published.set()
+                if from_client or not published.is_set():
+                    sink.sendall(data)
+        except OSError:
+            pass
+
+    def accept() -> None:
+        while True:
+            try:
+                client = server.accept()[0]
+            except OSError:
+                return
+            redis = socket.create_connection((upstream.hostname, upstream.port or 6379))
+            sockets.extend([client, redis])
+            for args in ((client, redis, True), (redis, client, False)):
+                relays.append(threading.Thread(target=relay, args=args, daemon=True))
+                relays[-1].start()
+
+    accepting = threading.Thread(target=accept, daemon=True)
+    accepting.start()
+    try:
+        yield f"redis://127.0.0.1:{server.getsockname()[1]}{upstream.path}"
+    finally:
+        # The listener first, so that no connection is added while the others are shut.
+        shut(server)
+        end(accepting)
+        for open_socket in sockets:
+            shut(open_socket)
+        for thread in relays:
+            end(thread)
+
+
+@pytest.mark.parametrize("broker", ["refusing", "silent", "silent-after-publishing"])
+def test_observation_ends_within_seconds_while_the_broker_does_not_answer(
+    silent_broker: str, broker_silent_after_publishing: str, tmp_path: Path, broker: str
+) -> None:
+    addresses = {
+        "refusing": "redis://127.0.0.1:1/0",
+        "silent": silent_broker,
+        "silent-after-publishing": broker_silent_after_publishing,
+    }
+    jobs = Jobs(addresses[broker], "unanswered", tmp_path)
+    observed: list[dict[str, Any]] = []
+    # In a thread of its own, so that an observation that never ends fails the test instead of stopping the run.
+    observation = threading.Thread(target=lambda: observed.append(jobs.observe("unanswered")), daemon=True)
+    start = time.monotonic()
+    observation.start()
+    observation.join(30)
+    assert observed == [{"state": "unknown", "reason": "The broker did not answer", "worker": None, "waiting": None}]
+    assert time.monotonic() - start < 4
 
 
 def test_worker_without_engines_inspect_command_is_unknown(

@@ -13,6 +13,7 @@ dependencies = [
     "dtcc-core",
     "dtcc-sim",
     "fastapi==0.141.1",
+    "kombu==5.6.2",
     "redis==6.4.0",
     "requests==2.34.2",
     "uvicorn==0.54.0",

@@ -187,6 +187,17 @@ capability is remote-only because of that host's runtime conditions, such as
 credentials, data, hardware, or provider access, not because different code is
 installed there.
 
+The entry's Dataset listing reports each Dataset's targets: every configured
+target, in placement order, with its state and reason as the entry observes
+them for that request, and the Dataset's runtime availability on it, which is
+unknown until Core can report it. The listing reads no other host's discovery:
+a compatible target runs the entry's image and so offers its Datasets, and an
+incompatible one is reported as such. An observation waits only seconds for a
+broker that does not answer, so the listing still answers then, with each
+target unknown. The catalog revision covers the versions and descriptions, not
+the targets' states. Describing one Dataset returns its Core description
+alone, and host-local discovery reports only its own catalog.
+
 The catalog must have an explicit refresh operation or revision mechanism. A
 new conforming Dataset using existing contracts becomes visible after it is
 installed and registered on a target and the catalog is refreshed, without

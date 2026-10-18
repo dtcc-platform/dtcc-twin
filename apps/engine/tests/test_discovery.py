@@ -1,7 +1,12 @@
-"""Tests for Engine's discovery API against the installed DTCC Core and DTCC Sim."""
+"""Tests for Engine's discovery API against the installed DTCC Core and DTCC Sim.
+
+The `client` fixture's target has no worker; its API observes that target as unknown at once, instead of waiting for
+an answer that never comes.
+"""
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister
@@ -9,7 +14,7 @@ from dtcc_core.datasets import list as registered_datasets
 from fastapi.testclient import TestClient
 from pydantic import Field
 
-from dtcc_engine.api import create_app, create_app_from_environment
+from dtcc_engine.api import create_app, create_app_from_environment, dataset_catalog
 from dtcc_engine.jobs import Jobs
 
 TOKEN = "test-token"
@@ -17,7 +22,8 @@ AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
 
 
 @pytest.fixture
-def client(jobs: Jobs) -> TestClient:
+def client(jobs: Jobs, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr(jobs, "observe", lambda target: {"state": "unknown", "reason": "Not observed"})
     return TestClient(create_app(TOKEN, jobs))
 
 
@@ -149,6 +155,71 @@ def test_host_reports_its_target_image_digest_and_catalog(
         monkeypatch.setenv("ENGINE_IMAGE_DIGEST", configured)
     client = TestClient(create_app_from_environment())
     host = client.get("/api/v1/host", headers=AUTHORIZED)
-    catalog = client.get("/api/v1/datasets", headers=AUTHORIZED).json()
     assert host.status_code == 200
-    assert host.json() == {"target": "this-host", "image_digest": reported, **catalog}
+    assert host.json() == {"target": "this-host", "image_digest": reported, **json.loads(json.dumps(dataset_catalog()))}
+
+
+def listing_observed(
+    monkeypatch: pytest.MonkeyPatch, jobs: Jobs, states: dict[str, tuple[str, str | None]]
+) -> tuple[dict[str, Any], list[str]]:
+    """List the Datasets through an API whose targets are observed in these states and reasons: its own, then the
+    remote `second` and `first`, configured in that order. Returns the listing and the targets observed, in order.
+    """
+    observed: list[str] = []
+
+    def observe(target: str) -> dict[str, Any]:
+        observed.append(target)
+        state, reason = states[target]
+        return {"state": state, "reason": reason, "worker": None, "waiting": 0}
+
+    monkeypatch.setattr(jobs, "observe", observe)
+    client = TestClient(create_app(TOKEN, jobs, {"second": "http://127.0.0.1:1", "first": "http://127.0.0.1:2"}))
+    response = client.get("/api/v1/datasets", headers=AUTHORIZED)
+    assert response.status_code == 200
+    return response.json(), observed
+
+
+def test_listing_reports_every_target_of_each_dataset_as_observed_with_runtime_availability_unknown(
+    monkeypatch: pytest.MonkeyPatch, jobs: Jobs
+) -> None:
+    states = {
+        "unserved": ("ready", None),
+        "second": ("busy", None),
+        "first": ("incompatible", "Its worker's image digest is missing or differs from this host's"),
+    }
+    listing, observed = listing_observed(monkeypatch, jobs, states)
+    targets = [
+        {"target": target, "state": state, "reason": reason, "runtime_availability": "unknown"}
+        for target, (state, reason) in states.items()
+    ]
+    assert listing["targets"] == {name: targets for name in listing["datasets"]}
+    assert set(listing["datasets"]) == set(registered_datasets())
+    assert observed == ["unserved", "second", "first"]
+
+
+def test_revision_does_not_change_with_the_targets_states(monkeypatch: pytest.MonkeyPatch, jobs: Jobs) -> None:
+    unknown = ("unknown", "Its worker did not answer within 0.5 s")
+    before, _ = listing_observed(monkeypatch, jobs, {"unserved": ("ready", None), "second": unknown, "first": unknown})
+    after, _ = listing_observed(monkeypatch, jobs, {"unserved": unknown, "second": ("busy", None), "first": unknown})
+    assert before["targets"] != after["targets"]
+    assert before["catalog_revision"] == after["catalog_revision"] == dataset_catalog()["catalog_revision"]
+
+
+def test_listing_while_the_broker_does_not_answer_reports_every_dataset_and_its_target_unknown(tmp_path: Path) -> None:
+    client = TestClient(create_app(TOKEN, Jobs("redis://127.0.0.1:1/0", "unreachable", tmp_path)))
+    response = client.get("/api/v1/datasets", headers=AUTHORIZED)
+    assert response.status_code == 200
+    listing = response.json()
+    unknown = {"state": "unknown", "reason": "The broker did not answer", "runtime_availability": "unknown"}
+    assert set(listing["datasets"]) == set(registered_datasets())
+    assert listing["targets"] == {name: [{"target": "unreachable", **unknown}] for name in listing["datasets"]}
+
+
+def test_host_local_discovery_observes_no_target(monkeypatch: pytest.MonkeyPatch, jobs: Jobs) -> None:
+    observed: list[str] = []
+    monkeypatch.setattr(jobs, "observe", observed.append)
+    client = TestClient(create_app(TOKEN, jobs, {"remote": "http://127.0.0.1:1"}))
+    host = client.get("/api/v1/host", headers=AUTHORIZED)
+    assert host.status_code == 200
+    assert "targets" not in host.json()
+    assert observed == []
