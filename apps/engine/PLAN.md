@@ -17,7 +17,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 - **Increments 0 and 1** are written as executable tasks with complete code.
 - **Increments 2 to 6** are specified by scope, upstream interfaces, checks, and blockers. Each is expanded into executable tasks, in this file, when its prerequisites are verified. Expanding an increment is a plan change and is reviewed like one.
 - **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins and is expanded into Tasks 10 to 14; 2b, execution of FEniCSx simulations, moves the pins to the Sim commit that fixes them and is expanded into Tasks 15 and 16. Cancellation moves to increment 4, whose cancellation section records the decision to use an Engine start/cancel gate after investigating Celery revocation.
-- **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part and the Linux deployment, stays an outline until increments 2 to 4 provide what it verifies.
+- **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part of the production image and what a deployment needs from the image, is expanded into Task 33; on 2026-10-19 the user moved the deployment on Linux hosts to the `dtcc-infra` repository.
 
 ## Global Constraints
 
@@ -71,6 +71,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 36. The Datasets are listed through the entry while this host's and the remote targets' workers are ready, busy, incompatible, or do not answer, or while the broker does not answer; and host-local discovery is asked: each Dataset lists every configured target in placement order, with its observed state and reason and its runtime availability `unknown`, each target observed once per listing; the Datasets are still listed while the broker does not answer, and each target is `unknown`; the catalog revision does not change with the targets' states; host-local discovery observes no target and lists none; and an observation while the broker refuses the connection, accepts it and never answers, or stops answering once the observation's command is published, ends within seconds, `unknown`. Pinned in Task 30 (`test_listing_reports_every_target_of_each_dataset_as_observed_with_runtime_availability_unknown`, `test_revision_does_not_change_with_the_targets_states`, `test_listing_while_the_broker_does_not_answer_reports_every_dataset_and_its_target_unknown`, `test_host_local_discovery_observes_no_target`, `test_entry_lists_each_dataset_with_both_targets_as_their_workers_answer`, `test_observation_ends_within_seconds_while_the_broker_does_not_answer`).
 37. A job is submitted by an entry with an image digest and claimed by a worker with another digest or none, in the API's process or in a worker process of its own, and is delivered again later; or it is submitted by an entry without a digest, as in development, or claimed by a worker with the entry's digest: in the first case the claim fails the job without invoking its Dataset, and the job reports `failed`, `IncompatibleWorker`, a finish time, the claiming worker's environment, and no package, no later delivery runs it, and cancelling it answers `already_finished`; in the others the job runs. Pinned in Task 31 (`test_job_claimed_by_a_worker_without_the_image_at_submission_fails_without_running`, `test_job_runs_when_its_worker_has_the_image_at_submission_or_none_was_recorded`, `test_job_queued_before_its_targets_image_changed_fails_when_a_worker_claims_it`).
 38. Two hosts run in containers of their own on one machine, each with its API, its worker, and its package volume, and one Redis, and the remote host's worker is stopped, started from another image, and killed during a job, and its API is stopped: with both up, both targets are ready with the same catalog, both APIs refuse a missing or another token, and each job runs on its target, its package on its host alone, and downloads through the entry; with the worker stopped, the remote target is unknown, a job sent to it is refused, and a remote job is cancelled through the entry; with a worker of another image, the target is incompatible, and the job queued before fails with `IncompatibleWorker`; with the API stopped, the remote target still takes jobs, and the entry reports their packages unknown and their downloads unavailable until the API is back; and with the worker killed after its job's claim, its job fails with `WorkerRestarted` while the other host's runs on. Pinned in Task 32 (`pnpm engine:check:hosts`, the phases in `apps/engine/host_checks`).
+39. The API and the worker run from the production image, with new named volumes for the packages and the FEniCSx cache, and the worker has its Celery health check: the image's user writes to both volumes, both containers report healthy, a job submitted to the API runs on the worker, and its package downloads unchanged after both containers are recreated. Pinned in Task 33 (`test_package_and_form_cache_volumes_are_writable`, and the job and the recreation in `pnpm engine:check:prod`).
 
 ---
 
@@ -2230,7 +2231,7 @@ Status: executed 2026-10-01, in Tasks 15 and 16, expanded the same day. Task 15 
 - Engine pins both Core and Sim to full commit IDs. Core's is the commit in Sim's `uv.lock` at the pinned Sim commit. Sim deliberately follows Core's `develop` ("Track Core develop and verify current Sim integration", `66769e2`); an exact Core pin in Sim would bind every consumer of Sim to it, and pip refuses two different Git commits of one package. Choosing Core from Sim's lock does not establish that the pair works; this increment's checks do, so the pair is a candidate until Tasks 15 and 16 pass.
 - The build installs Core at its pin, then Sim without its dependencies, because Sim's only one is Core. Engine's own dependencies are installed without exactly `dtcc-core` and `dtcc-sim`, so that pip does not resolve Sim's Core requirement again. One check after all installs fails the build unless Core and Sim are the pinned commits.
 - `air_quality_field` fails with its default `z_offset` wherever its stations lie below the mesh. This is Sim's to fix ([dtcc-sim#11](https://github.com/dtcc-platform/dtcc-sim/issues/11)); Sim fixed it in `6364772`, in the pins since 2026-10-04. Engine passes `z_offset` through like any other parameter and supplies no default (Global Constraints).
-- The wind solver's emulated duration, 11 to 23 minutes on a 200 m box, says nothing about a deployment; increment 5b measures it on a native host. A long job is not delivered again: a pool process acknowledges a job when it starts it, and the worker receives a job only when a pool process is free (Task 14).
+- The wind solver's emulated duration, 11 to 23 minutes on a 200 m box, says nothing about a deployment; `dtcc-infra` measures it on a native host (increment 5b). A long job is not delivered again: a pool process acknowledges a job when it starts it, and the worker receives a job only when a pool process is free (Task 14).
 - `urban_wind_simulation` diverges with its defaults, and Sim returns the result as if it had converged ([dtcc-sim#12](https://github.com/dtcc-platform/dtcc-sim/issues/12)). Engine reports what a Dataset returns, so such a job is `completed`; whether a simulation's values are right is Sim's. 2b is accepted for Engine's part (2026-10-02): the jobs ran with their numerical dependencies, and their packages kept their fields and provenance.
 - Automated checks stay offline, as in 2a. A test-defined Dataset that solves a small FEniCSx problem checks the prefork pool; Sim's Datasets, which download city data, run once by hand, and the results are recorded.
 
@@ -2587,7 +2588,7 @@ Status: executed 2026-10-16 to 2026-10-19, in Tasks 25 to 32. Expansion started 
 - Execution environment: the claim records the worker's versions and image digest in fields of their own. The job's status reports them as its `environment` (Task 29).
 - Aggregated discovery: the entry's listing reports each Dataset's targets, each observed on every request, and the Dataset's runtime availability on it (Task 30).
 - Image changes: the record keeps the entry's image digest at submission, and a claim by a worker with another digest, or none, fails the job, `IncompatibleWorker`, without running it; without the entry's digest nothing is compared (Task 31).
-- Checks across hosts: `pnpm engine:check:hosts` runs an entry host and a remote host of the development image on one machine, in a Compose project of their own, causes outages between its phases, and measures a baseline there (Task 32). Measurements between hosts on separate machines are increment 5b's.
+- Checks across hosts: `pnpm engine:check:hosts` runs an entry host and a remote host of the development image on one machine, in a Compose project of their own, causes outages between its phases, and measures a baseline there (Task 32). Measurements between hosts on separate machines are `dtcc-infra`'s (increment 5b).
 - Runtime availability: unknown until Core provides an interface (Blockers).
 
 The tasks:
@@ -2599,7 +2600,7 @@ The tasks:
 - Task 29: recording the execution environment at claim.
 - Task 30: aggregated discovery, with each Dataset's targets and their availability (Generic discovery row).
 - Task 31: rejecting a job whose worker's image changed after submission: the record keeps the entry's image digest at submission, and a claim by a worker with another digest, or none, fails the job instead of running it (Discovery and compatibility). Without the entry's digest, as in development, nothing is compared.
-- Task 32: checks across two hosts on one machine, in a Compose project of their own, as `pnpm engine:check:hosts`, and a baseline measured there; measurements between separate machines are increment 5b's.
+- Task 32: checks across two hosts on one machine, in a Compose project of their own, as `pnpm engine:check:hosts`, and a baseline measured there; measurements between separate machines are `dtcc-infra`'s (increment 5b).
 
 ### Task 25: Name each worker after its target, and report a host's own discovery
 
@@ -4710,7 +4711,7 @@ Submission places each job on a target by DESIGN.md's routing table: on the targ
 - Engine observes targets only once the request is otherwise valid, after the checks of the Dataset, `format`, and Core's validation, so a request that cannot run costs no observation.
 - Automatic placement observes this host's target, then the remote ones in configured order, each with `Jobs.observe`, and places the job on the first one that is `ready`, observing no further. If none is ready, it places the job on the first one that is `busy`, in the same order: this is the table's all-busy row, which queues locally if the local host is available and compatible, and otherwise on the first available compatible remote host. A target that is `unknown`, `unavailable`, or `incompatible` is passed over.
 - A named target is observed alone. `ready` or `busy`, it takes the job; otherwise the request is rejected, and no other target takes the job.
-- Each target is observed once per request, with Task 26's 0.5 s timeout and no retry, so a late answer leaves the target `unknown`, and a job that no other target can accept is rejected. The user chose this on 2026-10-17, over retrying or a longer timeout, from the measurements above; increment 5b measures late answers between two Linux hosts, and Task 32 on one machine.
+- Each target is observed once per request, with Task 26's 0.5 s timeout and no retry, so a late answer leaves the target `unknown`, and a job that no other target can accept is rejected. The user chose this on 2026-10-17, over retrying or a longer timeout, from the measurements above; `dtcc-infra` measures late answers between two Linux hosts (increment 5b), and Task 32 on one machine.
 - A rejection is `503`, with the detail "The job was not submitted." followed by "Target '<identifier>' is <state>: <reason>." for each observed target, in order. Nothing is recorded or queued. The reasons are the observation's, which hold no job argument, address, or credential. The detail is a sentence, as most of the API's errors are; `GET /api/v1/targets` gives the states as data.
 - `Jobs.submit` gains `target`, this host's by default: the job's record names it, and its message goes to its queue, so the target's worker runs it directly. The `202` answer is unchanged; the job's status names its target.
 - The entry validates a request with its own registry, which is the selected target's, because compatible targets run the same image (Task 26): a remote target needs the entry's digest, and a development deployment without digests runs only locally. Runtime availability stays unknown (Blockers).
@@ -5525,7 +5526,7 @@ DESIGN.md's listing of Datasets reports "target availability" (Consumer API cont
 - The catalog revision still covers the versions and descriptions only: a target's state is not part of the contract.
 - `GET /api/v1/datasets/{name}` keeps returning Core's description alone, which the `engine-integration` branch reads, and host-local discovery, `GET /api/v1/host`, keeps reporting only its own catalog, without observing any target. The listing's new field is one that branch ignores.
 - An observation's broker connection, its own since Task 26, has Kombu's transport options `socket_timeout` 2 s, `socket_connect_timeout` 1 s, and `max_retries` 0, as `OBSERVATION_BROKER`, and is an `ObservationConnection`, whose `ensure` does not retry. The observation publishes its command on that connection, through a Kombu mailbox of Engine's own with Celery's control settings and its public `call`. A broker that refuses the connection, accepts it and never answers, or stops answering during the observation leaves the target `unknown`, "The broker did not answer". The options bound each connect and read, not the observation as a whole: it ends within about 2 s when the broker stops answering before or at the command's publication, and within about 6.5 s when it stops while the answer is collected, since the reply queue's cleanup and the connection's closing each wait as well. Codex's first review of the plan found that without the connection's bound a silent broker kept the listing from returning, and its second that the command's publication, through Celery's pool, still did; the user chose on 2026-10-18 to bound both in this task. `pyproject.toml` declares `kombu==5.6.2` beside Celery, as Task 26 declared `requests`: Engine imports Kombu, these findings hold for that version, and Celery 5.6.3 would accept any `kombu>=5.6.0` in a build without Docker's cache. The image already has 5.6.2, so the pin changes none of its packages; but changing `pyproject.toml` rebuilds the image's dependency layer, in which a package that no pin fixes can resolve to a newer version, so Step 6 compares the installed packages before and after the rebuild. The user chose the pin on 2026-10-18. Routing and `GET /api/v1/targets` observe the same way, so they are bounded too; Engine's other Redis connections, which status, submission, and cancellation use, still have no socket timeout.
-- A listing costs one observation per target, as a submission does: milliseconds for a worker that answers, about 1 s for one that does not, about 2 s while the broker accepts connections and does not answer, up to about 6.5 s for the target during which it stops answering, and next to nothing while it refuses them. The `engine-integration` branch's 10 s request limit holds a listing of four targets under a broker silent from the start, but not one of three targets or more under a broker that stops while an answer is collected. Increment 5b measures it between two Linux hosts, and Task 32 on one machine.
+- A listing costs one observation per target, as a submission does: milliseconds for a worker that answers, about 1 s for one that does not, about 2 s while the broker accepts connections and does not answer, up to about 6.5 s for the target during which it stops answering, and next to nothing while it refuses them. The `engine-integration` branch's 10 s request limit holds a listing of four targets under a broker silent from the start, but not one of three targets or more under a broker that stops while an answer is collected. `dtcc-infra` measures it between two Linux hosts (increment 5b), and Task 32 on one machine.
 - Tests: in `tests/test_discovery.py`, a listing whose three targets are observed in three states, a revision that the states do not change, a listing while the broker does not answer, and host-local discovery, which observes nothing; the `client` fixture answers each observation at once, as its target has no worker. In `tests/test_hosts.py`, the entry's listing with both hosts' workers answering. In `tests/test_targets.py`, an observation while the broker refuses the connection, while it accepts it and never answers, and while it relays the tests' Redis until sent `PUBLISH` and then never answers, each run in a thread of its own so that one that never ends fails instead of stopping the run. One expectation changes: `test_host_reports_its_target_image_digest_and_catalog` compares host-local discovery with the catalog, because the listing gains `targets`, which host-local discovery must not have.
 
 **Files:**
@@ -6188,7 +6189,7 @@ Record Task 31's results in Increment 3's status, including Step 6's observation
 
 ### Task 32: Check jobs across two hosts, and measure them on one machine
 
-Increment 3's Checks ask for the Routing, Concurrency, Remote execution, Generic discovery, and Authentication rows "with real Redis and at least two workers", and, where several hosts change them, the Validation, Polling, Failure reporting, Cancellation, Package correctness, Retention, and Restart behavior rows; DESIGN.md's Acceptance and validation asks for baseline measurements. `tests/test_hosts.py` covers the first rows with both hosts' APIs and workers as processes in one container, which share its filesystem and its address. This task adds `pnpm engine:check:hosts`: an entry host and a remote host, each with its API, its worker, and a package volume in containers of their own, and the central Redis, in a Compose project of their own, checked across hosts in phases between which the script stops and starts one host's services, and measured. Both hosts run on one machine, so the check is no measurement between hosts on separate machines, which increment 5b takes.
+Increment 3's Checks ask for the Routing, Concurrency, Remote execution, Generic discovery, and Authentication rows "with real Redis and at least two workers", and, where several hosts change them, the Validation, Polling, Failure reporting, Cancellation, Package correctness, Retention, and Restart behavior rows; DESIGN.md's Acceptance and validation asks for baseline measurements. `tests/test_hosts.py` covers the first rows with both hosts' APIs and workers as processes in one container, which share its filesystem and its address. This task adds `pnpm engine:check:hosts`: an entry host and a remote host, each with its API, its worker, and a package volume in containers of their own, and the central Redis, in a Compose project of their own, checked across hosts in phases between which the script stops and starts one host's services, and measured. Both hosts run on one machine, so the check is no measurement between hosts on separate machines, which `dtcc-infra` takes (increment 5b).
 
 **Interfaces verified for the task** (2026-10-19, in a prototype that ran the check five times; the last four passed, the last with the plan's files):
 
@@ -6216,8 +6217,8 @@ Increment 3's Checks ask for the Routing, Concurrency, Remote execution, Generic
   5. The remote API is back: the job of phase 4 downloads through the entry; a job of `engine_held_probe` is claimed and held on each host. The phase waits for each claim, which status shows as the job's environment, and not only for `running`, which Celery's `STARTED` gives before the claim.
   6. The remote worker was killed and started again: its held job fails with `WorkerRestarted` while the entry's runs on, and completes when released; each host's package volume holds packages of its own completed jobs alone.
 - Every download that should succeed must answer `200`, and the checks of delivery compare its bytes with the package on the owning host's volume.
-- Measurements, which the checks add to the state volume and the script prints at the end with each host's package bytes, after each container's peak memory through phase 1 and Docker's CPUs and memory: the listing, with its observations, which counts late answers; the targets route; the remote host's discovery; `smoke` on each target, from submission to finish, with its status, its download, and its size; six concurrent submissions; `urban_heat_simulation` on each host, or why it was not run; and, during the outages, the listing and a submission with the remote worker stopped, and the status and targets route with the remote API stopped. They are taken on one machine, under emulation on Apple silicon, and are recorded as such: the decisions that waited for measurements between real hosts, the observation's 0.5 s without a retry (Task 28) and the listing's cost against the `engine-integration` branch's 10 s limit (Task 30), wait for increment 5b.
-- The check runs on one machine only, and cannot span two: its services find each other by their Compose names, the script causes the outages through one Docker engine, and the checks read both hosts' package volumes. On a side agent's note of 2026-10-19 that this task's two hosts share a machine and its emulation, the user chose that increment 5b measure between two Linux hosts what one machine cannot; the question put to the user said that 5b could rerun this check there, which, as built, it cannot, so 5b needs a setup of its own for two machines. Its scope says so.
+- Measurements, which the checks add to the state volume and the script prints at the end with each host's package bytes, after each container's peak memory through phase 1 and Docker's CPUs and memory: the listing, with its observations, which counts late answers; the targets route; the remote host's discovery; `smoke` on each target, from submission to finish, with its status, its download, and its size; six concurrent submissions; `urban_heat_simulation` on each host, or why it was not run; and, during the outages, the listing and a submission with the remote worker stopped, and the status and targets route with the remote API stopped. They are taken on one machine, under emulation on Apple silicon, and are recorded as such: the decisions that waited for measurements between real hosts, the observation's 0.5 s without a retry (Task 28) and the listing's cost against the `engine-integration` branch's 10 s limit (Task 30), wait for `dtcc-infra`'s measurements (increment 5b).
+- The check runs on one machine only, and cannot span two: its services find each other by their Compose names, the script causes the outages through one Docker engine, and the checks read both hosts' package volumes. On a side agent's note of 2026-10-19 that this task's two hosts share a machine and its emulation, the user chose that increment 5b measure between two Linux hosts what one machine cannot; the question put to the user said that 5b could rerun this check there, which, as built, it cannot, so 5b needed a setup of its own for two machines; since 2026-10-19 the measurements are `dtcc-infra`'s (increment 5b).
 - The check adds no test to `pnpm engine:check`. Its checks pin behavior that Tasks 25 to 31 implemented, so they pass when written, as Task 24's did; the prototype's first run showed that a failing phase fails the check. The concurrency limit, the placement order, and the tests across hosts with stub hosts stay in `tests/test_hosts.py` and are not repeated.
 
 **Files:**
@@ -9230,10 +9231,10 @@ Status: executed 2026-09-29 to 2026-09-30, before increment 2. Tasks 5 to 7 are 
 **Recorded limits:**
 
 - Pip dependencies of Core and Sim that conda does not provide stay unlocked; the spec requires only the conda lock. A rebuild can resolve different pip versions, so a deployment runs the exact image digest it tested (5b).
-- Tasks 5 to 8 built and tested only the build host's architecture (`linux-aarch64` on Apple silicon). Task 9 moves the image to `linux/amd64` and builds and tests the `linux-64` lock under emulation; native x86_64 is not tested until 5b.
+- Tasks 5 to 8 built and tested only the build host's architecture (`linux-aarch64` on Apple silicon). Task 9 moves the image to `linux/amd64` and builds and tests the `linux-64` lock under emulation; native x86_64 is tested where `dtcc-infra` deploys the image (5b).
 - The production checks run with the pytest that Core depends on. If Core drops it upstream, `pnpm engine:check:prod` needs another runner.
 
-**Checks:** the environment tests pass in `dev` and, as the production user, in `prod`; `prod` runs as a non-root user; it contains no Engine source checkout (`/app`, `/src`), its installed Engine distribution contains no tests and is not editable; the test extra's current package `httpx` is absent; the build-only tools are absent, including conda's target-prefixed compilers; the installed conda packages equal the runtime lock and `conda doctor` reports them consistent; `pip check` passes; FEniCSx compiles a form into an empty cache; the container reports healthy; the Dataset routes reject a missing token and accept the configured one. The Container deployment acceptance row stays not run until 5b.
+**Checks:** the environment tests pass in `dev` and, as the production user, in `prod`; `prod` runs as a non-root user; it contains no Engine source checkout (`/app`, `/src`), its installed Engine distribution contains no tests and is not editable; the test extra's current package `httpx` is absent; the build-only tools are absent, including conda's target-prefixed compilers; the installed conda packages equal the runtime lock and `conda doctor` reports them consistent; `pip check` passes; FEniCSx compiles a form into an empty cache; the container reports healthy; the Dataset routes reject a missing token and accept the configured one. The Container deployment acceptance row is `dtcc-infra`'s (5b).
 
 **Blockers:** none for building and checking locally. The AGPL-3.0 license review for TetGen must be completed before the image is pushed to any registry, including a private one.
 
@@ -9838,19 +9839,309 @@ Expected: all files use Prettier code style.
 Run: `pnpm check`
 Expected: passes. Set Task 9's status in 5a's status line, leave changes uncommitted, and report Steps 2, 4, 5, and 6 with passed, failed, skipped, and not-run checks. Native x86_64 execution stays not run until 5b.
 
-## Increment 5b: Worker image and Linux deployment (to be expanded)
+## Increment 5b: Production worker and deployment contract
 
-**Depends on:** increments 2a and 2b for the worker, Redis, packages, and simulation jobs; increment 3 for remote delivery measurements and comparing image digests across hosts; increment 4 for restart behavior.
+Status: expanded 2026-10-19 into Task 33, not yet executed. The plan's review of 2026-10-19 asked for a timeout on each of the check's new requests and for the removal of a clause naming an agent, both made the same day. Its second review, the same day, accepted it. On 2026-10-19 the user moved Engine's deployment to the `dtcc-infra` repository; this increment keeps what a deployment needs from the image and from DESIGN.md.
 
-**Cancellation prerequisite:** every worker consuming the deployment's queues must enforce the start/cancel gate before any API exposes cancellation. The one-time development reset in increment 4 is not a production upgrade procedure.
+**Scope:** what a deployment needs from the Engine image, checked locally: the worker run from the production image, with its Celery-specific health check; package and FEniCSx cache volumes that the image's user, uid 10001, can write; and DESIGN.md's deployment contract for `dtcc-infra`: the configuration's variables, the worker's command and health check, the volumes' paths, how a worker that runs jobs stops, and that a deployment builds the image once and runs it on every host. Deploying Engine is `dtcc-infra`'s (Expansion).
 
-**Scope:** the worker containers' Celery-specific health-check override; each worker's Celery node name, `celery@<target identifier>`, passed with `--hostname`, under which a worker starts only after its earlier run stopped (Tasks 21 and 25); `ENGINE_IMAGE_DIGEST`, the platform-specific digest of the image each host runs; `ENGINE_REMOTE_TARGETS`, the entry service's remote targets and their Engine addresses, in placement order (Task 26); the documented production runtime settings (TLS reverse proxy, token secret, package and FEniCSx cache volumes, shared memory, thread counts, external Redis); building and validating the `linux/amd64` image on a native x86_64 Linux host (Task 9 ran it only under emulation); deploying the API and worker on that host, running representative Core and Sim jobs, and recording the baseline measurements the spec lists, with hardware, image digest, and software versions. Between two such hosts, it also measures what Task 32 could measure only on one machine: answers to the 0.5 s observation that come late, the cost of the Dataset listing and of `GET /api/v1/targets` against the `engine-integration` branch's 10 s limit, and package transfer between the hosts. `pnpm engine:check:hosts` runs both hosts on one machine and cannot span two, so this needs a setup of its own: a Redis that both hosts reach, each host's API and worker, the entry's remote target at the other host's address, and a way to cause outages on the remote host. The user chose on 2026-10-19 that 5b take these. The deployment runs the exact image digest it tested.
+**Upstream interfaces:** Celery 5.6.3's `inspect ping` aimed at one node (increment 2a); Docker's initialization of a new named volume from the image's directory at its mount point; Compose's `healthcheck`, `up --wait`, and `up --force-recreate`; 5a's `prod` target.
 
-**Upstream interfaces:** Celery's worker inspection for the health check, Celery 5.6.3 (increment 2a); the same `prod` image and `dtcc-engine` entry points as 5a.
+**Checks:** the prod checks pass in the worker's container, with a test that the image's user can write both volumes; the API's and the worker's containers report healthy; a `smoke` job runs on the production worker, and its package downloads unchanged after both containers are recreated. The Container deployment row of the acceptance table, the baseline measurements, and the 5a checks on native x86_64 are `dtcc-infra`'s.
 
-**Checks:** the Container deployment row of the acceptance table on a Linux host, including canonical package validation for a representative Sim job; both the API and worker containers report healthy; a restart keeps the FEniCSx cache and completed packages; the 5a checks pass on the native x86_64 host; the API and worker containers write and serve packages on the mounted package volume as uid 10001; and, between two Linux hosts, the measurements above. The 5a `engine-prod` check sets `ENGINE_PACKAGE_DIR` but runs only the HTTP service and mounts no volume. Whether the services check the directory at startup is decided when 5b is expanded.
+**Blockers:** none for Task 33. The AGPL-3.0 license review for TetGen must still be completed before `dtcc-infra` pushes the image to any registry, including a private one.
 
-**Blockers:** the AGPL-3.0 license review for TetGen must be completed before the image is pushed to any registry, including a private one.
+### Expansion
+
+**Expansion** (2026-10-19): proposed and decided with the user the same day; Task 33 is the increment's only task. The outline had 5b deploy Engine on a native x86_64 Linux host, and measure between two such hosts what Task 32 measured on one machine, which needed a setup of its own for two machines. The user chose that the `dtcc-infra` repository deploy Engine, and that those parts go there.
+
+**Decisions:**
+
+- Deployment (the user's choice): `dtcc-infra` provides the Linux hosts; gets one built image to each, through a registry once TetGen's license is reviewed, or otherwise; builds and checks the image on native x86_64; configures the TLS proxy, the token secret, Redis, shared memory, and thread counts; runs representative Core and Sim jobs, whose packages Core validates; and takes the baseline measurements that DESIGN.md lists, between two hosts too: answers to the 0.5 s observation that come late (Task 28), the cost of the listing and of `GET /api/v1/targets` against the `engine-integration` branch's 10 s limit (Task 30), and package transfer between machines. Its results are the Container deployment row's evidence. A first deployment of one image meets increment 4's cancellation prerequisite, since every worker of the image enforces the gate.
+- Health check (the user's choice): Celery's own `inspect ping`, aimed at the worker's node, `celery@$ENGINE_TARGET`, with no Engine code, over a lighter ping that would not import Core and Sim. It fails while the broker does not answer, when the worker cannot take jobs either.
+- Volumes: the production image creates `/home/engine/packages` and `/home/engine/.cache/fenics` as its user. The services do not check the package directory at startup, the question the outline left for the expansion.
+- Restarts: the check recreates both containers, which then keep only what their volumes hold. Whether the FEniCSx cache outlasts them needs a simulation, which runs on Linux in `dtcc-infra`.
+- Image: a rebuild has another digest, so a deployment builds the image once and runs it on every host; DESIGN.md says so.
+
+The tasks:
+
+- Task 33: the worker from the production image, its health check and volumes, in `pnpm engine:check:prod`, and the deployment contract in DESIGN.md.
+
+### Task 33: Run the worker from the production image, and give a deployment's contract
+
+`pnpm engine:check:prod` runs only the production API, and every worker so far ran from the development image, which mounts the source. This task runs the worker from the production image, with the health check and the volumes a deployment gives it, and writes into DESIGN.md the contract that `dtcc-infra` deploys against.
+
+**Interfaces verified for the task** (2026-10-19, each in a Compose project of its own; the prototype of the task ran under one, with the plan's files):
+
+- In the production image, a new named volume mounted at `/home/engine/packages`, which the image does not have, was owned by root, and the image's user, uid 10001, got `Permission denied` writing to it. One mounted at `/home/engine`, which the image has, took its owner, `engine`, and was writable.
+- In a worker container of the production image, `/opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect ping --destination celery@local` printed `celery@local: OK` and `pong` and exited with 0, in 2.4 s under emulation; importing Core and Sim alone took 1.9 s, with a peak of 337 MB. With the worker stopped, it printed `Error: No nodes replied within time constraint` and exited with 69; Docker counts any status but 0 as a failed check. A health check runs outside the image's entrypoint, without the conda environment's activation, so the command names the environment's `celery`, as the image's own check names its `python`; Task 16's `inspect ping` ran the same way.
+- A Compose `healthcheck` that sets only `test` keeps the image's interval, timeout, start period, and start interval: 30 s, 5 s, 60 s, and 5 s. The worker reported healthy 7 s after it started. Compose turns `$$` into `$`, so the container's configuration held `celery@$ENGINE_TARGET`, which the check's shell expands.
+- `up --force-recreate` with the two services named recreated them and not `engine-redis`, on which they depend, so Redis keeps the job's record while the containers keep only what their volumes hold. A restarted container keeps its own files, so a restart would not show that.
+- The prototype: without Step 3, the prod checks gave `1 failed, 19 passed`, the new test with `PermissionError: [Errno 13] Permission denied: '/home/engine/packages/write-check'`, and the script stopped there, after 18 s; with Step 3, `20 passed`, both containers reported healthy, the `smoke` job completed, and its package downloaded with the same SHA-256 after the recreation, in 43 s for the whole check, with the image's earlier layers cached. With the review's timeouts added, the final tree passed again, in 42 s.
+
+**Decisions** (proposed with the task):
+
+- `check-prod.sh` runs the prod checks in `engine-prod-worker`, which mounts both volumes, rather than in `engine-prod`. Its trap now removes the project's volumes, so each run's volumes are new and take the owners of the image's directories; a volume left from a run before Step 3 would stay root's.
+- The job's round trip goes through the API with Python's standard library, as the token check does: it submits `smoke` on the README's bounds, polls until the job ends, within 120 s and with a 10 s timeout on each request, so that a stalled request cannot hold the check and its cleanup, expects `completed`, and compares the download's SHA-256 before and after the recreation.
+- `pnpm engine:check` is not run: neither the development target nor Engine's code changes.
+
+**Files:**
+
+- Modify: `apps/engine/prod_checks/test_prod_image.py`
+- Modify: `compose.yaml` (`engine-prod`'s package volume, the `engine-prod-worker` service, two volumes)
+- Modify: `apps/engine/check-prod.sh`
+- Modify: `apps/engine/Dockerfile` (the `prod` stage)
+- Modify: `apps/engine/DESIGN.md` (Deployment and authentication, Engine image)
+- Modify: `apps/engine/PLAN.md` (Increment 5b status)
+
+**Interfaces:**
+
+- Consumes: 5a's `prod` target and its `HEALTHCHECK`; the worker's command of `compose.yaml`'s `engine-worker` (Task 25); the job routes; Core's `smoke` Dataset.
+- Produces: a production image whose user can write the package and FEniCSx cache volumes; `pnpm engine:check:prod` with the production worker and its health check; the deployment contract in DESIGN.md.
+
+- [ ] **Step 1: Write the failing checks**
+
+Append to `apps/engine/prod_checks/test_prod_image.py`:
+
+```python
+def test_package_and_form_cache_volumes_are_writable() -> None:
+    # check-prod.sh mounts new volumes on both directories. A new volume takes the owner of the image's directory at
+    # its mount point, and Docker creates a missing one as root; ~/.cache/fenics is FEniCSx's cache by default.
+    for directory in (Path(os.environ["ENGINE_PACKAGE_DIR"]), Path.home() / ".cache" / "fenics"):
+        probe = directory / "write-check"
+        probe.touch()
+        probe.unlink()
+```
+
+In `compose.yaml`, add to the `engine-prod` service, after `ENGINE_PACKAGE_DIR: /home/engine/packages` (this block and the next two are shown without the file's indentation):
+
+```yaml
+volumes:
+  - engine-prod-packages:/home/engine/packages
+```
+
+Add after the `engine-prod` service:
+
+```yaml
+engine-prod-worker:
+  # The production target's worker for `pnpm engine:check:prod`, with the health check a deployment's worker uses.
+  profiles: [engine-prod]
+  platform: linux/amd64
+  build:
+    context: apps/engine
+    target: prod
+  command:
+    [
+      "celery",
+      "--app",
+      "dtcc_engine.worker",
+      "worker",
+      "--hostname",
+      "celery@local",
+      "--concurrency",
+      "1",
+      "--loglevel",
+      "INFO",
+    ]
+  healthcheck:
+    test:
+      [
+        "CMD-SHELL",
+        "/opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect ping --destination celery@$$ENGINE_TARGET",
+      ]
+  environment:
+    ENGINE_REDIS_URL: redis://engine-redis:6379/0
+    ENGINE_TARGET: local
+    ENGINE_PACKAGE_DIR: /home/engine/packages
+  volumes:
+    - engine-prod-packages:/home/engine/packages
+    - engine-prod-fenics-cache:/home/engine/.cache/fenics
+  depends_on:
+    engine-redis:
+      condition: service_healthy
+```
+
+Add to the top-level `volumes`, after `engine-packages:`:
+
+```yaml
+engine-prod-packages:
+engine-prod-fenics-cache:
+```
+
+Replace `apps/engine/check-prod.sh` with:
+
+```sh
+#!/bin/sh
+# Builds the Engine's prod target and checks it in its own Compose project, so a running
+# `pnpm dev:engine` or Postgres is left alone. The checks are mounted; the image contains none.
+set -eu
+cd "$(dirname "$0")/../.."
+compose() { docker compose --project-name dtcc-twin-engine-prod --profile engine-prod "$@"; }
+# Each run gets new volumes, which take the owners of the image's directories at their mount points.
+trap 'compose down --volumes' EXIT
+
+compose build engine-prod engine-prod-worker
+# A fresh container has an empty FEniCSx cache, so every form in these tests is compiled.
+compose run --rm -T --volume "$PWD/apps/engine:/checks:ro" --env XDG_CACHE_HOME=/tmp/cache \
+    --env PYTHONDONTWRITEBYTECODE=1 engine-prod-worker \
+    python -m pytest -p no:cacheprovider --rootdir /checks /checks/tests/test_environment.py /checks/prod_checks
+compose up --detach --wait engine-prod engine-prod-worker
+compose exec -T engine-prod python -c '
+import os, urllib.error, urllib.request
+
+def status(headers):
+    request = urllib.request.Request("http://localhost:8000/api/v1/datasets", headers=headers)
+    try:
+        return urllib.request.urlopen(request).status
+    except urllib.error.HTTPError as error:
+        return error.code
+
+assert status({}) == 401
+assert status({"Authorization": "Bearer " + os.environ["ENGINE_API_TOKEN"]}) == 200
+print("prod API: healthy, rejects a missing token, accepts the configured token")
+'
+job=$(compose exec -T engine-prod python -c '
+import json, os, time, urllib.request
+
+def call(method, path, body=None):
+    request = urllib.request.Request(
+        "http://localhost:8000/api/v1" + path,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Authorization": "Bearer " + os.environ["ENGINE_API_TOKEN"], "Content-Type": "application/json"},
+        method=method,
+    )
+    return json.load(urllib.request.urlopen(request, timeout=10))
+
+job_id = call("POST", "/jobs", {"dataset": "smoke", "parameters": {"bounds": [319891, 6399790, 320091, 6399990]}})["job_id"]
+deadline = time.monotonic() + 120
+while (state := call("GET", "/jobs/" + job_id)["state"]) in ("queued", "running"):
+    assert time.monotonic() < deadline, "the smoke job did not finish within 120 s"
+    time.sleep(1)
+assert state == "completed", state
+print(job_id)
+')
+package_digest() {
+    compose exec -T engine-prod python -c '
+import hashlib, os, sys, urllib.request
+
+request = urllib.request.Request(
+    "http://localhost:8000/api/v1/jobs/" + sys.argv[1] + "/package",
+    headers={"Authorization": "Bearer " + os.environ["ENGINE_API_TOKEN"]},
+)
+print(hashlib.sha256(urllib.request.urlopen(request, timeout=10).read()).hexdigest())
+' "$1"
+}
+before=$(package_digest "$job")
+# Recreated containers keep only what their volumes hold; restarted ones would also keep their own files.
+compose up --detach --wait --force-recreate engine-prod engine-prod-worker
+after=$(package_digest "$job")
+[ "$before" = "$after" ] || { echo "The package changed or was lost: $before, then $after"; exit 1; }
+echo "prod worker: healthy, ran a smoke job, and its package outlasted recreated containers"
+```
+
+Run from `apps/engine`: `uvx ruff@0.6.9 check --select I,F --line-length 120 prod_checks` and `uvx ruff@0.6.9 format --check --line-length 120 prod_checks`; from the repository root, `npx --yes prettier@3.9.6 --check compose.yaml`.
+Expected: all pass.
+
+- [ ] **Step 2: Confirm the new test fails**
+
+Run: `pnpm engine:check:prod`
+Expected: the prod checks give `1 failed, 19 passed`; `test_package_and_form_cache_volumes_are_writable` fails with `PermissionError: [Errno 13] Permission denied: '/home/engine/packages/write-check'`; the script exits with 1 before it starts the services, and removes its project. Any other failure means the check is wrong, not the image.
+
+- [ ] **Step 3: Create the directories in the image**
+
+In `apps/engine/Dockerfile`, add after the `prod` stage's `WORKDIR /home/engine`:
+
+```dockerfile
+# A new volume takes the owner of the directory it is mounted on; Docker creates a missing one as root.
+RUN mkdir -p packages .cache/fenics
+```
+
+- [ ] **Step 4: Verify**
+
+Run: `pnpm engine:check:prod`
+Expected: `20 passed`; `prod API: healthy, rejects a missing token, accepts the configured token`; `prod worker: healthy, ran a smoke job, and its package outlasted recreated containers`; exit 0. Record the check's duration.
+
+- [ ] **Step 5: Give the deployment contract**
+
+In `apps/engine/DESIGN.md`, in Deployment and authentication, replace the paragraph that begins "The deployment target is Linux hosts" and the sentence that begins "Configuration supplies the central broker/result-backend connection", which starts the next paragraph, with:
+
+```markdown
+The deployment target is Linux hosts, self-hosted or on AWS EC2, running
+containers from the Engine production image described below. Native
+installations and macOS hosts are not deployment targets; macOS is used only
+for development through Docker. Kubernetes is not required. Use the container
+runtime's restart policies and Celery operations rather than building a service
+manager into Engine. The `dtcc-infra` repository deploys Engine and verifies its
+deployments on Linux hosts.
+
+Configuration supplies the central broker/result-backend connection
+(`ENGINE_REDIS_URL`), one shared Engine HTTP token (`ENGINE_API_TOKEN`), the
+local target identity (`ENGINE_TARGET`), the static remote-target list
+(`ENGINE_REMOTE_TARGETS`), the host's image digest (`ENGINE_IMAGE_DIGEST`),
+per-host concurrent-job limits (the worker's `--concurrency`), and local
+temporary result directories (`ENGINE_PACKAGE_DIR`).
+```
+
+Replace the text from "Each compute host runs the Engine HTTP service" to the end of the list, "An external Redis service.", with:
+
+```markdown
+Each compute host runs the Engine HTTP service and the Celery worker as separate
+containers from the same production image. A production deployment provides:
+
+- TLS termination by a reverse proxy in front of the entry service; Engine's
+  HTTP port is not exposed directly to a public network.
+- The API token as a secret; the production image has no default token.
+- A persistent volume for the local temporary package directory, mounted at
+  `/home/engine/packages` in both of a host's containers, so completed packages
+  survive container restarts during the retention period.
+- A persistent volume for the FEniCSx form-compilation cache, mounted at
+  `/home/engine/.cache/fenics` in the worker's container, so restarts do not
+  recompile the forms of every simulation.
+- Shared memory sized for MPI and PETSc, because Docker's default of 64 MB is
+  insufficient, and thread-count settings such as `OMP_NUM_THREADS` that match
+  the CPUs allocated to each job.
+- An external Redis service.
+
+The worker's container runs `celery --app dtcc_engine.worker worker --hostname
+celery@<ENGINE_TARGET> --concurrency <job limit>` and overrides the image's
+health check with `/opt/conda/envs/engine/bin/celery --app dtcc_engine.worker
+inspect ping --destination celery@$ENGINE_TARGET`, which succeeds only while
+the worker answers through the broker. A worker's warm shutdown waits for the
+jobs it runs; stopped with a shorter deadline, the worker is killed with them,
+and they fail with `WorkerRestarted` when it starts again.
+```
+
+Add after the paragraph that ends "must be exercised in the production image on a Linux host.":
+
+```markdown
+A rebuild does not reproduce the image: the pip dependencies of Core and Sim
+that conda does not provide are not locked, so a rebuild can install other
+versions and has another digest. A deployment therefore builds the image once,
+runs that image on every host, and supplies its digest to each.
+```
+
+In Engine image, replace the bullet that begins "`prod` is the deployment image." with:
+
+```markdown
+- `prod` is the deployment image. It installs the Engine package without its
+  test extra, test files, source mounts, or reloading; runs as a non-root user;
+  and keeps only the build tools needed at runtime, which is a C compiler,
+  because FEniCSx compiles forms when a simulation runs. Its conda environment
+  is resolved from a lock file. Test packages that Core itself depends on, such
+  as pytest, remain until Core removes them upstream. It creates the directories
+  that a deployment's package and FEniCSx cache volumes are mounted on, owned by
+  its user, because a new volume takes the owner of the directory it is mounted
+  on, and Docker creates a missing one as root.
+```
+
+- [ ] **Step 6: Validate**
+
+Run: `npx --yes prettier@3.9.6 --check compose.yaml apps/engine/DESIGN.md apps/engine/PLAN.md` and `pnpm check`.
+Expected: both pass. `pnpm engine:check` is not run (Decisions).
+
+- [ ] **Step 7: Stop for review**
+
+Set Increment 5b's status to executed with the date and Steps 2 and 4's results, leave changes uncommitted, and report passed, failed, skipped, and not-run checks.
 
 ## Increment 6: Mini-service retirement (to be expanded)
 
