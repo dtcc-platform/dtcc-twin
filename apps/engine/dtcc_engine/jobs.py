@@ -63,13 +63,15 @@ redis.call('HSET', KEYS[1], 'queued_at', ARGV[1])
 return 'recorded'
 """
 # Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started, records its
-# claim and the claiming worker's environment, and restarts the record's lifetime: ARGV is the claim, the lifetime, the
-# worker's versions, and its image digest, or '' if it has none.
+# claim and the claiming worker's environment, and restarts the record's lifetime; if the record keeps its entry's
+# image digest and the worker's is another or none, it fails the job instead. ARGV is the claim, the lifetime, the
+# worker's versions, its image digest or '' if it has none, and the finish time and error type of such a failure.
 START = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
   return 'missing'
 end
-local gate, outcome, finished = unpack(redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at'))
+local fields = redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at', 'entry_image_digest')
+local gate, outcome, finished, entry_digest = unpack(fields)
 if gate ~= 'waiting' or outcome or finished then
   return 'refused'
 end
@@ -78,6 +80,10 @@ if ARGV[4] ~= '' then
   redis.call('HSET', KEYS[1], 'worker_image_digest', ARGV[4])
 end
 redis.call('EXPIRE', KEYS[1], ARGV[2])
+if entry_digest and entry_digest ~= ARGV[4] then
+  redis.call('HSET', KEYS[1], 'outcome', 'failed', 'finished_at', ARGV[5], 'error_type', ARGV[6])
+  return 'incompatible'
+end
 return 'started'
 """
 # Records how a started job ended: ARGV is the outcome, the finish time, the record's lifetime, the error type, and the
@@ -370,6 +376,9 @@ class Jobs:
     def submit(self, dataset_name: str, parameters: dict[str, Any], target: str | None = None) -> str:
         """Record and queue a job that runs a Dataset with parameters the caller has validated; return its ID.
 
+        The record keeps this host's image digest, if it has one, as the digest of the image whose Core validated the
+        parameters: a worker that claims the job with another digest, or none, fails it (`claim`).
+
         Args:
             dataset_name: The Dataset's name.
             parameters: The Dataset's parameters.
@@ -385,6 +394,8 @@ class Jobs:
         key = record_key(job_id)
         submitted_at = datetime.now(UTC).isoformat()
         acceptance = {"dataset": dataset_name, "target": target, "submitted_at": submitted_at}
+        if self.image_digest is not None:
+            acceptance["entry_image_digest"] = self.image_digest
         with self.records.pipeline() as pipeline:
             pipeline.hset(key, mapping={**acceptance, "execution_gate": "waiting"})
             # The record of a job that never finishes expires too.
@@ -561,19 +572,23 @@ class Jobs:
         """Claim permission to run the job's Dataset, which only one caller gets, and only while the job is waiting.
 
         The claim names the worker's node, the worker run, and the pool process. With it, the job's record keeps this
-        worker's image digest and versions. A claim whose answer Redis did not send is not repeated: it may have been
-        made.
+        worker's image digest and versions. If the record keeps the image digest of the job's entry, and this worker
+        has another or none, the claim fails the job with `IncompatibleWorker` instead of giving permission. A claim
+        whose answer Redis did not send is not repeated: it may have been made.
         """
         try:
             # Checks the acceptance fields, which never change once written; the claim checks the rest.
             self.read_record(job_id)
             lifetime = int(RECORD_LIFETIME.total_seconds())
             environment = [json.dumps(installed_versions()), self.image_digest or ""]
-            answer = self.start_script(keys=[record_key(job_id)], args=[claim, lifetime, *environment])
+            failure = [datetime.now(UTC).isoformat(), "IncompatibleWorker"]
+            answer = self.start_script(keys=[record_key(job_id)], args=[claim, lifetime, *environment, *failure])
         except (JobStateUnavailable, redis.RedisError):
             logger.warning("Job %s does not run: its record is unusable or Redis did not answer", job_id, exc_info=True)
             return False
-        if answer != "started":
+        if answer == "incompatible":
+            logger.warning("Job %s failed without running: this worker's image digest is not its entry's", job_id)
+        elif answer != "started":
             logger.warning("Job %s does not run: its record is %s", job_id, answer)
         return answer == "started"
 

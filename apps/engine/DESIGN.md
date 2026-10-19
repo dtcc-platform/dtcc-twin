@@ -215,10 +215,17 @@ When a worker claims a job, Engine records that worker's Engine, Core, and Sim
 versions, and its image digest if the deployment supplies one, with the job,
 and the job's status reports them as its environment. A job that no worker has
 claimed has no environment, and a later delivery of a claimed job does not
-change it. Core's provenance in the package stays as Core records it. A job
-queued before its target's image changes runs in the new environment, which
-its status then reports: Core validates the job's parameters again when the
-worker invokes the Dataset.
+change it. Core's provenance in the package stays as Core records it.
+
+The job's record also keeps the image digest of the entry that accepted it, if
+the deployment supplies one: the image whose Core validated the job's
+parameters. A worker with another digest, or none, that claims the job fails it
+with `IncompatibleWorker` instead of running it, and the job's status reports
+that worker's environment. A job queued before its target's image changes
+therefore does not run in the new environment. Without the entry's digest, as
+in development, nothing is compared: the job runs in the environment of the
+worker that claims it, and Core validates its parameters again when that worker
+invokes the Dataset.
 
 Compatibility and canonical exchange readiness must be verified from source,
 tests, and representative execution. A descriptor alone is not proof that a

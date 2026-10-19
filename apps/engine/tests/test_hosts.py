@@ -34,6 +34,7 @@ BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
 TOKEN = "test-token"
 AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
 DIGEST = "sha256:" + "0123456789abcdef" * 4
+OTHER_DIGEST = "sha256:" + "fedcba9876543210" * 4
 CHUNK = 64 * 1024
 
 
@@ -437,6 +438,18 @@ def test_remote_job_is_polled_and_downloaded_through_the_entry(hosts: dict[str, 
 def test_remote_job_reports_the_environment_of_the_worker_that_ran_it(hosts: dict[str, Any], remote_job: str) -> None:
     job = fetch(hosts["entry_address"], f"/api/v1/jobs/{remote_job}").json()
     assert job["environment"] == {"image_digest": DIGEST, "versions": installed_versions()}
+
+
+def test_job_queued_before_its_targets_image_changed_fails_when_a_worker_claims_it(
+    hosts: dict[str, Any], tmp_path: Path, run_worker_process: Callable[..., AbstractContextManager[None]]
+) -> None:
+    # Queued by the entry for a target whose worker, once it starts, runs another image than the entry's.
+    job_id = hosts["entry"].submit("smoke", {"bounds": BOUNDS}, "changed")
+    with run_worker_process("changed", tmp_path, OTHER_DIGEST):
+        wait_for(lambda: hosts["entry"].status(job_id)["state"] in ("completed", "failed"))
+    job = fetch(hosts["entry_address"], f"/api/v1/jobs/{job_id}").json()
+    assert (job["state"], job["error"], job["package"]) == ("failed", {"type": "IncompatibleWorker"}, None)
+    assert job["environment"] == {"image_digest": OTHER_DIGEST, "versions": installed_versions()}
 
 
 def test_remote_package_its_host_no_longer_has_is_unavailable(hosts: dict[str, Any]) -> None:

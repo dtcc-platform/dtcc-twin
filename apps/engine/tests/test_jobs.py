@@ -36,6 +36,7 @@ BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
 SMOKE = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}}
 PROVIDER_KEY = "provider-key-5e1d"
 DIGEST = "sha256:" + "0123456789abcdef" * 4
+OTHER_DIGEST = "sha256:" + "fedcba9876543210" * 4
 FINISHED = ("completed", "failed")
 
 
@@ -908,3 +909,50 @@ def test_completed_job_reports_the_environment_of_its_worker(served_client: Test
     job = wait_until(served_client, job_id, lambda job: job["state"] == "completed")
     # The worker runs in development's manner, without an image digest.
     assert job["environment"] == {"image_digest": None, "versions": installed_versions()}
+
+
+@pytest.mark.parametrize("worker_digest", [OTHER_DIGEST, None], ids=["another-digest", "no-digest"])
+def test_job_claimed_by_a_worker_without_the_image_at_submission_fails_without_running(
+    client: TestClient,
+    jobs: Jobs,
+    probe_dataset: tuple[str, list[str]],
+    redis_url: str,
+    tmp_path: Path,
+    worker_digest: str | None,
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    # Submitted for the client's target by an entry with an image digest, as a deployment's entry has.
+    job_id = Jobs(redis_url, jobs.target, tmp_path, DIGEST).submit(dataset, request["parameters"])
+    assert deliver(Jobs(redis_url, jobs.target, tmp_path, worker_digest), job_id, request) == "IGNORED"
+    record = jobs.records.hgetall(record_key(job_id))
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    # A later delivery, by a worker of the image at submission, does not run the job either.
+    assert deliver(Jobs(redis_url, jobs.target, tmp_path, DIGEST), job_id, request) == "IGNORED"
+    assert runs == []
+    assert (job["state"], job["error"], job["package"]) == ("failed", {"type": "IncompatibleWorker"}, None)
+    assert job["finished_at"] is not None
+    assert job["environment"] == {"image_digest": worker_digest, "versions": installed_versions()}
+    assert jobs.records.hgetall(record_key(job_id)) == record
+    assert cancel(client, job_id).json()["result"] == "already_finished"
+
+
+@pytest.mark.parametrize(
+    ("entry_digest", "worker_digest"), [(DIGEST, DIGEST), (None, DIGEST)], ids=["same-image", "entry-without-a-digest"]
+)
+def test_job_runs_when_its_worker_has_the_image_at_submission_or_none_was_recorded(
+    client: TestClient,
+    jobs: Jobs,
+    probe_dataset: tuple[str, list[str]],
+    redis_url: str,
+    tmp_path: Path,
+    entry_digest: str | None,
+    worker_digest: str,
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    # An entry without a digest records none, as in development, and as for jobs submitted before Engine recorded it.
+    job_id = Jobs(redis_url, jobs.target, tmp_path, entry_digest).submit(dataset, request["parameters"])
+    assert deliver(Jobs(redis_url, jobs.target, tmp_path, worker_digest), job_id, request) == "SUCCESS"
+    assert runs == [job_id]
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["state"] == "completed"
