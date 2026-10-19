@@ -123,6 +123,45 @@ services:
       ENGINE_REDIS_URL: redis://engine-redis:6379/0
       ENGINE_TARGET: local
       ENGINE_PACKAGE_DIR: /home/engine/packages
+    volumes:
+      - engine-prod-packages:/home/engine/packages
+    depends_on:
+      engine-redis:
+        condition: service_healthy
+
+  engine-prod-worker:
+    # The production target's worker for `pnpm engine:check:prod`, with the health check a deployment's worker uses.
+    profiles: [engine-prod]
+    platform: linux/amd64
+    build:
+      context: apps/engine
+      target: prod
+    command:
+      [
+        "celery",
+        "--app",
+        "dtcc_engine.worker",
+        "worker",
+        "--hostname",
+        "celery@local",
+        "--concurrency",
+        "1",
+        "--loglevel",
+        "INFO",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect ping --destination celery@$$ENGINE_TARGET",
+        ]
+    environment:
+      ENGINE_REDIS_URL: redis://engine-redis:6379/0
+      ENGINE_TARGET: local
+      ENGINE_PACKAGE_DIR: /home/engine/packages
+    volumes:
+      - engine-prod-packages:/home/engine/packages
+      - engine-prod-fenics-cache:/home/engine/.cache/fenics
     depends_on:
       engine-redis:
         condition: service_healthy
@@ -130,3 +169,5 @@ services:
 volumes:
   postgres-data:
   engine-packages:
+  engine-prod-packages:
+  engine-prod-fenics-cache:
