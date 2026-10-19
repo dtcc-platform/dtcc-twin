@@ -8,8 +8,10 @@ same Redis, which decides whether a delivery may run the Dataset and records how
 import json
 import logging
 import os
+import re
 import shutil
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -20,16 +22,34 @@ import redis
 from celery import Celery, Task, bootsteps
 from celery.exceptions import Ignore, WorkerLostError
 from celery.signals import task_failure
+from celery.worker import state as worker_state
+from celery.worker.control import inspect_command
 from dtcc_core.common.progress import get_progress_callback, set_progress_callback
 from dtcc_core.datasets.dataset import DatasetUpstreamError
-from kombu.exceptions import OperationalError
+from kombu import Connection
+from kombu.exceptions import ChannelError, OperationalError
+from kombu.pidbox import Mailbox
+from pydantic import BaseModel, ConfigDict, ValidationError
 
+VERSIONED_PACKAGES = ("dtcc-engine", "dtcc-core", "dtcc-sim")
 RETENTION = timedelta(days=30)
 # A day beyond the retention, so a job's records outlast its package even if hosts' clocks differ slightly.
 RECORD_LIFETIME = RETENTION + timedelta(days=1)
 RUN_DATASET = "dtcc_engine.run_dataset"
 # How often a worker deletes the packages that no job can deliver.
 CLEANUP_INTERVAL = timedelta(hours=1)
+# A target's identifier also names its worker's node, celery@<identifier>, which claims hold between spaces.
+TARGET_PATTERN = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+IMAGE_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+# How long a starting worker waits for an answer from another running worker with its node name, once connected.
+NODE_CHECK_TIMEOUT = 0.5
+# How long an observation waits for a target's worker to answer, once connected.
+OBSERVATION_TIMEOUT = 0.5
+# Kombu's transport options for an observation's broker connection: no reconnection, and no read longer than 2 s, which
+# still outlasts the 1 s BRPOP whose answer the connection reads as it closes.
+OBSERVATION_BROKER = {"socket_connect_timeout": 1, "socket_timeout": 2, "max_retries": 0}
+# Engine's inspect command, which a worker answers with what an observation needs.
+DESCRIBE_WORKER = "engine_worker"
 # Celery's states of a job without a recorded outcome; SUCCESS follows the outcome, so it never appears alone.
 CELERY_STATES = {"PENDING": "queued", "STARTED": "running", "PROGRESS": "running", "FAILURE": "failed"}
 # The outcomes a record can hold with each value of its execution gate.
@@ -43,17 +63,27 @@ redis.call('HSET', KEYS[1], 'queued_at', ARGV[1])
 return 'recorded'
 """
 # Gives permission to run the job's Dataset to the delivery that changes its gate from waiting to started, records its
-# claim, and restarts the record's lifetime: ARGV is the claim and the lifetime.
+# claim and the claiming worker's environment, and restarts the record's lifetime; if the record keeps its entry's
+# image digest and the worker's is another or none, it fails the job instead. ARGV is the claim, the lifetime, the
+# worker's versions, its image digest or '' if it has none, and the finish time and error type of such a failure.
 START = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
   return 'missing'
 end
-local gate, outcome, finished = unpack(redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at'))
+local fields = redis.call('HMGET', KEYS[1], 'execution_gate', 'outcome', 'finished_at', 'entry_image_digest')
+local gate, outcome, finished, entry_digest = unpack(fields)
 if gate ~= 'waiting' or outcome or finished then
   return 'refused'
 end
-redis.call('HSET', KEYS[1], 'execution_gate', 'started', 'claimed_by', ARGV[1])
+redis.call('HSET', KEYS[1], 'execution_gate', 'started', 'claimed_by', ARGV[1], 'worker_versions', ARGV[3])
+if ARGV[4] ~= '' then
+  redis.call('HSET', KEYS[1], 'worker_image_digest', ARGV[4])
+end
 redis.call('EXPIRE', KEYS[1], ARGV[2])
+if entry_digest and entry_digest ~= ARGV[4] then
+  redis.call('HSET', KEYS[1], 'outcome', 'failed', 'finished_at', ARGV[5], 'error_type', ARGV[6])
+  return 'incompatible'
+end
 return 'started'
 """
 # Records how a started job ended: ARGV is the outcome, the finish time, the record's lifetime, the error type, and the
@@ -108,6 +138,42 @@ redis.call('EXPIRE', KEYS[1], ARGV[4])
 return 'recorded'
 """
 logger = logging.getLogger(__name__)
+
+
+def installed_versions() -> dict[str, str]:
+    """Return the installed Engine, Core, and Sim distribution versions."""
+    return {package: version(package) for package in VERSIONED_PACKAGES}
+
+
+@inspect_command(name=DESCRIBE_WORKER)
+def describe_worker(state: Any) -> dict[str, Any]:
+    """Describe this worker for an observation: its image digest, versions, job limit, jobs held, and queues.
+
+    It never reports a job's arguments. Celery registers the command for every app in the process, so it finds this
+    worker's jobs through the app.
+    """
+    consumer = state.consumer
+    queues = consumer.task_consumer.queues if consumer.task_consumer else []
+    return {
+        "image_digest": state.app.engine_jobs.image_digest,
+        "versions": installed_versions(),
+        # The limit Celery applies with prefetch disabled: the worker takes a job only while it holds fewer.
+        "job_limit": getattr(consumer.controller, "max_concurrency", None) or consumer.pool.num_processes,
+        "reserved": len(worker_state.reserved_requests),
+        "queues": sorted(queue.name for queue in queues),
+    }
+
+
+class WorkerDescription(BaseModel):
+    """A worker's answer to `DESCRIBE_WORKER`."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    image_digest: str | None
+    versions: dict[str, str]
+    job_limit: int
+    reserved: int
+    queues: list[str]
 
 
 def record_key(job_id: str) -> str:
@@ -186,17 +252,36 @@ class UnconfirmedSubmission(Exception):
         self.job_id = job_id
 
 
+class ObservationConnection(Connection):
+    """A broker connection whose operations, publishing among them, fail at once instead of reconnecting and retrying."""
+
+    def ensure(self, obj: Any, fun: Any, **options: Any) -> Any:
+        # Kombu's mailbox publishes with retries for ever, which a broker that stopped answering would never end.
+        return super().ensure(obj, fun, **{**options, "max_retries": 0})
+
+
 class Jobs:
     """Dataset jobs on one compute target: submission, execution, status, and packages.
 
     Args:
         redis_url: Redis for Celery's broker and result backend, and for Engine's job records.
-        target: Identifier of this compute target; its jobs use the Celery queue of that name.
+        target: Identifier of this compute target, lowercase letters and digits in words joined by single hyphens;
+            its jobs use the Celery queue of that name, and its worker runs as `celery@<target>`.
         package_dir: Directory of completed packages, shared by this host's API and worker.
+        image_digest: The platform-specific digest of the image this host runs, `sha256:` and 64 lowercase
+            hexadecimal digits, if the deployment supplies it.
+
+    Raises:
+        ValueError: If the target identifier or the image digest is malformed.
     """
 
-    def __init__(self, redis_url: str, target: str, package_dir: Path) -> None:
+    def __init__(self, redis_url: str, target: str, package_dir: Path, image_digest: str | None = None) -> None:
+        if not TARGET_PATTERN.fullmatch(target):
+            raise ValueError(f"Target identifier {target!r} is not lowercase words joined by single hyphens")
+        if image_digest is not None and not IMAGE_DIGEST_PATTERN.fullmatch(image_digest):
+            raise ValueError(f"Image digest {image_digest!r} is not sha256: and 64 lowercase hexadecimal digits")
         self.target = target
+        self.image_digest = image_digest
         self.package_dir = package_dir
         self.records = redis.Redis.from_url(redis_url, decode_responses=True)
         self.queued_script = self.records.register_script(QUEUED)
@@ -207,6 +292,8 @@ class Jobs:
         # Identifies this run of the worker, so that a worker started again tells its earlier run's claims from its own.
         self.worker_run = uuid4().hex
         self.celery_app = Celery("dtcc_engine", broker=redis_url, backend=redis_url)
+        # Where Engine's inspect command, which Celery registers for every app, finds this app's jobs.
+        self.celery_app.engine_jobs = self
         self.celery_app.conf.update(
             task_default_queue=target,
             task_track_started=True,
@@ -219,6 +306,13 @@ class Jobs:
         self.sender = Celery("dtcc_engine", broker=redis_url, set_as_current=False)
         # Retrying a publish whose acknowledgement was lost could queue the job twice.
         self.sender.conf.update(task_publish_retry=False)
+        # Celery's control mailbox publishes through its pool of connections; this one publishes on the observation's.
+        self.observation_mailbox = Mailbox(
+            self.celery_app.conf.control_exchange,
+            type="fanout",
+            accept=self.celery_app.conf.accept_content,
+            serializer=self.celery_app.conf.task_serializer,
+        )
 
         # Not shared: a shared task joins every app finalized later, and the first registration of a name wins.
         @self.celery_app.task(name=RUN_DATASET, bind=True, shared=False)
@@ -229,8 +323,19 @@ class Jobs:
         task_failure.connect(self.record_lost_process, weak=False, dispatch_uid=self.worker_run)
         jobs = self
 
+        class CheckWorker(bootsteps.StartStopStep):
+            """Refuses to start a worker that would not run as this target's worker; see `Jobs.check_worker`."""
+
+            def start(self, worker: Any) -> None:
+                jobs.check_worker(worker.hostname, set(worker.app.amqp.queues.consume_from))
+
+        self.celery_app.steps["worker"].add(CheckWorker)
+
         class RecordLostClaims(bootsteps.StartStopStep):
             """When the worker starts, records the failure of the jobs that an earlier run of it claimed and left."""
+
+            # After the worker's check, so that a worker it refuses, such as a running worker's duplicate, fails no job.
+            requires = {CheckWorker}
 
             def start(self, worker: Any) -> None:
                 try:
@@ -268,25 +373,37 @@ class Jobs:
         """Return where the job's package is stored once the job completes."""
         return self.package_dir / f"{job_id}.dtccpkg"
 
-    def submit(self, dataset_name: str, parameters: dict[str, Any]) -> str:
+    def submit(self, dataset_name: str, parameters: dict[str, Any], target: str | None = None) -> str:
         """Record and queue a job that runs a Dataset with parameters the caller has validated; return its ID.
+
+        The record keeps this host's image digest, if it has one, as the digest of the image whose Core validated the
+        parameters: a worker that claims the job with another digest, or none, fails it (`claim`).
+
+        Args:
+            dataset_name: The Dataset's name.
+            parameters: The Dataset's parameters.
+            target: The target whose queue the job goes to, and which its record names; this host's if None.
 
         Raises:
             redis.RedisError: If Redis cannot record the job; nothing was sent.
             UnconfirmedSubmission: If sending the job or recording its confirmation failed, or the job's record was
                 lost meanwhile; the job may be queued, and it is not sent again.
         """
+        target = target or self.target
         job_id = str(uuid4())
         key = record_key(job_id)
         submitted_at = datetime.now(UTC).isoformat()
-        acceptance = {"dataset": dataset_name, "target": self.target, "submitted_at": submitted_at}
+        acceptance = {"dataset": dataset_name, "target": target, "submitted_at": submitted_at}
+        if self.image_digest is not None:
+            acceptance["entry_image_digest"] = self.image_digest
         with self.records.pipeline() as pipeline:
             pipeline.hset(key, mapping={**acceptance, "execution_gate": "waiting"})
             # The record of a job that never finishes expires too.
             pipeline.expire(key, RECORD_LIFETIME)
             pipeline.execute()
         try:
-            self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=self.target)
+            self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=target)
+
             answer = self.queued_script(keys=[key], args=[datetime.now(UTC).isoformat()])
         except (redis.RedisError, OperationalError) as error:
             raise UnconfirmedSubmission(job_id) from error
@@ -315,6 +432,8 @@ class Jobs:
                 and ("error_type" in record) == (outcome == "failed")
                 and ("error_upstream" not in record or outcome == "failed")
                 and ("claimed_by" not in record or record["execution_gate"] == "started")
+                and ("worker_versions" not in record or "claimed_by" in record)
+                and ("worker_image_digest" not in record or "worker_versions" in record)
             )
             if not consistent:
                 raise JobStateUnavailable(job_id)
@@ -330,12 +449,24 @@ class Jobs:
                 "error_type": record.get("error_type"),
                 "error_upstream": json.loads(record["error_upstream"]) if "error_upstream" in record else None,
                 "claimed_by": record.get("claimed_by"),
+                # Optional even with a claim: records claimed by an earlier Engine lack it.
+                "environment": (
+                    {
+                        "image_digest": record.get("worker_image_digest"),
+                        "versions": json.loads(record["worker_versions"]),
+                    }
+                    if "worker_versions" in record
+                    else None
+                ),
             }
         except (KeyError, ValueError) as error:
             raise JobStateUnavailable(job_id) from error
 
     def status(self, job_id: str) -> dict[str, Any] | None:
-        """Return the job's state, progress, error, and package, or None if the job is unknown or expired.
+        """Return the job's state, progress, error, environment, and package, or None if the job is unknown or expired.
+
+        The environment is the image digest and versions of the worker that claimed the job, or None if none is
+        recorded: no worker has claimed the job, or an earlier Engine's worker did.
 
         Raises:
             JobStateUnavailable: If the job's state cannot be established from its record and Celery's state.
@@ -366,8 +497,13 @@ class Jobs:
             "state": state,
             "progress": meta["result"] if state == "running" and meta["status"] == "PROGRESS" else None,
             "error": error,
+            "environment": record["environment"],
             "package": (
-                {"available": self.package_path(job_id).is_file(), "expires_at": (finished_at + RETENTION).isoformat()}
+                {
+                    # Another target's package is on its host, which only the API can ask.
+                    "available": self.package_path(job_id).is_file() if record["target"] == self.target else None,
+                    "expires_at": (finished_at + RETENTION).isoformat(),
+                }
                 if state == "completed"
                 else None
             ),
@@ -435,17 +571,24 @@ class Jobs:
     def claim(self, job_id: str, claim: str) -> bool:
         """Claim permission to run the job's Dataset, which only one caller gets, and only while the job is waiting.
 
-        The claim names the worker's node, the worker run, and the pool process. A claim whose answer Redis did not send
-        is not repeated: it may have been made.
+        The claim names the worker's node, the worker run, and the pool process. With it, the job's record keeps this
+        worker's image digest and versions. If the record keeps the image digest of the job's entry, and this worker
+        has another or none, the claim fails the job with `IncompatibleWorker` instead of giving permission. A claim
+        whose answer Redis did not send is not repeated: it may have been made.
         """
         try:
             # Checks the acceptance fields, which never change once written; the claim checks the rest.
             self.read_record(job_id)
-            answer = self.start_script(keys=[record_key(job_id)], args=[claim, int(RECORD_LIFETIME.total_seconds())])
+            lifetime = int(RECORD_LIFETIME.total_seconds())
+            environment = [json.dumps(installed_versions()), self.image_digest or ""]
+            failure = [datetime.now(UTC).isoformat(), "IncompatibleWorker"]
+            answer = self.start_script(keys=[record_key(job_id)], args=[claim, lifetime, *environment, *failure])
         except (JobStateUnavailable, redis.RedisError):
             logger.warning("Job %s does not run: its record is unusable or Redis did not answer", job_id, exc_info=True)
             return False
-        if answer != "started":
+        if answer == "incompatible":
+            logger.warning("Job %s failed without running: this worker's image digest is not its entry's", job_id)
+        elif answer != "started":
             logger.warning("Job %s does not run: its record is %s", job_id, answer)
         return answer == "started"
 
@@ -498,6 +641,90 @@ class Jobs:
             shutil.rmtree(staging, ignore_errors=True)
             logger.info("Deleted %s, left by an export that was killed", staging.name)
 
+    def check_worker(self, node: str, queues: set[str]) -> None:
+        """Check that a worker may start: as `celery@<target>`, consuming only this target's queue.
+
+        It also refuses a node name that another running worker answers to, as a best effort: a running worker whose
+        answer is late or lost, or a broker error, which is logged, lets the worker start, as do two that start at once.
+
+        Raises:
+            ValueError: If `node` is not `celery@<target>`, or `queues` are not this target's queue alone.
+            RuntimeError: If another running worker answers as `node`.
+        """
+        if node != f"celery@{self.target}":
+            raise ValueError(f"A worker of target '{self.target}' must run as celery@{self.target}, not {node}")
+        if queues != {self.target}:
+            raise ValueError(
+                f"A worker of target '{self.target}' must consume only the queue '{self.target}', not {sorted(queues)}"
+            )
+        try:
+            # A connection of its own: on a pooled one, an earlier call that timed out can lose this answer.
+            with self.celery_app.connection_for_write() as connection:
+                answers = self.celery_app.control.ping([node], timeout=NODE_CHECK_TIMEOUT, connection=connection)
+        except OperationalError:
+            logger.warning("Could not check whether another running worker answers as %s", node, exc_info=True)
+            return
+        if answers:
+            raise RuntimeError(f"Another running worker answers as {node}, so this one does not start")
+
+    def observe(self, target: str) -> dict[str, Any]:
+        """Observe a target's worker through the broker, with the count of jobs waiting in its queue.
+
+        Returns:
+            `state`, `reason`, `worker`, the worker's answer, and `waiting`. The state is `ready` if the worker can
+            start a job now; `busy` if it holds as many jobs as its limit, or jobs wait; `unavailable` if it does not
+            consume exactly its target's queue; `incompatible` if its image digest does not match this host's; and
+            `unknown` if the broker or the worker did not answer, or the answer is malformed, which does not show that
+            the worker stopped. Only ready and busy have no reason; a value not obtained is None.
+        """
+        node = f"celery@{target}"
+        try:
+            # A connection of its own: on a pooled one, an earlier call that timed out can lose this answer.
+            with ObservationConnection(
+                self.celery_app.conf.broker_url, transport_options=OBSERVATION_BROKER
+            ) as connection:
+                # Before the worker answers: a job it takes from the queue in between is counted twice, not missed.
+                try:
+                    waiting = connection.default_channel.queue_declare(queue=target, passive=True).message_count
+                except ChannelError:
+                    # Kombu keeps no list for an empty queue, so its passive declaration finds none.
+                    waiting = 0
+                answers = self.observation_mailbox(connection).call(
+                    [node], DESCRIBE_WORKER, timeout=OBSERVATION_TIMEOUT
+                )
+        except (OperationalError, redis.RedisError):
+            logger.warning("Could not observe the worker of %s", target, exc_info=True)
+            return {"state": "unknown", "reason": "The broker did not answer", "worker": None, "waiting": None}
+        answer = next((reply[node] for reply in answers if node in reply), None)
+        if answer is None:
+            reason = f"Its worker did not answer within {OBSERVATION_TIMEOUT} s"
+            return {"state": "unknown", "reason": reason, "worker": None, "waiting": waiting}
+        try:
+            worker = WorkerDescription.model_validate(answer).model_dump()
+        except ValidationError:
+            return {
+                "state": "unknown",
+                "reason": "Its worker's answer is malformed",
+                "worker": None,
+                "waiting": waiting,
+            }
+        digests = (self.image_digest, worker["image_digest"])
+        if target == self.target:
+            # Compared only when both are set: a development deployment supplies none, and runs locally only.
+            compatible = None in digests or digests[0] == digests[1]
+        else:
+            compatible = None not in digests and digests[0] == digests[1]
+        reason = None
+        if worker["queues"] != [target]:
+            state, reason = "unavailable", f"Its worker does not consume exactly the queue '{target}'"
+        elif not compatible:
+            state, reason = "incompatible", "Its worker's image digest is missing or differs from this host's"
+        elif worker["reserved"] < worker["job_limit"] and waiting == 0:
+            state = "ready"
+        else:
+            state = "busy"
+        return {"state": state, "reason": reason, "worker": worker, "waiting": waiting}
+
     def record_lost_process(self, sender: Task, task_id: str, exception: BaseException, **kwargs: Any) -> None:
         """Record the failure of a job whose pool process was lost, reported by Celery in the worker's main process."""
         if sender.app is self.celery_app and isinstance(exception, WorkerLostError):
@@ -536,5 +763,11 @@ class Jobs:
 
 
 def jobs_from_environment() -> Jobs:
-    """Create this host's jobs from `ENGINE_REDIS_URL`, `ENGINE_TARGET`, and `ENGINE_PACKAGE_DIR`."""
-    return Jobs(os.environ["ENGINE_REDIS_URL"], os.environ["ENGINE_TARGET"], Path(os.environ["ENGINE_PACKAGE_DIR"]))
+    """Create this host's jobs from `ENGINE_REDIS_URL`, `ENGINE_TARGET`, `ENGINE_PACKAGE_DIR`, and the optional
+    `ENGINE_IMAGE_DIGEST`, which, unset or empty, means that the deployment supplies no digest."""
+    return Jobs(
+        os.environ["ENGINE_REDIS_URL"],
+        os.environ["ENGINE_TARGET"],
+        Path(os.environ["ENGINE_PACKAGE_DIR"]),
+        os.environ.get("ENGINE_IMAGE_DIGEST") or None,
+    )

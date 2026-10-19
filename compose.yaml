@@ -74,13 +74,23 @@ services:
     # Runs the Engine's jobs. Celery does not reload code: restart it after changing the engine.
     profiles: [engine]
     platform: linux/amd64
-    # A fixed host name gives the worker a fixed Celery node name, so that when it starts again it records the failure
-    # of the jobs its earlier run left.
-    hostname: engine-worker
     build:
       context: apps/engine
       target: dev
-    command: ["celery", "--app", "dtcc_engine.worker", "worker", "--concurrency", "1", "--loglevel", "INFO"]
+    # The node name must be celery@ and ENGINE_TARGET; the worker refuses any other, and one that a running worker uses.
+    command:
+      [
+        "celery",
+        "--app",
+        "dtcc_engine.worker",
+        "worker",
+        "--hostname",
+        "celery@local",
+        "--concurrency",
+        "1",
+        "--loglevel",
+        "INFO",
+      ]
     environment:
       ENGINE_REDIS_URL: redis://engine-redis:6379/0
       ENGINE_TARGET: local

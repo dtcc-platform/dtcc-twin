@@ -4,8 +4,9 @@
 """
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import celery.contrib.testing.tasks  # noqa: F401  Registers the ping task that start_worker waits for.
 import pytest
@@ -29,9 +30,24 @@ def jobs(redis_url: str, tmp_path: Path) -> Jobs:
     return Jobs(redis_url, "unserved", tmp_path)
 
 
+@pytest.fixture(scope="session")
+def start_target_worker() -> Callable[..., Any]:
+    """Start a Celery worker in this process for some jobs, as their target's node, with `start_worker`'s options.
+
+    A worker refuses any other node name, and `start_worker` then waits for ever, so tests start workers through this.
+    """
+
+    def start(jobs: Jobs, **options: Any) -> Any:
+        return start_worker(jobs.celery_app, hostname=f"celery@{jobs.target}", **options)
+
+    return start
+
+
 @pytest.fixture(scope="module")
-def served_jobs(redis_url: str, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Jobs]:
+def served_jobs(
+    redis_url: str, tmp_path_factory: pytest.TempPathFactory, start_target_worker: Callable[..., Any]
+) -> Iterator[Jobs]:
     """Jobs on a target served by a Celery worker in this process, which also runs test-defined Datasets."""
     served = Jobs(redis_url, "served", tmp_path_factory.mktemp("packages"))
-    with start_worker(served.celery_app):
+    with start_target_worker(served):
         yield served

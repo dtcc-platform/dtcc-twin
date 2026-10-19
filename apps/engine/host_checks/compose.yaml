@@ -1,0 +1,94 @@
+# Two Engine hosts for `pnpm engine:check:hosts`: the entry host, target `entry`, and a remote host, target `remote`,
+# each with its API, its worker, and a package volume of its own, and the central Redis. No port is published.
+x-engine: &engine
+  platform: linux/amd64
+  build:
+    context: ..
+    target: dev
+  depends_on:
+    redis:
+      condition: service_healthy
+
+x-settings: &settings
+  ENGINE_API_TOKEN: local-hosts-check-token
+  ENGINE_REDIS_URL: redis://redis:6379/0
+  ENGINE_IMAGE_DIGEST: ${ENGINE_IMAGE_DIGEST:-}
+  ENGINE_PACKAGE_DIR: /var/lib/dtcc-engine/packages
+
+x-api: &api
+  command:
+    ["uvicorn", "dtcc_engine.api:create_app_from_environment", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+  healthcheck:
+    test:
+      ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+    interval: 2s
+    timeout: 3s
+    retries: 60
+
+# Engine's worker app with `engine_held_probe`, a test Dataset that holds its job until a check releases it.
+x-worker: &worker
+  PYTHONPATH: /app/tests
+
+services:
+  redis:
+    image: redis:8
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  entry:
+    <<: [*engine, *api]
+    environment:
+      <<: *settings
+      ENGINE_TARGET: entry
+      ENGINE_REMOTE_TARGETS: remote=http://remote:8000
+    volumes:
+      - entry-packages:/var/lib/dtcc-engine/packages
+
+  entry-worker:
+    <<: *engine
+    command: ["celery", "--app", "target_worker", "worker", "--hostname", "celery@entry", "--concurrency", "1"]
+    environment:
+      <<: [*settings, *worker]
+      ENGINE_TARGET: entry
+    volumes:
+      - entry-packages:/var/lib/dtcc-engine/packages
+
+  remote:
+    <<: [*engine, *api]
+    environment:
+      <<: *settings
+      ENGINE_TARGET: remote
+    volumes:
+      - remote-packages:/var/lib/dtcc-engine/packages
+
+  remote-worker:
+    <<: *engine
+    command: ["celery", "--app", "target_worker", "worker", "--hostname", "celery@remote", "--concurrency", "1"]
+    environment:
+      <<: [*settings, *worker]
+      ENGINE_TARGET: remote
+      # A phase starts this worker as one of another image.
+      ENGINE_IMAGE_DIGEST: ${REMOTE_WORKER_DIGEST:-${ENGINE_IMAGE_DIGEST:-}}
+    volumes:
+      - remote-packages:/var/lib/dtcc-engine/packages
+
+  # Runs the checks; it reads both hosts' package volumes and keeps the phases' state in its own.
+  checks:
+    <<: *engine
+    working_dir: /checks
+    environment:
+      <<: *settings
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - .:/checks:ro
+      - checks-state:/state
+      - entry-packages:/packages/entry:ro
+      - remote-packages:/packages/remote:ro
+
+volumes:
+  entry-packages:
+  remote-packages:
+  checks-state:

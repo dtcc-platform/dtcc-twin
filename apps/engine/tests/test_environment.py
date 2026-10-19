@@ -5,6 +5,9 @@ and work together. They run in the development image through `pnpm engine:check`
 and in the production image through `pnpm engine:check:prod`; passing them does not verify a deployment.
 """
 
+import subprocess
+import sys
+import textwrap
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -146,6 +149,27 @@ def test_petsc_solves_a_problem_with_a_known_solution(unit_cube_domain: mesh.Mes
     )
     solution = problem.solve()
     assert np.max(np.abs(solution.x.array - 1.0)) < 1e-10
+
+
+def test_write_to_a_closed_connection_raises_in_an_engine_process() -> None:
+    # In a process of its own, because PETSc, which importing Sim starts, aborts on SIGPIPE unless told not to.
+    script = textwrap.dedent(
+        """
+        import socket
+
+        import dtcc_engine.api
+
+        sender, receiver = socket.socketpair()
+        receiver.close()
+        try:
+            for _ in range(3):
+                sender.send(b"x" * 65536)
+        except BrokenPipeError:
+            print("raised")
+        """
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=600)
+    assert (result.returncode, result.stdout) == (0, "raised\n"), result.stderr[-2000:]
 
 
 def test_mesh_round_trips_through_hdf5(

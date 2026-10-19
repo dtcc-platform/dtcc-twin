@@ -8,11 +8,11 @@ The test has its own module so that no other test's worker thread is running in 
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 import ufl
-from celery.contrib.testing.worker import start_worker
 from dolfinx import fem, mesh
 from dolfinx.fem.petsc import LinearProblem
 from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, load_model_package, unregister
@@ -68,10 +68,12 @@ def fenicsx_dataset() -> Iterator[str]:
 
 
 @pytest.fixture
-def prefork_jobs(redis_url: str, tmp_path: Path, fenicsx_dataset: str) -> Iterator[Jobs]:
+def prefork_jobs(
+    redis_url: str, tmp_path: Path, fenicsx_dataset: str, start_target_worker: Callable[..., Any]
+) -> Iterator[Jobs]:
     """Jobs served by a one-process prefork worker."""
     jobs = Jobs(redis_url, "prefork-fenicsx", tmp_path)
-    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
         yield jobs
 
 

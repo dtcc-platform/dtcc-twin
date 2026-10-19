@@ -187,6 +187,17 @@ capability is remote-only because of that host's runtime conditions, such as
 credentials, data, hardware, or provider access, not because different code is
 installed there.
 
+The entry's Dataset listing reports each Dataset's targets: every configured
+target, in placement order, with its state and reason as the entry observes
+them for that request, and the Dataset's runtime availability on it, which is
+unknown until Core can report it. The listing reads no other host's discovery:
+a compatible target runs the entry's image and so offers its Datasets, and an
+incompatible one is reported as such. An observation waits only seconds for a
+broker that does not answer, so the listing still answers then, with each
+target unknown. The catalog revision covers the versions and descriptions, not
+the targets' states. Describing one Dataset returns its Core description
+alone, and host-local discovery reports only its own catalog.
+
 The catalog must have an explicit refresh operation or revision mechanism. A
 new conforming Dataset using existing contracts becomes visible after it is
 installed and registered on a target and the catalog is refreshed, without
@@ -200,6 +211,22 @@ the versions used to execute each job and preserve upstream provenance in the
 resulting package. Reject incompatible targets rather than silently changing
 parameters, semantic products, or model meaning.
 
+When a worker claims a job, Engine records that worker's Engine, Core, and Sim
+versions, and its image digest if the deployment supplies one, with the job,
+and the job's status reports them as its environment. A job that no worker has
+claimed has no environment, and a later delivery of a claimed job does not
+change it. Core's provenance in the package stays as Core records it.
+
+The job's record also keeps the image digest of the entry that accepted it, if
+the deployment supplies one: the image whose Core validated the job's
+parameters. A worker with another digest, or none, that claims the job fails it
+with `IncompatibleWorker` instead of running it, and the job's status reports
+that worker's environment. A job queued before its target's image changes
+therefore does not run in the new environment. Without the entry's digest, as
+in development, nothing is compared: the job runs in the environment of the
+worker that claims it, and Core validates its parameters again when that worker
+invokes the Dataset.
+
 Compatibility and canonical exchange readiness must be verified from source,
 tests, and representative execution. A descriptor alone is not proof that a
 solver is installed, a provider is reachable, or a returned type satisfies
@@ -209,8 +236,9 @@ Core's lossless Protobuf contract.
 
 Remote hosts are configured explicitly with stable target identifiers and their
 Engine HTTP addresses. They do not register dynamically. Use a Celery queue for
-each configured compute target. Each host's worker consumes its designated
-queue and enforces the configured concurrent-job count.
+each configured compute target. Each host's worker consumes only its designated
+queue, refusing to start with any other, and enforces the configured
+concurrent-job count.
 
 Requests select automatic placement, local execution, or a named remote target.
 
@@ -226,6 +254,30 @@ Requests select automatic placement, local execution, or a named remote target.
 Availability means that a target can accept queued work; capacity means that it
 appears to have room to start another job. A busy target can still be available.
 HTTP liveness alone must not be treated as proof that its Celery worker is ready.
+
+Engine observes a target through the broker. The target's worker answers with
+its image digest, versions, job limit, the jobs it holds, and the queues it
+consumes, never with a job's arguments, and the broker counts the jobs waiting
+in the target's queue. A target is available when its worker answers and
+consumes exactly its target's queue, and has capacity when the worker holds
+fewer jobs than its limit and none wait. A target whose worker does not answer
+is unknown: Engine does not conclude that the worker stopped, and routing
+treats the target as unavailable.
+
+A request names a configured target or none. Engine validates the request
+before it observes any target, and rejects an identifier that is not configured
+as invalid. Without a named target, Engine observes the local target, then the
+remote targets in configuration order, and places the job on the first one with
+capacity, observing no further; if none has capacity, on the first one that is
+available and compatible. A named target is observed alone, and takes the job
+if it is available and compatible, with capacity or without. Engine observes
+each target once per request, so a late answer leaves it unknown. A request
+that no observed target can accept is rejected as temporarily unavailable, with
+each observed target's state and reason, and is neither recorded nor queued.
+The job's record names the selected target, and its message goes to that
+target's queue. Engine validates a request with its own Dataset registry, which
+is the selected target's, because compatible targets run the same image
+(Deployment and authentication).
 
 Reported load is a placement hint. Concurrent submissions can observe the same
 capacity, so automatic placement does not guarantee immediate execution. Celery
@@ -331,6 +383,20 @@ objects. The public Engine address serves local files or streams the remote
 archive through the remote host's Engine HTTP API. No shared filesystem between
 hosts is required, and forwarding a download does not require a second stored
 copy at the entry host.
+
+Each host serves its own packages through a host-local route, which never
+forwards a request to another host. A completed job's status says whether its
+package can be downloaded; for a job of a remote target, the entry asks that
+target's host, and reports `null` when the host does not answer. A download
+through the entry streams the package from the job's host without asking for
+the job's status first, stores nothing at the entry, follows no redirects, and
+sends the shared token only to the configured address. A host without the
+package makes the download a `409`, as a local one is; a host that cannot be
+reached, rejects the token, or answers otherwise, and a target that is not
+configured, make it a `503`, without the host's answer. The entry closes its
+request to the host when the download ends, whether it completed, failed, or
+the consumer disconnected, and a stream that fails midway fails the download
+rather than end it as a shorter archive.
 
 Completed packages expire 30 days after job completion, measured as 30 periods
 of 24 hours using UTC timestamps. Downloads do not extend that period. Under
@@ -463,12 +529,16 @@ Engine records a failure for a job whose claimant is gone and can no longer
 record an outcome. A job whose pool process is lost fails with
 `WorkerLostError`, which Celery reports in the worker's main process. When a
 worker starts, each job that an earlier run of the same worker claimed and left
-without an outcome fails with `WorkerRestarted`. This needs every worker to have
-a stable node name that no other running worker uses, and to start under it
-only after its earlier run and that run's processes have stopped. A job whose
-worker is lost and not started again keeps the state last recorded, as does a
-job whose lost process still appears to exist, because Engine cannot tell
-whether the work stopped.
+without an outcome fails with `WorkerRestarted`. This needs each worker to run
+as `celery@<target identifier>`, a node name that no other running worker uses,
+and to start under it only after its earlier run and that run's processes have
+stopped. A worker refuses to start under another node name. As a best effort,
+it also refuses to start while a running worker answers to its node name; a
+late or lost answer, a broker error, or two workers that start at once escape
+that check, so it does not replace stopping the earlier run. Both checks come
+before the worker checks any claim. A job whose worker is lost and not started
+again keeps the state last recorded, as does a job whose lost process still
+appears to exist, because Engine cannot tell whether the work stopped.
 
 Engine's record of a job that never finishes expires 31 days after the job's
 submission or, once a delivery claimed it, after the claim. The job is then
@@ -503,6 +573,9 @@ manager into Engine.
 Configuration supplies the central broker/result-backend connection, one
 shared Engine HTTP token, the local target identity, the static remote-target
 list, per-host concurrent-job limits, and local temporary result directories.
+Each remote target is an identifier and the base address of its Engine HTTP
+service, without credentials; the entry service sends the shared token only to
+those addresses and follows no redirects.
 All Engine HTTP services use the shared token; there are no per-consumer roles.
 The only exception is an unauthenticated health route that reports liveness and
 returns no Dataset, job, or version information, so that process supervisors
@@ -537,7 +610,11 @@ Celery, Python, and the numerical stack. In v1, every host in a deployment runs
 the `linux/amd64` image, and hosts are compatible when they run the same
 platform-specific image digest (not a multi-platform index, whose per-platform
 images have different digests). The deployment supplies each host's digest to
-its configuration so that discovery can report it. Image compatibility is
+its configuration so that discovery and the host's worker can report it. A
+remote target is compatible only when its worker reports the entry's digest; a
+missing digest never matches. The local target is compared only when both
+digests are set, so a development deployment without digests runs locally
+only. Image compatibility is
 separate from runtime availability, which each host reports for itself. Distribution versions alone do
 not identify the Core and Sim commits installed from Git. An environment that
 can import Dataset descriptors is not automatically a working numerical
@@ -588,6 +665,12 @@ Both targets follow these rules:
   Core's continuous integration does not cover that platform. Supporting
   `linux/arm64`, such as AWS Graviton, requires that upstream fix and its own
   production validation.
+- The image sets `PETSC_OPTIONS=-no_signal_handler`. Importing Sim starts PETSc,
+  whose signal handlers would otherwise abort a process that writes to a
+  dropped connection, instead of raising an error that Engine, Celery, or the
+  Redis client can handle, and would catch the termination signal that the HTTP
+  service and the worker handle themselves. A deployment that sets its own
+  PETSc options keeps this one.
 
 For local development, the root `compose.yaml` places Engine services behind
 the `engine` profile, so developers who work only on the frontend or backend
@@ -600,8 +683,9 @@ not part of the repository-wide `pnpm check`, which does not build the image.
 Its environment tests check that Core, Sim, FEniCSx, and the TetGen wrapper are
 installed; that TetGen tetrahedralizes a unit cube; that FEniCSx assembles the
 unit cube's volume and solves a small problem through PETSc; that the unit-cube
-mesh round-trips through an HDF5 file read back by h5py; and that Core builds a
-volume mesh of a small city.
+mesh round-trips through an HDF5 file read back by h5py; that Core builds a
+volume mesh of a small city; and that a process that imports Engine raises an
+error, rather than aborting, when it writes to a closed connection.
 
 The frontend does not call Engine directly. The shared Engine token must not be
 exposed to browsers, so the Twin backend holds the token and forwards the Engine
@@ -686,6 +770,13 @@ not claims of passing runtime tests or a verified release combination.
    earlier `STARTED` write. This investigation is not acceptance evidence for
    the gate: verify its races, terminal outcomes, retention, and failures with
    real Redis and prefork workers.
+6. **Runtime availability of a Dataset needs a Core interface.** At the pinned
+   commit, Core describes a Dataset but cannot say whether it can run on a
+   host: credentials, data, hardware, and provider access are found missing
+   only when it runs, and some credentials are request parameters. Until Core
+   provides such an interface, Engine reports each Dataset's runtime
+   availability on each target as unknown, and a remote-only capability cannot
+   be verified.
 
 Reference checkouts remain unmodified during Engine work. Missing shared
 capabilities require separately proposed Core or Sim changes. The implementation

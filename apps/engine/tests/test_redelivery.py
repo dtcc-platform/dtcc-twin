@@ -13,11 +13,11 @@ import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 import redis
-from celery.contrib.testing.worker import start_worker
 from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister
 from dtcc_core.model import Mesh
 from fastapi.testclient import TestClient
@@ -83,12 +83,14 @@ def counting_dataset(redis_url: str) -> Iterator[str]:
 
 
 @pytest.fixture
-def prefork_jobs(redis_url: str, tmp_path: Path, counting_dataset: str) -> Iterator[Jobs]:
+def prefork_jobs(
+    redis_url: str, tmp_path: Path, counting_dataset: str, start_target_worker: Callable[..., Any]
+) -> Iterator[Jobs]:
     """Jobs served by a one-process prefork worker; a gated job is released at the latest when the test ends."""
     jobs = Jobs(redis_url, "prefork", tmp_path)
     # An earlier test released its gated jobs.
     jobs.records.delete(RELEASE_KEY)
-    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
         try:
             yield jobs
         finally:
@@ -162,12 +164,14 @@ def cancel(jobs: Jobs, job_id: str) -> tuple[int, str]:
     )
 
 
-def test_job_cancelled_before_a_worker_runs_never_runs(redis_url: str, tmp_path: Path, counting_dataset: str) -> None:
+def test_job_cancelled_before_a_worker_runs_never_runs(
+    redis_url: str, tmp_path: Path, counting_dataset: str, start_target_worker: Callable[..., Any]
+) -> None:
     jobs = Jobs(redis_url, "late-worker", tmp_path)
     job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "cancelled"})
     assert cancel(jobs, job_id) == (200, "cancelled")
     # The decision is in Redis, so a worker that starts, or starts again, after the cancellation sees it.
-    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
         last = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "after-cancelled"})
         wait_until_completed(jobs, last)
     assert jobs.records.get(runs_key("cancelled")) is None
@@ -240,10 +244,10 @@ def test_job_whose_pool_process_is_lost_fails_and_the_worker_runs_on(prefork_job
 
 
 def test_worker_started_again_fails_the_jobs_its_earlier_run_left(
-    redis_url: str, tmp_path: Path, counting_dataset: str
+    redis_url: str, tmp_path: Path, counting_dataset: str, start_target_worker: Callable[..., Any]
 ) -> None:
     jobs = Jobs(redis_url, "restarted", tmp_path)
-    node = "celery@engine-test-restarted"
+    node = "celery@restarted"
     left = claimed_job(jobs, f"{node} earlier-run 7")
     elsewhere = claimed_job(jobs, "celery@engine-test-elsewhere earlier-run 7")
     # Unusable records: the worker leaves them as they are, and they do not keep it from starting.
@@ -254,7 +258,7 @@ def test_worker_started_again_fails_the_jobs_its_earlier_run_left(
     ]
     jobs.records.hdel(record_key(unusable[2]), "submitted_at")
     before = [jobs.records.hgetall(record_key(job_id)) for job_id in unusable]
-    with start_worker(jobs.celery_app, pool="prefork", concurrency=1, hostname=node):
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
         last = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "after-restart"})
         wait_until_completed(jobs, last)
     left_job, elsewhere_job = jobs.status(left), jobs.status(elsewhere)
@@ -277,7 +281,7 @@ def package_with_record(jobs: Jobs, fields: dict[str, str]) -> str:
 
 
 def test_worker_deletes_the_packages_no_job_can_deliver(
-    redis_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    redis_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, start_target_worker: Callable[..., Any]
 ) -> None:
     monkeypatch.setattr("dtcc_engine.jobs.CLEANUP_INTERVAL", timedelta(seconds=1), raising=False)
     jobs = Jobs(redis_url, "cleaned", tmp_path)
@@ -302,7 +306,7 @@ def test_worker_deletes_the_packages_no_job_can_deliver(
     # Core stages an export beside the package; one there before the worker starts belongs to an export that was killed.
     killed_export = tmp_path / ".dtcc-package-killed"
     killed_export.mkdir()
-    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
         kept = {name for name, job_id in packages.items() if jobs.package_path(job_id).exists()}
         assert kept == {"completed", "running", "unusable"}
         assert not killed_export.exists()
@@ -317,14 +321,16 @@ def test_worker_deletes_the_packages_no_job_can_deliver(
         assert running_export.exists()
 
 
-def test_worker_started_again_deletes_the_package_its_earlier_run_left(redis_url: str, tmp_path: Path) -> None:
+def test_worker_started_again_deletes_the_package_its_earlier_run_left(
+    redis_url: str, tmp_path: Path, start_target_worker: Callable[..., Any]
+) -> None:
     jobs = Jobs(redis_url, "restarted-after-export", tmp_path)
-    node = "celery@engine-test-restarted-after-export"
+    node = "celery@restarted-after-export"
     # The earlier run exported the package and was lost before it recorded the job's completion.
     left = claimed_job(jobs, f"{node} earlier-run 7")
     jobs.package_path(left).write_bytes(b"package")
     # Once the worker has started, its cleanup has run after its check of lost claims, not only an hour later.
-    with start_worker(jobs.celery_app, pool="prefork", concurrency=1, hostname=node):
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
         assert jobs.status(left)["error"] == {"type": "WorkerRestarted"}
         assert not jobs.package_path(left).exists()
 
@@ -345,11 +351,11 @@ def test_restarted_api_serves_the_jobs_the_earlier_one_accepted(
 
 
 def test_job_queued_while_no_worker_runs_runs_when_a_worker_starts(
-    redis_url: str, tmp_path: Path, counting_dataset: str
+    redis_url: str, tmp_path: Path, counting_dataset: str, start_target_worker: Callable[..., Any]
 ) -> None:
     jobs = Jobs(redis_url, "started-later", tmp_path)
     job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "queued-without-worker"})
     assert jobs.status(job_id)["state"] == "queued"
-    with start_worker(jobs.celery_app, pool="prefork", concurrency=1):
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
         wait_until_completed(jobs, job_id)
     assert jobs.records.get(runs_key("queued-without-worker")) == "1"

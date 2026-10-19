@@ -1,7 +1,8 @@
 """Tests for Engine's job API against real Redis and, where a job must run, a real Celery worker.
 
-The `client` fixture's jobs stay queued, because no worker serves its target. The `served_client` fixture's worker
-runs in this process, so it also runs the Dataset Definitions that tests register.
+The `client` fixture's jobs stay queued, because no worker serves its target; the API observes that target as a worker
+holding its limit would be, so that it places jobs there. The `served_client` fixture's worker runs in this process, so
+it also runs the Dataset Definitions that tests register.
 """
 
 import threading
@@ -27,18 +28,21 @@ from kombu.exceptions import OperationalError
 from pydantic import field_validator
 
 from dtcc_engine.api import create_app
-from dtcc_engine.jobs import RECORD_LIFETIME, RETENTION, RUN_DATASET, Jobs, record_key
+from dtcc_engine.jobs import RECORD_LIFETIME, RETENTION, RUN_DATASET, Jobs, installed_versions, record_key
 
 TOKEN = "test-token"
 AUTHORIZED = {"Authorization": f"Bearer {TOKEN}"}
 BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
 SMOKE = {"dataset": "smoke", "parameters": {"bounds": BOUNDS}}
 PROVIDER_KEY = "provider-key-5e1d"
+DIGEST = "sha256:" + "0123456789abcdef" * 4
+OTHER_DIGEST = "sha256:" + "fedcba9876543210" * 4
 FINISHED = ("completed", "failed")
 
 
 @pytest.fixture
-def client(jobs: Jobs) -> TestClient:
+def client(jobs: Jobs, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr(jobs, "observe", lambda target: {"state": "busy", "reason": None})
     return TestClient(create_app(TOKEN, jobs))
 
 
@@ -245,6 +249,17 @@ UNUSABLE_CHANGES = {
         "error_type": "DatasetUpstreamError",
         "error_upstream": "not json",
     },
+    "environment-without-a-claim": {"worker_versions": '{"dtcc-engine": "0.1.0"}'},
+    "image-digest-without-versions": {
+        "execution_gate": "started",
+        "claimed_by": "celery@engine-test earlier-run 7",
+        "worker_image_digest": DIGEST,
+    },
+    "unreadable-versions": {
+        "execution_gate": "started",
+        "claimed_by": "celery@engine-test earlier-run 7",
+        "worker_versions": "not json",
+    },
 }
 
 
@@ -263,6 +278,8 @@ def change_record(jobs: Jobs, job_id: str, changes: dict[str, str | None]) -> No
         ("GET", "/api/v1/jobs/some-job"),
         ("GET", "/api/v1/jobs/some-job/package"),
         ("POST", "/api/v1/jobs/some-job/cancel"),
+        ("GET", "/api/v1/host/jobs/some-job/package"),
+        ("HEAD", "/api/v1/host/jobs/some-job/package"),
     ],
 )
 def test_job_routes_reject_missing_tokens(client: TestClient, method: str, path: str) -> None:
@@ -283,6 +300,7 @@ def test_submitted_job_is_queued(client: TestClient, jobs: Jobs) -> None:
         "state": "queued",
         "progress": None,
         "error": None,
+        "environment": None,
         "package": None,
     }
 
@@ -861,3 +879,80 @@ def test_confirmation_keeps_the_outcome_and_lifetime_of_a_job_that_finished_firs
     job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
     assert (job["state"], job["error"]) == ("failed", {"type": "RuntimeError"})
     assert jobs.records.ttl(record_key(job_id)) <= 60
+
+
+def test_claim_records_the_environment_of_the_worker_that_made_it(
+    client: TestClient, jobs: Jobs, redis_url: str, tmp_path: Path
+) -> None:
+    job_id = submit(client, SMOKE)
+    # Workers of the API's target: the first with an image digest, which the API lacks, and the second without one.
+    assert Jobs(redis_url, jobs.target, tmp_path, DIGEST).claim(job_id, "celery@unserved first-run 7")
+    assert not jobs.claim(job_id, "celery@unserved second-run 8")
+    environment = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["environment"]
+    assert environment == {"image_digest": DIGEST, "versions": installed_versions()}
+
+
+@pytest.mark.parametrize("how", ["queued", "cancelled", "claimed-by-an-earlier-engine"])
+def test_job_without_a_recorded_environment_reports_none(client: TestClient, jobs: Jobs, how: str) -> None:
+    job_id = submit(client, SMOKE)
+    if how == "cancelled":
+        assert cancel(client, job_id).json()["result"] == "cancelled"
+    elif how == "claimed-by-an-earlier-engine":
+        claim = {"execution_gate": "started", "claimed_by": "celery@unserved earlier-run 7"}
+        jobs.records.hset(record_key(job_id), mapping=claim)
+    polled = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED)
+    assert (polled.status_code, polled.json()["environment"]) == (200, None)
+
+
+def test_completed_job_reports_the_environment_of_its_worker(served_client: TestClient) -> None:
+    job_id = submit(served_client, SMOKE)
+    job = wait_until(served_client, job_id, lambda job: job["state"] == "completed")
+    # The worker runs in development's manner, without an image digest.
+    assert job["environment"] == {"image_digest": None, "versions": installed_versions()}
+
+
+@pytest.mark.parametrize("worker_digest", [OTHER_DIGEST, None], ids=["another-digest", "no-digest"])
+def test_job_claimed_by_a_worker_without_the_image_at_submission_fails_without_running(
+    client: TestClient,
+    jobs: Jobs,
+    probe_dataset: tuple[str, list[str]],
+    redis_url: str,
+    tmp_path: Path,
+    worker_digest: str | None,
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    # Submitted for the client's target by an entry with an image digest, as a deployment's entry has.
+    job_id = Jobs(redis_url, jobs.target, tmp_path, DIGEST).submit(dataset, request["parameters"])
+    assert deliver(Jobs(redis_url, jobs.target, tmp_path, worker_digest), job_id, request) == "IGNORED"
+    record = jobs.records.hgetall(record_key(job_id))
+    job = client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()
+    # A later delivery, by a worker of the image at submission, does not run the job either.
+    assert deliver(Jobs(redis_url, jobs.target, tmp_path, DIGEST), job_id, request) == "IGNORED"
+    assert runs == []
+    assert (job["state"], job["error"], job["package"]) == ("failed", {"type": "IncompatibleWorker"}, None)
+    assert job["finished_at"] is not None
+    assert job["environment"] == {"image_digest": worker_digest, "versions": installed_versions()}
+    assert jobs.records.hgetall(record_key(job_id)) == record
+    assert cancel(client, job_id).json()["result"] == "already_finished"
+
+
+@pytest.mark.parametrize(
+    ("entry_digest", "worker_digest"), [(DIGEST, DIGEST), (None, DIGEST)], ids=["same-image", "entry-without-a-digest"]
+)
+def test_job_runs_when_its_worker_has_the_image_at_submission_or_none_was_recorded(
+    client: TestClient,
+    jobs: Jobs,
+    probe_dataset: tuple[str, list[str]],
+    redis_url: str,
+    tmp_path: Path,
+    entry_digest: str | None,
+    worker_digest: str,
+) -> None:
+    dataset, runs = probe_dataset
+    request = {"dataset": dataset, "parameters": {"bounds": BOUNDS}}
+    # An entry without a digest records none, as in development, and as for jobs submitted before Engine recorded it.
+    job_id = Jobs(redis_url, jobs.target, tmp_path, entry_digest).submit(dataset, request["parameters"])
+    assert deliver(Jobs(redis_url, jobs.target, tmp_path, worker_digest), job_id, request) == "SUCCESS"
+    assert runs == [job_id]
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=AUTHORIZED).json()["state"] == "completed"

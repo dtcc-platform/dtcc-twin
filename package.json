@@ -26,6 +26,7 @@
     "dev:engine": "docker compose --profile engine up --build engine engine-worker",
     "engine:lock": "docker compose --profile engine-lock run --rm engine-lock",
     "engine:check:prod": "sh apps/engine/check-prod.sh",
+    "engine:check:hosts": "sh apps/engine/check-hosts.sh",
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run test:e2e && pnpm run build"
   },
   "devDependencies": {
