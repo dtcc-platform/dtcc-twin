@@ -568,11 +568,15 @@ containers from the Engine production image described below. Native
 installations and macOS hosts are not deployment targets; macOS is used only
 for development through Docker. Kubernetes is not required. Use the container
 runtime's restart policies and Celery operations rather than building a service
-manager into Engine.
+manager into Engine. The `dtcc-infra` repository deploys Engine and verifies its
+deployments on Linux hosts.
 
-Configuration supplies the central broker/result-backend connection, one
-shared Engine HTTP token, the local target identity, the static remote-target
-list, per-host concurrent-job limits, and local temporary result directories.
+Configuration supplies the central broker/result-backend connection
+(`ENGINE_REDIS_URL`), one shared Engine HTTP token (`ENGINE_API_TOKEN`), the
+local target identity (`ENGINE_TARGET`), the static remote-target list
+(`ENGINE_REMOTE_TARGETS`), the host's image digest (`ENGINE_IMAGE_DIGEST`),
+per-host concurrent-job limits (the worker's `--concurrency`), and local
+temporary result directories (`ENGINE_PACKAGE_DIR`).
 Each remote target is an identifier and the base address of its Engine HTTP
 service, without credentials; the entry service sends the shared token only to
 those addresses and follows no redirects.
@@ -596,14 +600,27 @@ containers from the same production image. A production deployment provides:
 - TLS termination by a reverse proxy in front of the entry service; Engine's
   HTTP port is not exposed directly to a public network.
 - The API token as a secret; the production image has no default token.
-- A persistent volume for the local temporary package directory, so completed
-  packages survive container restarts during the retention period.
-- A persistent volume for the FEniCSx form-compilation cache, so restarts do
-  not recompile the forms of every simulation.
+- A persistent volume for the local temporary package directory, mounted at
+  `/home/engine/packages` in both of a host's containers, so completed packages
+  survive container restarts during the retention period.
+- A persistent volume for the FEniCSx form-compilation cache, mounted at
+  `/home/engine/.cache/fenics` in the worker's container, so restarts do not
+  recompile the forms of every simulation.
+- Write access to both directories for the image's user, uid 10001: a new
+  named volume takes that owner from the image, and a mounted host directory
+  must be owned by it.
 - Shared memory sized for MPI and PETSc, because Docker's default of 64 MB is
   insufficient, and thread-count settings such as `OMP_NUM_THREADS` that match
   the CPUs allocated to each job.
 - An external Redis service.
+
+The worker's container runs `celery --app dtcc_engine.worker worker --hostname
+celery@<ENGINE_TARGET> --concurrency <job limit>` and overrides the image's
+health check with `/opt/conda/envs/engine/bin/celery --app dtcc_engine.worker
+inspect ping --destination celery@$ENGINE_TARGET`, which succeeds only while
+the worker answers through the broker. A worker's warm shutdown waits for the
+jobs it runs; stopped with a shorter deadline, the worker is killed with them,
+and they fail with `WorkerRestarted` when it starts again.
 
 The image digest identifies the complete environment: Engine, Core, Sim,
 Celery, Python, and the numerical stack. In v1, every host in a deployment runs
@@ -621,6 +638,11 @@ can import Dataset descriptors is not automatically a working numerical
 execution environment; worker execution and Sim's specialized dependencies
 must be exercised in the production image on a Linux host.
 
+A rebuild does not reproduce the image: the pip dependencies of Core and Sim
+that conda does not provide are not locked, so a rebuild can install other
+versions and has another digest. A deployment therefore builds the image once,
+runs that image on every host, and supplies its digest to each.
+
 ## Engine image
 
 One Dockerfile in `apps/engine/` defines two build targets. They share the
@@ -636,7 +658,10 @@ production run the same numerical stack.
   and keeps only the build tools needed at runtime, which is a C compiler,
   because FEniCSx compiles forms when a simulation runs. Its conda environment
   is resolved from a lock file. Test packages that Core itself depends on, such
-  as pytest, remain until Core removes them upstream.
+  as pytest, remain until Core removes them upstream. It creates the directories
+  that a deployment's package and FEniCSx cache volumes are mounted on, owned by
+  its user, because a new volume takes the owner of the directory it is mounted
+  on, and Docker creates a missing one as root.
 - The image's health check probes the HTTP service's health route. Worker
   containers override it with a Celery-specific check, because a worker serves
   no HTTP; both containers' health is verified.

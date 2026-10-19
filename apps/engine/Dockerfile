@@ -78,5 +78,7 @@ RUN --mount=type=bind,target=/src,rw pip install --no-cache-dir --no-deps /src \
     && useradd --create-home --uid 10001 engine
 USER engine
 WORKDIR /home/engine
+# A new volume takes the owner of the directory it is mounted on; Docker creates a missing one as root.
+RUN mkdir -p packages .cache/fenics
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --start-interval=5s \
     CMD ["/opt/conda/envs/engine/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]

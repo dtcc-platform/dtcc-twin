@@ -9841,7 +9841,7 @@ Expected: passes. Set Task 9's status in 5a's status line, leave changes uncommi
 
 ## Increment 5b: Production worker and deployment contract
 
-Status: expanded 2026-10-19 into Task 33, not yet executed. The plan's review of 2026-10-19 asked for a timeout on each of the check's new requests and for the removal of a clause naming an agent, both made the same day. Its second review, the same day, accepted it. On 2026-10-19 the user moved Engine's deployment to the `dtcc-infra` repository; this increment keeps what a deployment needs from the image and from DESIGN.md.
+Status: executed 2026-10-19, in Task 33, expanded the same day. The plan's review of 2026-10-19 asked for a timeout on each of the check's new requests and for the removal of a clause naming an agent, both made the same day. Its second review, the same day, accepted it. The plan is committed in `d68f8f5`. Task 33's results: with the checks written, `engine:check:prod` gave `1 failed, 19 passed` after 19 s, `test_package_and_form_cache_volumes_are_writable` with `PermissionError: [Errno 13] Permission denied: '/home/engine/packages/write-check'`, and the script stopped before it started the services and removed its project. With the image's directories, it gave `20 passed`; both containers reported healthy, the `smoke` job completed, and its package downloaded unchanged after both containers were recreated, in 42 s for the whole check. The check builds the API's and the worker's images separately, which got different IDs, `94f6321460ee` and `449917d9dc64`; it sets no image digest, so nothing compares them. `pnpm check` passed. After the run, DESIGN.md's list of what a deployment provides gained write access for the image's uid, which a mounted host directory must be owned by. The execution review, the same day, accepted it; it found the two images' layers equal, their configurations differing only in Compose's service label. Not run: `pnpm engine:check`, as neither the development target nor Engine's code changed; native x86_64 and the Container deployment row, which are `dtcc-infra`'s. On 2026-10-19 the user moved Engine's deployment to the `dtcc-infra` repository; this increment keeps what a deployment needs from the image and from DESIGN.md.
 
 **Scope:** what a deployment needs from the Engine image, checked locally: the worker run from the production image, with its Celery-specific health check; package and FEniCSx cache volumes that the image's user, uid 10001, can write; and DESIGN.md's deployment contract for `dtcc-infra`: the configuration's variables, the worker's command and health check, the volumes' paths, how a worker that runs jobs stops, and that a deployment builds the image once and runs it on every host. Deploying Engine is `dtcc-infra`'s (Expansion).
 
@@ -9899,7 +9899,7 @@ The tasks:
 - Consumes: 5a's `prod` target and its `HEALTHCHECK`; the worker's command of `compose.yaml`'s `engine-worker` (Task 25); the job routes; Core's `smoke` Dataset.
 - Produces: a production image whose user can write the package and FEniCSx cache volumes; `pnpm engine:check:prod` with the production worker and its health check; the deployment contract in DESIGN.md.
 
-- [ ] **Step 1: Write the failing checks**
+- [x] **Step 1: Write the failing checks**
 
 Append to `apps/engine/prod_checks/test_prod_image.py`:
 
@@ -10042,12 +10042,12 @@ echo "prod worker: healthy, ran a smoke job, and its package outlasted recreated
 Run from `apps/engine`: `uvx ruff@0.6.9 check --select I,F --line-length 120 prod_checks` and `uvx ruff@0.6.9 format --check --line-length 120 prod_checks`; from the repository root, `npx --yes prettier@3.9.6 --check compose.yaml`.
 Expected: all pass.
 
-- [ ] **Step 2: Confirm the new test fails**
+- [x] **Step 2: Confirm the new test fails**
 
 Run: `pnpm engine:check:prod`
 Expected: the prod checks give `1 failed, 19 passed`; `test_package_and_form_cache_volumes_are_writable` fails with `PermissionError: [Errno 13] Permission denied: '/home/engine/packages/write-check'`; the script exits with 1 before it starts the services, and removes its project. Any other failure means the check is wrong, not the image.
 
-- [ ] **Step 3: Create the directories in the image**
+- [x] **Step 3: Create the directories in the image**
 
 In `apps/engine/Dockerfile`, add after the `prod` stage's `WORKDIR /home/engine`:
 
@@ -10056,12 +10056,12 @@ In `apps/engine/Dockerfile`, add after the `prod` stage's `WORKDIR /home/engine`
 RUN mkdir -p packages .cache/fenics
 ```
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `pnpm engine:check:prod`
 Expected: `20 passed`; `prod API: healthy, rejects a missing token, accepts the configured token`; `prod worker: healthy, ran a smoke job, and its package outlasted recreated containers`; exit 0. Record the check's duration.
 
-- [ ] **Step 5: Give the deployment contract**
+- [x] **Step 5: Give the deployment contract**
 
 In `apps/engine/DESIGN.md`, in Deployment and authentication, replace the paragraph that begins "The deployment target is Linux hosts" and the sentence that begins "Configuration supplies the central broker/result-backend connection", which starts the next paragraph, with:
 
@@ -10134,12 +10134,12 @@ In Engine image, replace the bullet that begins "`prod` is the deployment image.
   on, and Docker creates a missing one as root.
 ```
 
-- [ ] **Step 6: Validate**
+- [x] **Step 6: Validate**
 
 Run: `npx --yes prettier@3.9.6 --check compose.yaml apps/engine/DESIGN.md apps/engine/PLAN.md` and `pnpm check`.
 Expected: both pass. `pnpm engine:check` is not run (Decisions).
 
-- [ ] **Step 7: Stop for review**
+- [x] **Step 7: Stop for review**
 
 Set Increment 5b's status to executed with the date and Steps 2 and 4's results, leave changes uncommitted, and report passed, failed, skipped, and not-run checks.
 

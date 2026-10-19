@@ -97,3 +97,12 @@ def test_fenicsx_compiles_a_form_into_an_empty_cache(tmp_path: Path) -> None:
     domain = mesh.create_unit_cube(MPI.COMM_WORLD, 1, 1, 1)
     fem.form(fem.Constant(domain, 1.0) * ufl.dx(domain=domain), jit_options={"cache_dir": tmp_path})
     assert any(tmp_path.iterdir())
+
+
+def test_package_and_form_cache_volumes_are_writable() -> None:
+    # check-prod.sh mounts new volumes on both directories. A new volume takes the owner of the image's directory at
+    # its mount point, and Docker creates a missing one as root; ~/.cache/fenics is FEniCSx's cache by default.
+    for directory in (Path(os.environ["ENGINE_PACKAGE_DIR"]), Path.home() / ".cache" / "fenics"):
+        probe = directory / "write-check"
+        probe.touch()
+        probe.unlink()
