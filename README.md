@@ -13,12 +13,12 @@ This project is part of the [Digital Twin Platform (DTCC Platform)](https://gith
 
 TypeScript / ESM monorepo managed with pnpm workspaces, plus the Python engine.
 
-| Package                                              | What it is                                                                                                     |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| [`apps/frontend`](apps/frontend/README.md)           | The web app: React SPA with TanStack Router                                                                    |
-| [`apps/backend`](apps/backend/README.md)             | NestJS API under `/api`                                                                                        |
-| [`apps/engine`](apps/engine/AGENTS.md)               | DTCC Engine, a Python API over DTCC Core and Sim that serves Dataset discovery, local jobs, and their packages |
-| [`packages/contracts`](packages/contracts/README.md) | Zod schemas and types shared by the backend and the frontend                                                   |
+| Package                                              | What it is                                                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [`apps/frontend`](apps/frontend/README.md)           | The web app: React SPA with TanStack Router                                                                               |
+| [`apps/backend`](apps/backend/README.md)             | NestJS API under `/api`                                                                                                   |
+| [`apps/engine`](apps/engine/AGENTS.md)               | DTCC Engine, a Python API over DTCC Core and Sim that serves Dataset discovery, local and remote jobs, and their packages |
+| [`packages/contracts`](packages/contracts/README.md) | Zod schemas and types shared by the backend and the frontend                                                              |
 
 Table, the experience projected onto physical city models, will be `apps/table`.
 
