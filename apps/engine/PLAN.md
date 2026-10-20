@@ -18,7 +18,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 - **Increments 2 to 6** are specified by scope, upstream interfaces, checks, and blockers. Each is expanded into executable tasks, in this file, when its prerequisites are verified. Expanding an increment is a plan change and is reviewed like one.
 - **Increment 2 is split.** 2a, local execution and packaging, runs with the current pins and is expanded into Tasks 10 to 14; 2b, execution of FEniCSx simulations, moves the pins to the Sim commit that fixes them and is expanded into Tasks 15 and 16. Cancellation moves to increment 4, whose cancellation section records the decision to use an Engine start/cancel gate after investigating Celery revocation.
 - **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part of the production image and what a deployment needs from the image, is expanded into Task 33; on 2026-10-19 the user moved the deployment on Linux hosts to the `dtcc-infra` repository.
-- **Progress, 2026-10-20:** increments 0 to 5 are executed, in Tasks 1 to 33, and merged into `develop`. Increment 6 is not expanded yet: it waits on Core's decision on `RemoteDatasetDescriptor`.
+- **Progress, 2026-10-20:** increments 0 to 5 are executed, in Tasks 1 to 33, and merged into `develop`. Increment 6 is not expanded yet: it waits on Core's decision on `RemoteDatasetDescriptor` ([dtcc-core#161](https://github.com/dtcc-platform/dtcc-core/issues/161)).
 
 ## Global Constraints
 
@@ -10152,7 +10152,7 @@ Set Increment 5b's status to executed with the date and Steps 2 and 4's results,
 
 **Checks:** the Service replacement row of the acceptance table; each inventoried consumer has a verified transition; retirement is complete only when the upstream change lands.
 
-**Blockers:** Core's compatibility decision on whether `RemoteDatasetDescriptor` is adapted to Engine's API (including its token) or retired; the spec says this requires a separate Core decision.
+**Blockers:** Core's compatibility decision on whether `RemoteDatasetDescriptor` is adapted to Engine's API (including its token) or retired; the spec says this requires a separate Core decision, which [dtcc-core#161](https://github.com/dtcc-platform/dtcc-core/issues/161) requests.
 
 ## Explicitly deferred beyond v1
 

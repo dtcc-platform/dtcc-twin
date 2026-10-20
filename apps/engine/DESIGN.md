@@ -158,8 +158,10 @@ Core's `RemoteDatasetDescriptor` is a Python client, not the mini-service being
 replaced. Engine workers invoke local Dataset APIs directly and do not use that
 client for internal task dispatch. Adapting existing Python clients to Engine's
 API, or changing the remote Dataset client's lifecycle, requires a separate
-Core compatibility decision. Replacing the Sim mini-service does not itself
-authorize removing the Core client.
+Core compatibility decision, requested in
+[dtcc-core#161](https://github.com/dtcc-platform/dtcc-core/issues/161).
+Replacing the Sim mini-service does not itself authorize removing the Core
+client.
 
 ## Discovery and compatibility
 
