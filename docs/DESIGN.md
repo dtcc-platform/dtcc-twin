@@ -631,7 +631,8 @@ properties:
 The following choices are intentionally left to later product, UX, and
 implementation work within the boundaries above:
 
-- frontend frameworks and rendering technologies;
+- frontend frameworks other than the web app's, React and Vite (see
+  [its README](../apps/frontend/README.md)), and rendering technologies;
 - runtime service and deployment topology;
 - the authoring syntax for Table Models, Table Installations, and releases;
 - the exact baseline Dataset recipe and measured targets for generation,
