@@ -391,6 +391,26 @@ def test_unconfirmed_submission_keeps_the_job_and_reports_it(
     assert (job["job_id"], job["state"]) == (detail["job_id"], "unconfirmed")
 
 
+@pytest.mark.parametrize("root_path", ["", "/engine"])
+def test_status_urls_include_the_root_path(jobs: Jobs, monkeypatch: pytest.MonkeyPatch, root_path: str) -> None:
+    # A gateway that strips a path prefix, here /engine, has Uvicorn's --root-path set to it; the requests arrive
+    # without the prefix, and the URLs given back must carry it. Following them alone would pass without the prefix,
+    # since Starlette also routes the unprefixed path, so the test compares them.
+    monkeypatch.setattr(jobs, "observe", lambda target: {"state": "busy", "reason": None})
+    client = TestClient(create_app(TOKEN, jobs), root_path=root_path)
+    accepted = client.post("/api/v1/jobs", json=SMOKE, headers=AUTHORIZED).json()
+    cancelled = cancel(client, accepted["job_id"]).json()
+
+    def lose_the_confirmation(*args, **kwargs):
+        raise OperationalError("connection lost before the broker replied")
+
+    monkeypatch.setattr(jobs.sender, "send_task", lose_the_confirmation)
+    unconfirmed = client.post("/api/v1/jobs", json=SMOKE, headers=AUTHORIZED).json()["detail"]
+    for body in (accepted, cancelled, unconfirmed):
+        assert body["status_url"] == f"{root_path}/api/v1/jobs/{body['job_id']}"
+        assert client.get(body["status_url"], headers=AUTHORIZED).json()["job_id"] == body["job_id"]
+
+
 def test_job_runs_in_the_worker_into_a_valid_canonical_package(served_client: TestClient, served_jobs: Jobs) -> None:
     job_id = submit(served_client, SMOKE)
     job = wait_until(served_client, job_id, lambda job: job["state"] == "completed")

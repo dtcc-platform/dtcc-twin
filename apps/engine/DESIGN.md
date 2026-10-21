@@ -336,6 +336,10 @@ leaves the caller uncertain until polling resolves the outcome. Unknown or expir
 jobs and temporary status unavailability must be distinguishable from queued
 work.
 
+A status reference, `status_url`, is the path of the job's status route from
+the server's root. Behind a reverse proxy that serves Engine under a path prefix
+it includes that prefix, the API's ASGI root path.
+
 An explicit Engine outcome of `completed`, `failed`, or `cancelled` is
 authoritative over Celery metadata. A finish timestamp alone does not establish
 an outcome. Celery still supplies observed task state and progress when no
@@ -615,6 +619,9 @@ containers from the same production image. A production deployment provides:
   insufficient, and thread-count settings such as `OMP_NUM_THREADS` that match
   the CPUs allocated to each job.
 - An external Redis service.
+- Behind a reverse proxy that strips a path prefix, that prefix as the API's
+  root path, for example `UVICORN_ROOT_PATH=/engine`, so that the status
+  references Engine returns include it.
 
 The worker's container runs `celery --app dtcc_engine.worker worker --hostname
 celery@<ENGINE_TARGET> --concurrency <job limit>` and overrides the image's

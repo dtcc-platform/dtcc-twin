@@ -359,7 +359,7 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
         return registered[name].describe()
 
     @app.post("/api/v1/jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_token)])
-    def submit_job(request: JobRequest) -> dict[str, str]:
+    def submit_job(request: JobRequest, http_request: Request) -> dict[str, str]:
         registered = datasets.list()
         if request.dataset not in registered:
             raise HTTPException(
@@ -399,10 +399,10 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
                 detail={
                     "message": "The queue did not confirm the job, which may still run; poll it before resubmitting",
                     "job_id": unconfirmed.job_id,
-                    "status_url": f"/api/v1/jobs/{unconfirmed.job_id}",
+                    "status_url": http_request.url_for("job_status", job_id=unconfirmed.job_id).path,
                 },
             ) from None
-        return {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}"}
+        return {"job_id": job_id, "status_url": http_request.url_for("job_status", job_id=job_id).path}
 
     @app.get("/api/v1/jobs/{job_id}", dependencies=[Depends(require_token)])
     def job_status(job_id: str) -> dict[str, Any]:
@@ -412,7 +412,7 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
         return job
 
     @app.post("/api/v1/jobs/{job_id}/cancel", dependencies=[Depends(require_token)])
-    def cancel_job(job_id: str) -> dict[str, str]:
+    def cancel_job(job_id: str, http_request: Request) -> dict[str, str]:
         try:
             result = jobs.cancel(job_id)
         except (RedisError, JobStateUnavailable):
@@ -430,7 +430,11 @@ def create_app(api_token: str, jobs: Jobs, remote_targets: dict[str, str] | None
             ) from None
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' is unknown or expired")
-        return {"job_id": job_id, "status_url": f"/api/v1/jobs/{job_id}", "result": result}
+        return {
+            "job_id": job_id,
+            "status_url": http_request.url_for("job_status", job_id=job_id).path,
+            "result": result,
+        }
 
     @app.get("/api/v1/jobs/{job_id}/package", dependencies=[Depends(require_token)])
     def download_package(job_id: str) -> Response:
