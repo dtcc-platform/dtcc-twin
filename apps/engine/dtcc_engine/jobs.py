@@ -32,9 +32,13 @@ from kombu.pidbox import Mailbox
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 VERSIONED_PACKAGES = ("dtcc-engine", "dtcc-core", "dtcc-sim")
+# How long a finished job and its package stay available, unless the deployment sets ENGINE_RETENTION_DAYS.
 RETENTION = timedelta(days=30)
-# A day beyond the retention, so a job's records outlast its package even if hosts' clocks differ slightly.
-RECORD_LIFETIME = RETENTION + timedelta(days=1)
+# How much longer than the retention a job's records last, so they outlast its package even if hosts' clocks differ
+# slightly.
+RECORD_MARGIN = timedelta(days=1)
+RECORD_LIFETIME = RETENTION + RECORD_MARGIN
+RETENTION_DAYS_PATTERN = re.compile(r"[1-9][0-9]*")
 RUN_DATASET = "dtcc_engine.run_dataset"
 # How often a worker deletes the packages that no job can deliver.
 CLEANUP_INTERVAL = timedelta(hours=1)
@@ -270,12 +274,22 @@ class Jobs:
         package_dir: Directory of completed packages, shared by this host's API and worker.
         image_digest: The platform-specific digest of the image this host runs, `sha256:` and 64 lowercase
             hexadecimal digits, if the deployment supplies it.
+        retention: How long a finished job and its package stay available; every API and worker sharing the Redis
+            must use the same.
 
     Raises:
         ValueError: If the target identifier or the image digest is malformed.
     """
 
-    def __init__(self, redis_url: str, target: str, package_dir: Path, image_digest: str | None = None) -> None:
+    def __init__(
+        self,
+        redis_url: str,
+        target: str,
+        package_dir: Path,
+        image_digest: str | None = None,
+        *,
+        retention: timedelta = RETENTION,
+    ) -> None:
         if not TARGET_PATTERN.fullmatch(target):
             raise ValueError(f"Target identifier {target!r} is not lowercase words joined by single hyphens")
         if image_digest is not None and not IMAGE_DIGEST_PATTERN.fullmatch(image_digest):
@@ -283,6 +297,8 @@ class Jobs:
         self.target = target
         self.image_digest = image_digest
         self.package_dir = package_dir
+        self.retention = retention
+        self.record_lifetime = retention + RECORD_MARGIN
         self.records = redis.Redis.from_url(redis_url, decode_responses=True)
         self.queued_script = self.records.register_script(QUEUED)
         self.start_script = self.records.register_script(START)
@@ -297,7 +313,7 @@ class Jobs:
         self.celery_app.conf.update(
             task_default_queue=target,
             task_track_started=True,
-            result_expires=RECORD_LIFETIME,
+            result_expires=self.record_lifetime,
             # Redis redelivers a message left unacknowledged for an hour, so a job must not wait inside the worker.
             worker_disable_prefetch=True,
         )
@@ -399,7 +415,7 @@ class Jobs:
         with self.records.pipeline() as pipeline:
             pipeline.hset(key, mapping={**acceptance, "execution_gate": "waiting"})
             # The record of a job that never finishes expires too.
-            pipeline.expire(key, RECORD_LIFETIME)
+            pipeline.expire(key, self.record_lifetime)
             pipeline.execute()
         try:
             self.sender.send_task(RUN_DATASET, args=[dataset_name, parameters], task_id=job_id, queue=target)
@@ -478,7 +494,7 @@ class Jobs:
         if record is None:
             return None
         finished_at = record["finished_at"]
-        if finished_at is not None and datetime.now(UTC) >= finished_at + RETENTION:
+        if finished_at is not None and datetime.now(UTC) >= finished_at + self.retention:
             return None
         state = record["outcome"] or CELERY_STATES.get(meta["status"])
         if state is None:
@@ -502,7 +518,7 @@ class Jobs:
                 {
                     # Another target's package is on its host, which only the API can ask.
                     "available": self.package_path(job_id).is_file() if record["target"] == self.target else None,
-                    "expires_at": (finished_at + RETENTION).isoformat(),
+                    "expires_at": (finished_at + self.retention).isoformat(),
                 }
                 if state == "completed"
                 else None
@@ -525,14 +541,15 @@ class Jobs:
         if self.read_record(job_id) is None:
             return None
         finished_at = datetime.now(UTC).isoformat()
-        answer = self.cancel_script(keys=[record_key(job_id)], args=[finished_at, int(RECORD_LIFETIME.total_seconds())])
+        lifetime = int(self.record_lifetime.total_seconds())
+        answer = self.cancel_script(keys=[record_key(job_id)], args=[finished_at, lifetime])
         if answer == "started":
             raise ExecutionStarted(job_id)
         if answer == "unusable":
             raise JobStateUnavailable(job_id)
         # A recorded outcome never changes, so this read sees the one the cancellation found or made.
         record = self.read_record(job_id)
-        if record is None or datetime.now(UTC) >= record["finished_at"] + RETENTION:
+        if record is None or datetime.now(UTC) >= record["finished_at"] + self.retention:
             return None
         return "cancelled" if record["outcome"] == "cancelled" else "already_finished"
 
@@ -579,7 +596,7 @@ class Jobs:
         try:
             # Checks the acceptance fields, which never change once written; the claim checks the rest.
             self.read_record(job_id)
-            lifetime = int(RECORD_LIFETIME.total_seconds())
+            lifetime = int(self.record_lifetime.total_seconds())
             environment = [json.dumps(installed_versions()), self.image_digest or ""]
             failure = [datetime.now(UTC).isoformat(), "IncompatibleWorker"]
             answer = self.start_script(keys=[record_key(job_id)], args=[claim, lifetime, *environment, *failure])
@@ -600,7 +617,7 @@ class Jobs:
             redis.RedisError: If Redis did not answer; the outcome may or may not be recorded.
         """
         finished_at = datetime.now(UTC).isoformat()
-        lifetime = int(RECORD_LIFETIME.total_seconds())
+        lifetime = int(self.record_lifetime.total_seconds())
         details = json.dumps(upstream) if upstream else ""
         answer = self.finish_script(
             keys=[record_key(job_id)], args=[outcome, finished_at, lifetime, error_type, details]
@@ -624,7 +641,7 @@ class Jobs:
                 except JobStateUnavailable:
                     continue
                 outcome = record["outcome"] if record else None
-                expired = outcome == "completed" and now >= record["finished_at"] + RETENTION
+                expired = outcome == "completed" and now >= record["finished_at"] + self.retention
                 if record is None or outcome in ("failed", "cancelled") or expired:
                     path.unlink(missing_ok=True)
                     logger.info("Deleted package %s, which no job can deliver", path.name)
@@ -756,7 +773,7 @@ class Jobs:
             else:
                 continue
             finished_at = datetime.now(UTC).isoformat()
-            lifetime = int(RECORD_LIFETIME.total_seconds())
+            lifetime = int(self.record_lifetime.total_seconds())
             answer = self.lost_script(keys=[record_key(job_id)], args=[claim, error_type, finished_at, lifetime])
             if answer == "recorded":
                 logger.warning("Job %s failed with %s: %s, which claimed it, is gone", job_id, error_type, claim)
@@ -764,10 +781,19 @@ class Jobs:
 
 def jobs_from_environment() -> Jobs:
     """Create this host's jobs from `ENGINE_REDIS_URL`, `ENGINE_TARGET`, `ENGINE_PACKAGE_DIR`, and the optional
-    `ENGINE_IMAGE_DIGEST`, which, unset or empty, means that the deployment supplies no digest."""
+    `ENGINE_IMAGE_DIGEST`, which, unset or empty, means that the deployment supplies no digest, and
+    `ENGINE_RETENTION_DAYS`, a positive whole number of days, 30 if unset.
+
+    Raises:
+        ValueError: If `ENGINE_RETENTION_DAYS` is set and not a positive whole number.
+    """
+    days = os.environ.get("ENGINE_RETENTION_DAYS")
+    if days is not None and not RETENTION_DAYS_PATTERN.fullmatch(days):
+        raise ValueError(f"ENGINE_RETENTION_DAYS {days!r} is not a positive whole number of days")
     return Jobs(
         os.environ["ENGINE_REDIS_URL"],
         os.environ["ENGINE_TARGET"],
         Path(os.environ["ENGINE_PACKAGE_DIR"]),
         os.environ.get("ENGINE_IMAGE_DIGEST") or None,
+        retention=timedelta(days=int(days)) if days is not None else RETENTION,
     )

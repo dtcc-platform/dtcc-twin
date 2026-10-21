@@ -42,8 +42,9 @@ exposing both Core and Sim Dataset capabilities.
 - One consumer-facing Engine HTTP address for submission, status, cancellation,
   and package downloads.
 - A single shared configurable token for Engine HTTP authentication.
-- Results delivered as `.dtccpkg` packages and retained for 30 days after
-  completion, subject to the absence of recovery guarantees described below.
+- Results delivered as `.dtccpkg` packages and retained for a configured
+  period, 30 days by default, after completion, subject to the absence of
+  recovery guarantees described below.
 - Container deployments of the Engine production image on Linux hosts,
   self-hosted or on AWS EC2.
 
@@ -404,17 +405,28 @@ request to the host when the download ends, whether it completed, failed, or
 the consumer disconnected, and a stream that fails midway fails the download
 rather than end it as a shorter archive.
 
-Completed packages expire 30 days after job completion, measured as 30 periods
-of 24 hours using UTC timestamps. Downloads do not extend that period. Under
-normal operation, job-result metadata must remain available throughout the
-package retention window. Each host must automatically clean up expired package
+Completed packages expire the retention after job completion: the deployment's
+`ENGINE_RETENTION_DAYS`, 30 by default, measured as periods of 24 hours using
+UTC timestamps. Downloads do not extend that period. Under normal operation,
+job-result metadata must remain available throughout the package retention
+window. Each host must automatically clean up expired package
 files; broker metadata expiry alone is insufficient. Host outages can delay physical cleanup,
 but expired packages must not become newly available merely because their files
 remain on disk.
 
+Every API and worker that shares a Redis uses the same retention: each API
+computes a job's expiry, and each worker deletes packages, by its own setting,
+so hosts with different settings would disagree on whether a job is available.
+A job's records last a day longer than the retention, from the change of state
+that last set their lifetime. A changed setting applies to later changes of
+state and to every later expiry check, not to records already written: a
+finished job keeps the record lifetime set when it finished, so raising the
+retention does not keep it longer, and lowering it expires older jobs at once
+and deletes their packages at the next cleanup.
+
 Each host's worker deletes the packages that no job can deliver when it starts
 and every hour: those whose job is unknown or expired, failed, was cancelled, or
-completed more than 30 periods of 24 hours ago. A package stays while its job
+completed more than the retention ago. A package stays while its job
 has no outcome. Deleting a package is retention; it does not show that the
 job's computation stopped. When the worker starts, before it runs any job, it
 also deletes the staging directories that exports left beside the packages: the
@@ -422,7 +434,7 @@ host's worker is the only one that exports there, and it starts only after its
 earlier run stopped (Restart behavior), so those exports were killed. A staging
 directory left while the worker runs stays until the worker starts again.
 
-The 30-day period is a temporary retention policy, not a persistence guarantee.
+The retention is a temporary policy, not a persistence guarantee.
 Downstream consumers must store results they need to retain durably.
 
 ## Failures, cancellation, and restarts
@@ -466,7 +478,8 @@ before the operation keeps each decision atomic:
 - The worker changes `waiting` to `started` immediately before Dataset
   invocation. Only the delivery that wins this transition may compute.
 - Cancellation changes `waiting` to `cancelled` and records
-  `outcome=cancelled`, the UTC `finished_at`, and a 31-day record TTL together.
+  `outcome=cancelled`, the UTC `finished_at`, and a record TTL of the retention
+  plus a day together.
 
 Neither transition creates a record or overwrites a previous decision. Missing
 acceptance fields, a missing or unknown gate, and inconsistent outcome metadata
@@ -485,8 +498,8 @@ validation succeeds, or `outcome=failed` with the original exception type on
 failure. One conditional Lua operation checks that the record still exists with
 its `started` gate and no outcome, relying on the acceptance validation made when
 execution was claimed, then writes the outcome, UTC finish time, applicable
-exception metadata, and 31-day TTL together. It never creates a missing record
-or overwrites an existing outcome. No separate worker exception write may
+exception metadata, and a TTL of the retention plus a day together. It never
+creates a missing record or overwrites an existing outcome. No separate worker exception write may
 recreate a record. Lost records and packages left without usable records remain
 lifecycle concerns; they do not justify fabricating terminal metadata.
 
@@ -514,8 +527,8 @@ unconfirmed submission with a usable `waiting` record can also be cancelled.
 
 Cancelled status exposes the recorded finish time and no progress, error, or
 package. Download returns `409` until public expiry. Status, cancellation, and
-download return `404` from 30 periods of 24 hours after cancellation; the record
-is retained for 31 days. Polling, repeated cancellation, and later deliveries
+download return `404` from the retention after cancellation; the record is
+retained a day longer. Polling, repeated cancellation, and later deliveries
 do not extend either deadline.
 
 Engine sends no Celery revoke and does not terminate running jobs. No custom
@@ -546,8 +559,8 @@ before the worker checks any claim. A job whose worker is lost and not started
 again keeps the state last recorded, as does a job whose lost process still
 appears to exist, because Engine cannot tell whether the work stopped.
 
-Engine's record of a job that never finishes expires 31 days after the job's
-submission or, once a delivery claimed it, after the claim. The job is then
+Engine's record of a job that never finishes expires the retention plus a day
+after the job's submission or, once a delivery claimed it, after the claim. The job is then
 unknown, and a later delivery of it does not run. The expiry bounds the record;
 it does not show that the job stopped, and it neither cancels nor stops a job
 that still runs. A job that finishes after its record expired cannot record its
@@ -619,6 +632,8 @@ containers from the same production image. A production deployment provides:
   insufficient, and thread-count settings such as `OMP_NUM_THREADS` that match
   the CPUs allocated to each job.
 - An external Redis service.
+- The retention, `ENGINE_RETENTION_DAYS`, the same for every API and worker
+  sharing that Redis, when it is not the default of 30 days.
 - Behind a reverse proxy that strips a path prefix, that prefix as the API's
   root path, for example `UVICORN_ROOT_PATH=/engine`, so that the status
   references Engine returns include it.
@@ -838,7 +853,7 @@ one Engine address, whether execution was local or remote.
 | Failure reporting    | Dataset, required packaging, broker, and host failures produce the specified outcomes without automatic Dataset resubmission or false claims that work stopped.                                                                                        |
 | Cancellation         | The start/cancel gate is exercised with real workers; cancellation winning prevents execution, a start winner prevents cancellation, uncertain responses remain uncertain, and duplicate deliveries preserve terminal outcomes and retention.          |
 | Package correctness  | Core validation confirms manifest integrity, required canonical Protobuf content, and supported schema/root type; model-level tests demonstrate lossless round trips.                                                                                  |
-| Retention            | Completed packages remain retrievable during the 30-day retention window under normal operation, expire from the completion time, and are physically cleaned up; downloads do not reset expiry.                                                        |
+| Retention            | Completed packages remain retrievable during the configured retention window, 30 days by default, under normal operation, expire from the completion time, and are physically cleaned up; downloads do not reset expiry.                               |
 | Restart behavior     | Separate API, worker, and broker restarts do not promise recovery or force deletion of surviving work; unavailable and unknown state are reported honestly.                                                                                            |
 | Authentication       | HTTP endpoints other than the health route reject missing or invalid tokens and accept the configured token; remote discovery and delivery use the same authentication policy.                                                                         |
 | Container deployment | The production image runs the HTTP service and worker on a Linux host, completes representative Core and Sim jobs with their real numerical dependencies, and produces packages that Core validates; unavailable capabilities are explicitly reported. |
@@ -880,7 +895,7 @@ backends or schedulers.
 
 Guaranteed persistence and restart recovery must appear explicitly as deferred
 work in that plan. They must not be silently added through this release's
-30-day retention requirement or removed from the recorded future scope.
+retention requirement or removed from the recorded future scope.
 
 ## Supporting references
 
