@@ -67,7 +67,7 @@ From the repo root:
 | `pnpm format`                                | Format the repo with Prettier                                                                |
 | `pnpm db:push`                               | Sync the backend tables into `DATABASE_URL`                                                  |
 | `pnpm db:seed`                               | Add the sample users; asks before wiping a non-empty database                                |
-| `pnpm db:reset`                              | Recreate the compose database, push and seed                                                 |
+| `pnpm db:reset`                              | Recreate the database, push and seed; with Engine's profile on, deletes its volumes too      |
 | `pnpm engine:check`                          | Run the engine's tests in its image. Needs Docker                                            |
 | `pnpm dev:engine`                            | Engine API with automatic reload, Redis, and a worker requiring manual restart. Needs Docker |
 | `pnpm engine:check:prod`                     | Build the engine's production image and check it. Needs Docker                               |
@@ -91,8 +91,6 @@ The backend and the frontend typecheck against the contracts' source, but the ru
 ## License
 
 This project is licensed under the [MIT license](https://opensource.org/licenses/MIT).
-
-Copyrights are held by the individual authors as listed at the top of each source file.
 
 ## Community guidelines
 

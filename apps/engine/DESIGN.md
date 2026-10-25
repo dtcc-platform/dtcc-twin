@@ -2,7 +2,8 @@
 
 Date: 2026-09-06
 
-Status: Design agreed in discussion; written specification ready for review.
+Status: Agreed and implemented through increment 5 of the
+[implementation plan](PLAN.md), which records progress and what remains.
 
 ## Purpose and authority
 
@@ -293,9 +294,8 @@ or unavailable. There are no CPU or memory resource estimates in v1 scheduling.
 
 ## Consumer API contract
 
-Engine provides the following operations through its versioned HTTP API. The
-implementation plan will select concrete route and module names while
-preserving these operation contracts.
+Engine provides the following operations through its versioned HTTP API, under
+`/api/v1`.
 
 | Operation                 | Input                                                                                           | Output                                                                                                              |
 | ------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -394,16 +394,17 @@ copy at the entry host.
 Each host serves its own packages through a host-local route, which never
 forwards a request to another host. A completed job's status says whether its
 package can be downloaded; for a job of a remote target, the entry asks that
-target's host, and reports `null` when the host does not answer. A download
-through the entry streams the package from the job's host without asking for
-the job's status first, stores nothing at the entry, follows no redirects, and
-sends the shared token only to the configured address. A host without the
-package makes the download a `409`, as a local one is; a host that cannot be
-reached, rejects the token, or answers otherwise, and a target that is not
-configured, make it a `503`, without the host's answer. The entry closes its
-request to the host when the download ends, whether it completed, failed, or
-the consumer disconnected, and a stream that fails midway fails the download
-rather than end it as a shorter archive.
+target's host, and reports `null` when it cannot tell, for example because the
+host does not answer, rejects the token, or the target is not configured. A
+download through the entry streams the package from the job's host without
+asking for the job's status first, stores nothing at the entry, follows no
+redirects, and sends the shared token only to the configured address. A host
+without the package makes the download a `409`, as a local one is; a host that
+cannot be reached, rejects the token, or answers otherwise, and a target that is
+not configured, make it a `503`, without the host's answer. The entry closes its
+request to the host when the download ends, whether it completed, failed, or the
+consumer disconnected, and a stream that fails midway fails the download rather
+than end it as a shorter archive.
 
 Completed packages expire the retention after job completion: the deployment's
 `ENGINE_RETENTION_DAYS`, 30 by default, measured as periods of 24 hours using
@@ -426,13 +427,14 @@ and deletes their packages at the next cleanup.
 
 Each host's worker deletes the packages that no job can deliver when it starts
 and every hour: those whose job is unknown or expired, failed, was cancelled, or
-completed more than the retention ago. A package stays while its job
-has no outcome. Deleting a package is retention; it does not show that the
-job's computation stopped. When the worker starts, before it runs any job, it
-also deletes the staging directories that exports left beside the packages: the
-host's worker is the only one that exports there, and it starts only after its
-earlier run stopped (Restart behavior), so those exports were killed. A staging
-directory left while the worker runs stays until the worker starts again.
+completed more than the retention ago. A package stays while its job has no
+outcome or its record is unusable. Deleting a package is retention; it does not
+show that the job's computation stopped. When the worker starts, before it runs
+any job, it also deletes the staging directories that exports left beside the
+packages: the host's worker is the only one that exports there, and it starts
+only after its earlier run stopped (Restart behavior), so those exports were
+killed. A staging directory left while the worker runs stays until the worker
+starts again.
 
 The retention is a temporary policy, not a persistence guarantee.
 Downstream consumers must store results they need to retain durably.
@@ -594,11 +596,19 @@ Configuration supplies the central broker/result-backend connection
 (`ENGINE_REDIS_URL`), one shared Engine HTTP token (`ENGINE_API_TOKEN`), the
 local target identity (`ENGINE_TARGET`), the static remote-target list
 (`ENGINE_REMOTE_TARGETS`), the host's image digest (`ENGINE_IMAGE_DIGEST`),
-per-host concurrent-job limits (the worker's `--concurrency`), and local
-temporary result directories (`ENGINE_PACKAGE_DIR`).
-Each remote target is an identifier and the base address of its Engine HTTP
-service, without credentials; the entry service sends the shared token only to
-those addresses and follows no redirects.
+the retention (`ENGINE_RETENTION_DAYS`), per-host concurrent-job limits (the
+worker's `--concurrency`), and local temporary result directories
+(`ENGINE_PACKAGE_DIR`). Uvicorn's `UVICORN_ROOT_PATH` sets the API's root path.
+Each remote target is an identifier and the base `http` or `https` address of
+its Engine HTTP service, without credentials, query, or fragment; the entry
+service sends the shared token only to those addresses and follows no
+redirects.
+Engine refuses to start with a value it cannot use. A target identifier matches
+`[a-z0-9]+(-[a-z0-9]+)*`. `ENGINE_REMOTE_TARGETS` is a comma-separated list of
+`<identifier>=<address>`, each identifier once and none the local target's. An
+image digest is `sha256:` and 64 lowercase hexadecimal digits; unset or empty
+means none. The retention is a positive whole number of days, written without a
+sign, spaces, or a leading zero; unset means 30.
 All Engine HTTP services use the shared token; there are no per-consumer roles.
 The only exception is an unauthenticated health route that reports liveness and
 returns no Dataset, job, or version information, so that process supervisors
@@ -719,7 +729,7 @@ Both targets follow these rules:
   dropped connection, instead of raising an error that Engine, Celery, or the
   Redis client can handle, and would catch the termination signal that the HTTP
   service and the worker handle themselves. A deployment that sets its own
-  PETSc options keeps this one.
+  PETSc options must also include `-no_signal_handler`.
 
 For local development, the root `compose.yaml` places Engine services behind
 the `engine` profile, so developers who work only on the frontend or backend
@@ -737,9 +747,11 @@ volume mesh of a small city; and that a process that imports Engine raises an
 error, rather than aborting, when it writes to a closed connection.
 
 The frontend does not call Engine directly. The shared Engine token must not be
-exposed to browsers, so the Twin backend holds the token and forwards the Engine
-requests that the frontend needs. The frontend continues to use only the
-backend's `/api` address.
+exposed to browsers, so the Twin backend forwards the Engine requests that the
+frontend needs. It holds the token when it calls Engine directly. Behind a
+gateway that admits callers with keys of its own and adds the token itself, the
+backend holds a gateway key instead, and only the gateway holds the token. The
+frontend continues to use only the backend's `/api` address.
 
 Passing tests in the `dev` target verify the shared environment layers.
 Production acceptance requires the `prod` image running on a Linux host.
@@ -871,8 +883,8 @@ the hardware and software versions. Use these measurements to inform later
 targets; do not present measurements as previously agreed performance limits.
 
 Validation reports must distinguish passed, failed, skipped, and not-run checks.
-This specification records intended behavior. No Engine implementation or
-runtime validation was performed as part of writing it.
+This specification records intended behavior; the
+[implementation plan](PLAN.md) records what was implemented and checked.
 
 ## Required contents of the implementation plan
 
