@@ -84,7 +84,7 @@ The backend and the frontend typecheck against the contracts' source, but the ru
 ## Repo tooling
 
 - **Git hooks** (Lefthook, installed by `pnpm install`): pre-commit checks formatting and lint on staged files; pre-push runs typecheck and unit tests.
-- **CI** (GitHub Actions): a frozen install and `pnpm check` on pull requests and pushes to `main`.
+- **CI** (GitHub Actions): a frozen install and `pnpm check` on pull requests and pushes to `main` and `develop`.
 - **Dependencies:** shared versions and install policy live in `pnpm-workspace.yaml`: strict Node and peer checks, and a seven-day delay before a new release can be installed.
 - **Editor:** VS Code formats with Prettier on save and runs ESLint per package; the recommended extensions are listed.
 
