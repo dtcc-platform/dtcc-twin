@@ -21,10 +21,6 @@ strictPeerDependencies: true
 # Seven days; fail closed when a package has no publication date.
 minimumReleaseAge: 10080
 minimumReleaseAgeIgnoreMissingTime: false
-# Temporary: @nestjs/drizzle 0.0.1 (2026-09-23) is inside the window. Delete this block and re-run
-# install from 2026-09-30.
-minimumReleaseAgeExclude:
-  - "@nestjs/drizzle"
 
 allowBuilds:
   # Root prepare installs the hooks; block the dependency's own postinstall.
