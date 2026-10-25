@@ -1,6 +1,6 @@
 # Agent guidelines
 
-Read [README.md](README.md) and [CONVENTIONS.md](CONVENTIONS.md) before making changes. Each package's rules are in its own `CONVENTIONS.md`; read them before you change that package.
+Read [README.md](README.md) and [CONVENTIONS.md](CONVENTIONS.md) before making changes. Each package's rules are in its own `CONVENTIONS.md`, and the engine's in [apps/engine/AGENTS.md](apps/engine/AGENTS.md); read them before you change that package.
 
 - **Git is read-only.** Never stage, unstage, commit, or otherwise mutate Git state, including branches, worktrees, stashes, hooks, or Git configuration. The team reviews, adjusts, stages, and commits changes.
 - **Plan before coding.** Verify assumptions, consider simpler alternatives, and settle the design and test approach upfront. Discuss unresolved tradeoffs and likely review objections before implementation; extra planning is preferable to avoidable rework.
