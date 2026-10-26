@@ -12,6 +12,7 @@ vi.hoisted(() => {
 });
 const { createTestApp } = await import("../helpers/create-test-app.js");
 const { authHeader } = await import("../helpers/auth.js");
+const { UsersService } = await import("../../src/modules/users/users.service.js");
 
 describe("Without a configured engine (e2e)", () => {
   let app: INestApplication<App>;
@@ -39,9 +40,13 @@ describe("Without a configured engine (e2e)", () => {
   it("answers a job submission with SERVICE_UNAVAILABLE", async () => {
     vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
 
+    // Submitting needs an active account, so the user must exist.
+    const user = await app
+      .get(UsersService)
+      .create({ email: "ada@example.com", name: "Ada", password: "correct horse" });
     const response = await request(app.getHttpServer())
       .post("/api/jobs")
-      .set(await authHeader("user"))
+      .set(await authHeader("user", { userId: user.id }))
       .send({ dataset: "smoke", parameters: {} })
       .expect(503);
 

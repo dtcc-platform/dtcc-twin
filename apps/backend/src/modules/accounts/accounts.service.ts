@@ -36,6 +36,12 @@ export class AccountsService {
     return this.users.update(id, changes);
   }
 
+  /** Creates an active admin when there is none, as a deploy's migrate step does; otherwise changes nothing. */
+  async ensureAdmin(email: string, password: string): Promise<User | undefined> {
+    if (await this.users.hasActiveAdmin()) return undefined;
+    return this.users.create({ email, name: "Admin", password, role: "admin" });
+  }
+
   async setStatus(id: string, status: SetUserStatusBody["status"], callerId: string): Promise<User> {
     if (id === callerId) throw new ConflictException("Admins cannot change their own status");
     if (status === "disabled") {

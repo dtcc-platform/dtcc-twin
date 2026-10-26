@@ -76,6 +76,10 @@ export class UsersService {
     }
   }
 
+  async hasActiveAdmin(): Promise<boolean> {
+    return (await this.repository.countActiveAdmins()) > 0;
+  }
+
   /** Row only: call it through AccountsService, which checks who may be deleted. */
   async remove(id: string): Promise<void> {
     // Settings and items go with the user: their foreign keys cascade.

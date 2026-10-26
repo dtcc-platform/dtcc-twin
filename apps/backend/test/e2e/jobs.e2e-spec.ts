@@ -90,6 +90,24 @@ describe("Jobs (e2e)", () => {
   });
 
   describe("POST /api/jobs", () => {
+    it("refuses pending and disabled accounts with a FORBIDDEN error, sending nothing to the engine", async () => {
+      const users = app.get(UsersService);
+      const pending = await users.register({
+        email: "katherine@example.com",
+        name: "Katherine",
+        password: "correct horse",
+      });
+      const disabled = await users.create({ email: "charles@example.com", name: "Charles", password: "correct horse" });
+      await users.setStatus(disabled.id, "disabled");
+
+      for (const userId of [pending.id, disabled.id]) {
+        const agent = request.agent(app.getHttpServer()).set(await authHeader("user", { userId }));
+        const response = await agent.post("/api/jobs").send({ dataset: "smoke", parameters: { bounds } }).expect(403);
+        expect(errorResponseSchema.parse(response.body).error.code).toBe("FORBIDDEN");
+      }
+      expect(engine.submissions).toEqual([]);
+    });
+
     it("queues a job owned by the caller, sending the Dataset and parameters to the engine unchanged", async () => {
       const response = await ada
         .post("/api/jobs")

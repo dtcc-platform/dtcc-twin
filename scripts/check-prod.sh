@@ -15,8 +15,9 @@ trap 'compose down --volumes; rm -rf "$TWIN_SETTINGS_DIR"' EXIT
 mkdir -p "$TWIN_SETTINGS_DIR"
 password=$(secret)
 printf 'POSTGRES_PASSWORD=%s\n' "$password" > "$TWIN_SETTINGS_DIR/postgres.env"
-printf 'DATABASE_URL=postgres://twin:%s@postgres:5432/twin\nJWT_SECRET=%s\n' "$password" "$(secret)" \
-    > "$TWIN_SETTINGS_DIR/backend.env"
+admin_password=$(secret)
+printf 'DATABASE_URL=postgres://twin:%s@postgres:5432/twin\nJWT_SECRET=%s\nADMIN_EMAIL=admin@example.com\nADMIN_PASSWORD=%s\n' \
+    "$password" "$(secret)" "$admin_password" > "$TWIN_SETTINGS_DIR/backend.env"
 
 compose build
 compose up --detach --wait --wait-timeout 180
@@ -42,7 +43,13 @@ headers=$(curl -fsS -D - -o /dev/null -H 'content-type: application/json' \
     -d '{"email":"check@example.com","name":"Check","password":"a-long-check-password"}' "$base/api/auth/register") ||
     fail "registering through the web server"
 echo "$headers" | grep -qi '^set-cookie: __Host-access_token=.*Secure' || fail "the access cookie is not a Secure __Host- cookie"
-echo "api: ready, no Swagger UI, Secure __Host- cookies"
+# curl sends no Secure cookie over HTTP, so the token goes as a bearer header.
+token=$(echo "$headers" | sed -n 's/^[Ss]et-[Cc]ookie: __Host-access_token=\([^;]*\).*/\1/p')
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $token" -H 'content-type: application/json' \
+    -d '{"dataset":"smoke","parameters":{}}' "$base/api/jobs")" = 403 ] || fail "a pending user could submit a job"
+curl -fsS -H 'content-type: application/json' -d "{\"email\":\"admin@example.com\",\"password\":\"$admin_password\"}" \
+    "$base/api/auth/login" | grep -q '"role":"admin"' || fail "the admin from ADMIN_EMAIL cannot log in"
+echo "api: ready, no Swagger UI, Secure __Host- cookies, pending users can't submit jobs, the seeded admin logs in"
 
 # A recreated backend has a new address, which the web server must find; the user must survive it.
 compose up --detach --wait --force-recreate --no-deps backend

@@ -43,6 +43,8 @@ Two files in `TWIN_SETTINGS_DIR`, mode 600, never in Git or an image.
 |              | ENGINE_API_TOKEN   | Empty: the gateway supplies it                                              |
 |              | APISIX_ADMIN_URL   | The private Admin API endpoint (T3); empty until then and until E6          |
 |              | APISIX_ADMIN_KEY   | The backend's Admin API credential                                          |
+|              | ADMIN_EMAIL        | The first admin, created by `migrate` while there is no active admin        |
+|              | ADMIN_PASSWORD     | That admin's password, at least 8 characters                                |
 
 Empty engine or gateway settings leave those routes answering 503. If the Admin API's certificate is not publicly
 trusted, mount its CA and set `NODE_EXTRA_CA_CERTS`. Until E6 is deployed every gateway key opens the Engine, so no
@@ -71,12 +73,3 @@ API key secrets live only in the gateway's etcd; the database holds their ids an
 - **Outbound (backend):** `api.dtcc.chalmers.se:443`, and the private Admin API through Twin's private interface.
 - **TLS** is terminated in front of the web server and is required: production auth cookies are `Secure`, so login
   fails over HTTP. Redirect HTTP to HTTPS and set HSTS.
-
-## First administrator
-
-Register through the site, then:
-
-```sh
-docker compose exec -T postgres psql --username twin --dbname twin \
-  --command "update users set role = 'admin', status = 'active' where lower(email) = lower('<email>')"
-```

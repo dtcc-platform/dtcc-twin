@@ -59,12 +59,18 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
         {omitted.length > 0 && <p className="text-xs text-muted-foreground">Uses the default: {omitted.join(", ")}</p>}
         <FieldError errors={[form.formState.errors.root]} className="whitespace-pre-line" />
         {!area && <p className="text-sm text-muted-foreground">Draw an area on the map first</p>}
+        {me.data?.status === "pending" && (
+          <p className="text-sm text-muted-foreground">You can run Datasets once an admin approves your account</p>
+        )}
+        {me.data?.status === "disabled" && (
+          <p className="text-sm text-muted-foreground">Your account has been disabled</p>
+        )}
         {me.data === null ? (
           <Link to="/" search={{ auth: "login" }} className={buttonVariants()}>
             Log in to run
           </Link>
         ) : (
-          <Button type="submit" disabled={!area || me.isPending || create.isPending}>
+          <Button type="submit" disabled={!area || me.data?.status !== "active" || create.isPending}>
             Run
           </Button>
         )}
