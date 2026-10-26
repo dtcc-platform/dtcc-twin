@@ -26,8 +26,8 @@ They start in that order.
 
 ## Releases
 
-Build both images, dump the database, run `migrate`, recreate `backend` and `web`. Migrations only go forward: rolling
-back past one means restoring the dump. A release has a migration when it changes `apps/backend/drizzle/`.
+Build both images, run `migrate`, recreate `backend` and `web`. Migrations only go forward. A release has a migration
+when it changes `apps/backend/drizzle/`.
 
 ## Settings
 
@@ -50,22 +50,14 @@ Empty engine or gateway settings leave those routes answering 503. If the Admin 
 trusted, mount its CA and set `NODE_EXTRA_CA_CERTS`. Until E6 is deployed every gateway key opens the Engine, so no
 user keys may be issued against the production gateway.
 
-## State and backups
+## State
 
-| State        | Volume → path                              | Backup                                |
-| ------------ | ------------------------------------------ | ------------------------------------- |
-| Database     | `postgres-data` → `/var/lib/postgresql`    | Daily `pg_dump`, and before migrating |
-| Job packages | `packages` → `/var/lib/dtcc-twin/packages` | Optional                              |
-| Settings     | `TWIN_SETTINGS_DIR`                        | Privately, apart from the dumps       |
+| State        | Volume → path                              |
+| ------------ | ------------------------------------------ |
+| Database     | `postgres-data` → `/var/lib/postgresql`    |
+| Job packages | `packages` → `/var/lib/dtcc-twin/packages` |
 
 Both volumes belong on a retained data disk; packages must be writable by uid 10001.
-
-```sh
-docker compose exec -T postgres pg_dump --username twin --format custom twin > twin.dump
-docker compose exec -T postgres pg_restore --username twin --dbname twin --clean --if-exists < twin.dump
-```
-
-API key secrets live only in the gateway's etcd; the database holds their ids and prefixes, so restore both together.
 
 ## Network
 
