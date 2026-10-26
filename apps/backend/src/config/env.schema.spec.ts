@@ -8,7 +8,16 @@ const required = { DATABASE_URL, JWT_SECRET };
 
 describe("envSchema", () => {
   it("fills in the defaults for everything but the secrets, and leaves the engine and the gateway unconfigured", () => {
-    const { ENGINE_URL, ENGINE_API_TOKEN, APISIX_ADMIN_URL, APISIX_ADMIN_KEY, ...rest } = envSchema.parse(required);
+    const {
+      ENGINE_URL,
+      ENGINE_API_TOKEN,
+      ENGINE_GATEWAY_KEY,
+      APISIX_ADMIN_URL,
+      APISIX_ADMIN_KEY,
+      ADMIN_EMAIL,
+      ADMIN_PASSWORD,
+      ...rest
+    } = envSchema.parse(required);
 
     expect(rest).toStrictEqual({
       NODE_ENV: "development",
@@ -20,8 +29,22 @@ describe("envSchema", () => {
     });
     expect(ENGINE_URL).toBeUndefined();
     expect(ENGINE_API_TOKEN).toBeUndefined();
+    expect(ENGINE_GATEWAY_KEY).toBeUndefined();
     expect(APISIX_ADMIN_URL).toBeUndefined();
     expect(APISIX_ADMIN_KEY).toBeUndefined();
+    expect(ADMIN_EMAIL).toBeUndefined();
+    expect(ADMIN_PASSWORD).toBeUndefined();
+  });
+
+  it("treats empty ADMIN_EMAIL and ADMIN_PASSWORD as unset, and checks them when set", () => {
+    const empty = envSchema.parse({ ADMIN_EMAIL: "", ADMIN_PASSWORD: "", ...required });
+    expect(empty.ADMIN_EMAIL).toBeUndefined();
+    expect(empty.ADMIN_PASSWORD).toBeUndefined();
+
+    const set = envSchema.parse({ ADMIN_EMAIL: "admin@example.com", ADMIN_PASSWORD: "a-long-password", ...required });
+    expect(set.ADMIN_EMAIL).toBe("admin@example.com");
+    expect(() => envSchema.parse({ ADMIN_EMAIL: "admin", ...required })).toThrow(/ADMIN_EMAIL/);
+    expect(() => envSchema.parse({ ADMIN_PASSWORD: "short", ...required })).toThrow(/ADMIN_PASSWORD/);
   });
 
   it("requires DATABASE_URL, since a default would carry credentials", () => {
@@ -65,10 +88,11 @@ describe("envSchema", () => {
   });
 
   it("treats empty engine variables as unset, since .env.example leaves them empty", () => {
-    const env = envSchema.parse({ ENGINE_URL: "", ENGINE_API_TOKEN: "", ...required });
+    const env = envSchema.parse({ ENGINE_URL: "", ENGINE_API_TOKEN: "", ENGINE_GATEWAY_KEY: "", ...required });
 
     expect(env.ENGINE_URL).toBeUndefined();
     expect(env.ENGINE_API_TOKEN).toBeUndefined();
+    expect(env.ENGINE_GATEWAY_KEY).toBeUndefined();
   });
 
   it("accepts only an http(s) ENGINE_URL", () => {

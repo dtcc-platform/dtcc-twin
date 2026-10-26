@@ -46,14 +46,14 @@
 
 1. Write its contracts ([contracts recipe](../../packages/contracts/CONVENTIONS.md#recipe-contracts-for-a-new-module)).
 2. Write `test/e2e/<name>.e2e-spec.ts` for the first route and watch it fail. `items.e2e-spec.ts` shows the setup, including two users for ownership checks.
-3. Add `<name>.table.ts`, list it in `relations.ts`, and run `pnpm db:push`.
+3. Add `<name>.table.ts`, list it in `relations.ts`, and run `pnpm db:push`. Before review, run `pnpm db:generate` for its migration.
 4. Add the repository, service and controller. `items` shows a user-owned resource; `accounts` shows admin CRUD in a separate admin controller.
 5. Add `<name>.module.ts` and import it in `app.module.ts`.
 6. Repeat 2 and 4 route by route. Seed a few rows in `scripts/seed-data.ts` if they help development.
 
 ### Add a column
 
-1. Add it to the table and run `pnpm db:push`.
+1. Add it to the table and run `pnpm db:push`. Before review, run `pnpm db:generate` for its migration.
 2. Add it to the contract, then to the repository's row mapping.
 
 ### Add an environment variable

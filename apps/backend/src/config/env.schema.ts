@@ -30,12 +30,15 @@ export const envSchema = z.object({
     emptyAsUnset,
     z.string().regex(engineTokenPattern, "must use only letters, digits, -._~+/ and trailing =").optional(),
   ),
+  ENGINE_GATEWAY_KEY: z.preprocess(emptyAsUnset, z.string().optional()),
   PACKAGE_STORAGE_DIR: z.string().min(1).default(".data/packages"),
   APISIX_ADMIN_URL: z.preprocess(
     emptyAsUnset,
     z.url({ protocol: /^https?$/, error: "must be an http(s) URL" }).optional(),
   ),
   APISIX_ADMIN_KEY: z.preprocess(emptyAsUnset, z.string().optional()),
+  ADMIN_EMAIL: z.preprocess(emptyAsUnset, z.email().optional()),
+  ADMIN_PASSWORD: z.preprocess(emptyAsUnset, z.string().min(8).max(128).optional()),
 });
 
 function isOrigin(value: string): boolean {

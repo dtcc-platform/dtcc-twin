@@ -9,6 +9,7 @@ API reference: Swagger UI at <http://localhost:3030/api/docs> outside production
 ```
 src/
   main.ts, app.setup.ts   bootstrap; configureApp() is shared with the e2e tests
+  migrate.ts              applies drizzle/ to DATABASE_URL; deploys run it before main.ts
   app.module.ts           every module is imported here
   config/                 env schema, validated once at boot
   common/                 decorators, error handling, request id
@@ -18,6 +19,7 @@ src/
   infra/storage/          PackageStorage: the packages of completed jobs
   docs/                   OpenAPI document and Swagger UI
   modules/<name>/         controller → service → repository, plus table and module
+drizzle/                  migrations, from `pnpm db:generate`
 scripts/                  db:seed
 test/                     e2e specs and their helpers
 ```
@@ -47,7 +49,8 @@ test/                     e2e specs and their helpers
 
 ## Database
 
-- `compose.yaml` runs Postgres 18. `pnpm db:push` syncs the `*.table.ts` files into it; there are no migrations until the first deploy with data worth keeping.
+- `compose.yaml` runs Postgres 18. `pnpm db:push` syncs the `*.table.ts` files into it.
+- Deploys apply the migrations in `drizzle/` with `node dist/migrate.js`, before the backend starts. `pnpm db:generate` writes the migration for a table change; `test/e2e/migrations.e2e-spec.ts` fails while one is missing, since it migrates an empty database and expects push to find nothing left to do. A generated migration is reviewed like code: a rename can come out as a drop and an add.
 - `pnpm db:seed` adds the active `admin@example.com`, `ada@example.com` (elevated tier) and `alan@example.com`, the pending `katherine@example.com` and the disabled `charles@example.com`, all with the password `password`.
 - The app boots without a reachable database; `/api/health/ready` answers 503 until it is up.
 

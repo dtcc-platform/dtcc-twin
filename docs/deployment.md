@@ -1,0 +1,82 @@
+# Deployment
+
+dtcc-infra builds the images from a pinned commit and runs them on the `twin` host (`twin.dtcc.chalmers.se`), as it
+does for the Engine. [`compose.prod.yaml`](../compose.prod.yaml) is the reference stack; `pnpm check:prod` builds and
+checks it locally. The Engine is not part of it: the backend reaches it through the API gateway.
+
+## Images
+
+Built from the repository root. Base images are pinned by digest, for `linux/amd64` and `linux/arm64`.
+
+| Image   | Build                                                                   | Runs                                                     |
+| ------- | ----------------------------------------------------------------------- | -------------------------------------------------------- |
+| backend | `docker build --file apps/backend/Dockerfile --target prod <checkout>`  | `node dist/main.js` on 3030, uid 10001                   |
+| web     | `docker build --file apps/frontend/Dockerfile --target prod <checkout>` | nginx on 8080, uid 101; proxies `/api` to `backend:3030` |
+
+## Services
+
+| Service  | Image           | Role                                    | Health                  |
+| -------- | --------------- | --------------------------------------- | ----------------------- |
+| postgres | `postgres:18.6` | Database, internal network only         | `pg_isready`            |
+| migrate  | backend         | `node dist/migrate.js`, then exits      | exit code 0             |
+| backend  | backend         | The API                                 | `GET /api/health/ready` |
+| web      | web             | Public HTTP entry point, read-only root | `GET /healthz`          |
+
+They start in that order.
+
+## Releases
+
+Build both images, dump the database, run `migrate`, recreate `backend` and `web`. Migrations only go forward: rolling
+back past one means restoring the dump. A release has a migration when it changes `apps/backend/drizzle/`.
+
+## Settings
+
+Two files in `TWIN_SETTINGS_DIR`, mode 600, never in Git or an image.
+
+| File         | Variable           | Value                                                                       |
+| ------------ | ------------------ | --------------------------------------------------------------------------- |
+| postgres.env | POSTGRES_PASSWORD  | Random, generated once                                                      |
+| backend.env  | DATABASE_URL       | `postgres://twin:<POSTGRES_PASSWORD>@postgres:5432/twin`                    |
+|              | JWT_SECRET         | Random, at least 32 characters, generated once                              |
+|              | ENGINE_URL         | `https://api.dtcc.chalmers.se/engine`                                       |
+|              | ENGINE_GATEWAY_KEY | The Twin backend consumer's key, listed in the gateway's `ENGINE_CONSUMERS` |
+|              | ENGINE_API_TOKEN   | Empty: the gateway supplies it                                              |
+|              | APISIX_ADMIN_URL   | The private Admin API endpoint (T3); empty until then and until E6          |
+|              | APISIX_ADMIN_KEY   | The backend's Admin API credential                                          |
+
+Empty engine or gateway settings leave those routes answering 503. If the Admin API's certificate is not publicly
+trusted, mount its CA and set `NODE_EXTRA_CA_CERTS`. Until E6 is deployed every gateway key opens the Engine, so no
+user keys may be issued against the production gateway.
+
+## State and backups
+
+| State        | Volume → path                              | Backup                                |
+| ------------ | ------------------------------------------ | ------------------------------------- |
+| Database     | `postgres-data` → `/var/lib/postgresql`    | Daily `pg_dump`, and before migrating |
+| Job packages | `packages` → `/var/lib/dtcc-twin/packages` | Optional                              |
+| Settings     | `TWIN_SETTINGS_DIR`                        | Privately, apart from the dumps       |
+
+Both volumes belong on a retained data disk; packages must be writable by uid 10001.
+
+```sh
+docker compose exec -T postgres pg_dump --username twin --format custom twin > twin.dump
+docker compose exec -T postgres pg_restore --username twin --dbname twin --clean --if-exists < twin.dump
+```
+
+API key secrets live only in the gateway's etcd; the database holds their ids and prefixes, so restore both together.
+
+## Network
+
+- **Inbound:** the web server's 8080 only, behind TLS. Postgres and the backend publish no port.
+- **Outbound (backend):** `api.dtcc.chalmers.se:443`, and the private Admin API through Twin's private interface.
+- **TLS** is terminated in front of the web server and is required: production auth cookies are `Secure`, so login
+  fails over HTTP. Redirect HTTP to HTTPS and set HSTS.
+
+## First administrator
+
+Register through the site, then:
+
+```sh
+docker compose exec -T postgres psql --username twin --dbname twin \
+  --command "update users set role = 'admin', status = 'active' where lower(email) = lower('<email>')"
+```

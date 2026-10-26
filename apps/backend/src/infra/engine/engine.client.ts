@@ -33,10 +33,12 @@ export class EngineClient {
   private readonly logger = new Logger(EngineClient.name);
   private readonly baseUrl: string | undefined;
   private readonly token: string | undefined;
+  private readonly gatewayKey: string | undefined;
 
   constructor(config: ConfigService<Env, true>) {
     this.baseUrl = config.get("ENGINE_URL", { infer: true })?.replace(/\/+$/, "");
     this.token = config.get("ENGINE_API_TOKEN", { infer: true });
+    this.gatewayKey = config.get("ENGINE_GATEWAY_KEY", { infer: true });
     if (!this.baseUrl) this.logger.warn("DTCC Engine is not configured: ENGINE_URL is empty, so its routes answer 503");
   }
 
@@ -117,8 +119,12 @@ export class EngineClient {
     try {
       return await fetch(url, {
         method: body === undefined ? "GET" : "POST",
-        // Sent even when unset, so the engine's 401 reports the missing token.
-        headers: { authorization: `Bearer ${this.token ?? ""}`, "content-type": "application/json" },
+        // Sent even when unset, so the engine's 401 reports the missing token. The gateway replaces it with its own.
+        headers: {
+          authorization: `Bearer ${this.token ?? ""}`,
+          ...(this.gatewayKey === undefined ? {} : { apikey: this.gatewayKey }),
+          "content-type": "application/json",
+        },
         body: body === undefined ? null : JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -132,7 +138,8 @@ export class EngineClient {
   private fail(response: Response, reason: string): EngineUnavailableError {
     if (!response.bodyUsed) void response.body?.cancel().catch(() => undefined);
     if (response.status === 401) {
-      this.logger.error(`${response.url}: DTCC Engine rejected ENGINE_API_TOKEN`);
+      const credential = this.gatewayKey === undefined ? "ENGINE_API_TOKEN" : "ENGINE_GATEWAY_KEY";
+      this.logger.error(`${response.url}: DTCC Engine rejected ${credential}`);
     } else {
       this.logger.warn(`${response.url} failed: ${reason}`);
     }

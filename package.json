@@ -20,12 +20,14 @@
     "test": "pnpm -r run test",
     "test:e2e": "pnpm --filter backend run test:e2e",
     "db:push": "pnpm --filter backend run db:push",
+    "db:generate": "pnpm --filter backend run db:generate",
     "db:seed": "pnpm --filter backend run db:seed",
     "db:reset": "docker compose down -v && docker compose up -d --wait && pnpm run db:push && pnpm run db:seed",
     "engine:check": "docker compose --profile engine run --rm --build engine pytest",
     "dev:engine": "docker compose --profile engine up --build engine engine-worker",
     "engine:lock": "docker compose --profile engine-lock run --rm engine-lock",
     "engine:check:prod": "sh apps/engine/check-prod.sh",
+    "check:prod": "sh scripts/check-prod.sh",
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run test:e2e && pnpm run build"
   },
   "devDependencies": {

@@ -1,0 +1,86 @@
+# The production stack: Postgres, a one-shot migration, the backend and the web server. It is the reference for
+# dtcc-infra's Twin bundle and what `pnpm check:prod` runs locally; docs/deployment.md is the contract.
+# TWIN_SETTINGS_DIR holds postgres.env and backend.env, which are never committed.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+x-backend: &backend
+  image: ${TWIN_BACKEND_IMAGE:-dtcc-twin-backend:local}
+  build:
+    context: .
+    dockerfile: apps/backend/Dockerfile
+    target: prod
+  env_file: ["${TWIN_SETTINGS_DIR:?}/backend.env"]
+  environment:
+    NODE_ENV: production
+  logging: *logging
+
+services:
+  postgres:
+    # The minor is pinned as well: a new one arrives only with a reviewed change here.
+    image: postgres:18.6@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+    restart: unless-stopped
+    # POSTGRES_PASSWORD; it must match the password in backend.env's DATABASE_URL.
+    env_file: ["${TWIN_SETTINGS_DIR:?}/postgres.env"]
+    environment:
+      POSTGRES_USER: twin
+      POSTGRES_DB: twin
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks: [database]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U twin -d twin"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging: *logging
+
+  migrate:
+    <<: *backend
+    command: ["node", "dist/migrate.js"]
+    restart: "no"
+    networks: [database]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    <<: *backend
+    restart: unless-stopped
+    # On SIGTERM Nest fails readiness, then closes the server; this leaves room for a package download in flight.
+    stop_grace_period: 30s
+    volumes:
+      - packages:/var/lib/dtcc-twin/packages
+    # default: the web server and outbound calls to the API gateway.
+    networks: [default, database]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    image: ${TWIN_WEB_IMAGE:-dtcc-twin-web:local}
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      target: prod
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    ports:
+      - "${TWIN_WEB_BIND:-127.0.0.1}:${TWIN_WEB_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  postgres-data:
+  packages:
+
+networks:
+  # No outside route: only the migration and the backend reach Postgres.
+  database:
+    internal: true
