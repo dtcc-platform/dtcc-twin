@@ -1,6 +1,6 @@
 # The production stack: Postgres, a one-shot migration, the backend and the web server. It is the reference for
 # dtcc-infra's Twin bundle and what `pnpm check:prod` runs locally; docs/deployment.md is the contract.
-# TWIN_SETTINGS_DIR holds postgres.env and backend.env, which are never committed.
+# TWIN_SETTINGS_DIR (default /etc/dtcc-twin) holds postgres.env and backend.env, which are never committed.
 x-logging: &logging
   driver: json-file
   options:
@@ -13,7 +13,7 @@ x-backend: &backend
     context: .
     dockerfile: apps/backend/Dockerfile
     target: prod
-  env_file: ["${TWIN_SETTINGS_DIR:?}/backend.env"]
+  env_file: ["${TWIN_SETTINGS_DIR:-/etc/dtcc-twin}/backend.env"]
   environment:
     NODE_ENV: production
   logging: *logging
@@ -24,7 +24,7 @@ services:
     image: postgres:18.6@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
     restart: unless-stopped
     # POSTGRES_PASSWORD; it must match the password in backend.env's DATABASE_URL.
-    env_file: ["${TWIN_SETTINGS_DIR:?}/postgres.env"]
+    env_file: ["${TWIN_SETTINGS_DIR:-/etc/dtcc-twin}/postgres.env"]
     environment:
       POSTGRES_USER: twin
       POSTGRES_DB: twin

@@ -31,7 +31,7 @@ when it changes `apps/backend/drizzle/`.
 
 ## Settings
 
-Two files in `TWIN_SETTINGS_DIR`, mode 600, never in Git or an image.
+Two files in `TWIN_SETTINGS_DIR` (default `/etc/dtcc-twin`), mode 600, never in Git or an image.
 
 | File         | Variable           | Value                                                                       |
 | ------------ | ------------------ | --------------------------------------------------------------------------- |
