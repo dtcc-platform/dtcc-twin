@@ -1,6 +1,9 @@
 # The production stack: Postgres, a one-shot migration, the backend and the web server. It is the reference for
 # dtcc-infra's Twin bundle and what `pnpm check:prod` runs locally; docs/deployment.md is the contract.
 # TWIN_SETTINGS_DIR (default /etc/dtcc-twin) holds postgres.env and backend.env, which are never committed.
+# Not the directory's name, which the development compose.yaml uses: its volumes would be shared.
+name: dtcc-twin-prod
+
 x-logging: &logging
   driver: json-file
   options:
