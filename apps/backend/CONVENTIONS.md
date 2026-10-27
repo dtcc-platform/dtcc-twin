@@ -6,11 +6,16 @@
 
 - A module is `src/modules/<name>/` with `.controller.ts`, `.service.ts`, `.repository.ts`, `.table.ts` and `.module.ts` by default, can also include other files as needed. Only repositories touch the database.
 - Other modules use a module's exported service, never its repository (`UsersModule` exports `UsersService`).
+- Dependencies point one way: a module never imports a module that depends on it, and `forwardRef` is not the fix. When a change must reach several modules, the operation lives in a module above them, as `accounts` sits above `users` and `auth`.
+- `users` is the user record that every module reads, and has no routes. Every route on a user is in `accounts`, and only `AccountsService` changes a user's status, tier or existence, because those reach every module that depends on the user.
+- Side effects that remove access (sessions, gateway keys) are explicit calls in a fixed order, the gateway before the database: a failure then leaves access as it was, and a retry finishes the job. Side effects that can happen later, such as emails or audit entries, go through events.
 
 ### Routes
 
-- Every handler declares `@Serialize(schema)` for its response, or `@HttpCode(HttpStatus.NO_CONTENT)` and no body. Every `@Body`, `@Query` and `@Param` takes `{ schema }` from `@repo/contracts`. `test/e2e/contract-coverage.e2e-spec.ts` enforces both.
+- Every handler declares `@Serialize(schema)` for its response, `@FileResponse(mediaType)` when it returns a `StreamableFile`, or `@HttpCode(HttpStatus.NO_CONTENT)` and no body. Every `@Body`, `@Query` and `@Param` takes `{ schema }` from `@repo/contracts`. `test/e2e/contract-coverage.e2e-spec.ts` enforces both.
 - Routes about the caller use `me` or no id at all (`PATCH /users/me`, `/settings`) and take the user from `@CurrentUser()`, never from the URL. Declare static segments such as `me` before `:id`.
+- A route lives in the module that owns the last noun in its path: `/admin/users/:id/status` in `accounts`, `/auth/sessions` in `auth`.
+- A module's routes for the caller and its admin routes on other users' data are separate controllers in `<name>.controller.ts`: `<Name>Controller`, and `<Name>AdminController` on `admin/<resource>`. A module gets an admin controller only when admins need routes of their own.
 
 ### Data
 
@@ -41,14 +46,14 @@
 
 1. Write its contracts ([contracts recipe](../../packages/contracts/CONVENTIONS.md#recipe-contracts-for-a-new-module)).
 2. Write `test/e2e/<name>.e2e-spec.ts` for the first route and watch it fail. `items.e2e-spec.ts` shows the setup, including two users for ownership checks.
-3. Add `<name>.table.ts`, list it in `relations.ts`, and run `pnpm db:push`.
-4. Add the repository, service and controller. `items` shows a user-owned resource; `users` shows admin CRUD.
+3. Add `<name>.table.ts`, list it in `relations.ts`, and run `pnpm db:push`. Before review, run `pnpm db:generate` for its migration.
+4. Add the repository, service and controller. `items` shows a user-owned resource; `accounts` shows admin CRUD in a separate admin controller.
 5. Add `<name>.module.ts` and import it in `app.module.ts`.
 6. Repeat 2 and 4 route by route. Seed a few rows in `scripts/seed-data.ts` if they help development.
 
 ### Add a column
 
-1. Add it to the table and run `pnpm db:push`.
+1. Add it to the table and run `pnpm db:push`. Before review, run `pnpm db:generate` for its migration.
 2. Add it to the contract, then to the repository's row mapping.
 
 ### Add an environment variable

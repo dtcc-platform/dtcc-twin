@@ -25,6 +25,8 @@ describe("queryClient", () => {
     email: "ada@example.com",
     name: "Ada",
     role: "user",
+    status: "active",
+    tier: "default",
     createdAt: "2026-09-14T10:00:00.000Z",
     updatedAt: "2026-09-14T10:00:00.000Z",
   };

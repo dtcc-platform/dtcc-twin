@@ -45,7 +45,7 @@ describe("Without a reachable database (e2e)", () => {
     vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
 
     const response = await request(app.getHttpServer())
-      .get("/api/users")
+      .get("/api/admin/users")
       .set(await authHeader("admin"))
       .expect(503);
 

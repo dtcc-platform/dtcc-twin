@@ -11,12 +11,13 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as RegisterRouteImport } from './routes/register'
-import { Route as AuthenticatedItemsRouteImport } from './routes/_authenticated/items'
-import { Route as AuthenticatedProfileRouteImport } from './routes/_authenticated/profile'
-import { Route as AuthenticatedDevCountersRouteImport } from './routes/_authenticated/dev/counters'
-import { Route as AuthenticatedDevPlaygroundRouteImport } from './routes/_authenticated/dev/playground'
+import { Route as AuthenticatedAccountRouteImport } from './routes/_authenticated/account'
+import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
+import { Route as AuthenticatedAccountIndexRouteImport } from './routes/_authenticated/account/index'
+import { Route as AuthenticatedAccountKeysRouteImport } from './routes/_authenticated/account/keys'
+import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin/index'
+import { Route as AuthenticatedAdminDevRouteImport } from './routes/_authenticated/admin/dev'
+import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -27,104 +28,109 @@ const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RegisterRoute = RegisterRouteImport.update({
-  id: '/register',
-  path: '/register',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthenticatedItemsRoute = AuthenticatedItemsRouteImport.update({
-  id: '/items',
-  path: '/items',
+const AuthenticatedAccountRoute = AuthenticatedAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedProfileRoute = AuthenticatedProfileRouteImport.update({
-  id: '/profile',
-  path: '/profile',
+const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedDevCountersRoute =
-  AuthenticatedDevCountersRouteImport.update({
-    id: '/dev/counters',
-    path: '/dev/counters',
-    getParentRoute: () => AuthenticatedRoute,
+const AuthenticatedAccountIndexRoute =
+  AuthenticatedAccountIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedAccountRoute,
   } as any)
-const AuthenticatedDevPlaygroundRoute =
-  AuthenticatedDevPlaygroundRouteImport.update({
-    id: '/dev/playground',
-    path: '/dev/playground',
-    getParentRoute: () => AuthenticatedRoute,
+const AuthenticatedAccountKeysRoute =
+  AuthenticatedAccountKeysRouteImport.update({
+    id: '/keys',
+    path: '/keys',
+    getParentRoute: () => AuthenticatedAccountRoute,
   } as any)
+const AuthenticatedAdminIndexRoute = AuthenticatedAdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthenticatedAdminRoute,
+} as any)
+const AuthenticatedAdminDevRoute = AuthenticatedAdminDevRouteImport.update({
+  id: '/dev',
+  path: '/dev',
+  getParentRoute: () => AuthenticatedAdminRoute,
+} as any)
+const AuthenticatedAdminUsersRoute = AuthenticatedAdminUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AuthenticatedAdminRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
-  '/items': typeof AuthenticatedItemsRoute
-  '/profile': typeof AuthenticatedProfileRoute
-  '/dev/counters': typeof AuthenticatedDevCountersRoute
-  '/dev/playground': typeof AuthenticatedDevPlaygroundRoute
+  '/account': typeof AuthenticatedAccountRouteWithChildren
+  '/admin': typeof AuthenticatedAdminRouteWithChildren
+  '/account/keys': typeof AuthenticatedAccountKeysRoute
+  '/admin/dev': typeof AuthenticatedAdminDevRoute
+  '/admin/users': typeof AuthenticatedAdminUsersRoute
+  '/account/': typeof AuthenticatedAccountIndexRoute
+  '/admin/': typeof AuthenticatedAdminIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
-  '/items': typeof AuthenticatedItemsRoute
-  '/profile': typeof AuthenticatedProfileRoute
-  '/dev/counters': typeof AuthenticatedDevCountersRoute
-  '/dev/playground': typeof AuthenticatedDevPlaygroundRoute
+  '/account/keys': typeof AuthenticatedAccountKeysRoute
+  '/admin/dev': typeof AuthenticatedAdminDevRoute
+  '/admin/users': typeof AuthenticatedAdminUsersRoute
+  '/account': typeof AuthenticatedAccountIndexRoute
+  '/admin': typeof AuthenticatedAdminIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteWithChildren
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
-  '/_authenticated/items': typeof AuthenticatedItemsRoute
-  '/_authenticated/profile': typeof AuthenticatedProfileRoute
-  '/_authenticated/dev/counters': typeof AuthenticatedDevCountersRoute
-  '/_authenticated/dev/playground': typeof AuthenticatedDevPlaygroundRoute
+  '/_authenticated/account': typeof AuthenticatedAccountRouteWithChildren
+  '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
+  '/_authenticated/account/keys': typeof AuthenticatedAccountKeysRoute
+  '/_authenticated/admin/dev': typeof AuthenticatedAdminDevRoute
+  '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
+  '/_authenticated/account/': typeof AuthenticatedAccountIndexRoute
+  '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/login'
-    | '/register'
-    | '/items'
-    | '/profile'
-    | '/dev/counters'
-    | '/dev/playground'
+    | '/account'
+    | '/admin'
+    | '/account/keys'
+    | '/admin/dev'
+    | '/admin/users'
+    | '/account/'
+    | '/admin/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/login'
-    | '/register'
-    | '/items'
-    | '/profile'
-    | '/dev/counters'
-    | '/dev/playground'
+    | '/account/keys'
+    | '/admin/dev'
+    | '/admin/users'
+    | '/account'
+    | '/admin'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
-    | '/login'
-    | '/register'
-    | '/_authenticated/items'
-    | '/_authenticated/profile'
-    | '/_authenticated/dev/counters'
-    | '/_authenticated/dev/playground'
+    | '/_authenticated/account'
+    | '/_authenticated/admin'
+    | '/_authenticated/account/keys'
+    | '/_authenticated/admin/dev'
+    | '/_authenticated/admin/users'
+    | '/_authenticated/account/'
+    | '/_authenticated/admin/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
-  LoginRoute: typeof LoginRoute
-  RegisterRoute: typeof RegisterRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -143,63 +149,94 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/register': {
-      id: '/register'
-      path: '/register'
-      fullPath: '/register'
-      preLoaderRoute: typeof RegisterRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_authenticated/items': {
-      id: '/_authenticated/items'
-      path: '/items'
-      fullPath: '/items'
-      preLoaderRoute: typeof AuthenticatedItemsRouteImport
+    '/_authenticated/account': {
+      id: '/_authenticated/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AuthenticatedAccountRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/profile': {
-      id: '/_authenticated/profile'
-      path: '/profile'
-      fullPath: '/profile'
-      preLoaderRoute: typeof AuthenticatedProfileRouteImport
+    '/_authenticated/admin': {
+      id: '/_authenticated/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AuthenticatedAdminRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/dev/counters': {
-      id: '/_authenticated/dev/counters'
-      path: '/dev/counters'
-      fullPath: '/dev/counters'
-      preLoaderRoute: typeof AuthenticatedDevCountersRouteImport
-      parentRoute: typeof AuthenticatedRoute
+    '/_authenticated/account/': {
+      id: '/_authenticated/account/'
+      path: '/'
+      fullPath: '/account/'
+      preLoaderRoute: typeof AuthenticatedAccountIndexRouteImport
+      parentRoute: typeof AuthenticatedAccountRoute
     }
-    '/_authenticated/dev/playground': {
-      id: '/_authenticated/dev/playground'
-      path: '/dev/playground'
-      fullPath: '/dev/playground'
-      preLoaderRoute: typeof AuthenticatedDevPlaygroundRouteImport
-      parentRoute: typeof AuthenticatedRoute
+    '/_authenticated/account/keys': {
+      id: '/_authenticated/account/keys'
+      path: '/keys'
+      fullPath: '/account/keys'
+      preLoaderRoute: typeof AuthenticatedAccountKeysRouteImport
+      parentRoute: typeof AuthenticatedAccountRoute
+    }
+    '/_authenticated/admin/': {
+      id: '/_authenticated/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AuthenticatedAdminIndexRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/_authenticated/admin/dev': {
+      id: '/_authenticated/admin/dev'
+      path: '/dev'
+      fullPath: '/admin/dev'
+      preLoaderRoute: typeof AuthenticatedAdminDevRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/_authenticated/admin/users': {
+      id: '/_authenticated/admin/users'
+      path: '/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AuthenticatedAdminUsersRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
     }
   }
 }
 
+interface AuthenticatedAccountRouteChildren {
+  AuthenticatedAccountKeysRoute: typeof AuthenticatedAccountKeysRoute
+  AuthenticatedAccountIndexRoute: typeof AuthenticatedAccountIndexRoute
+}
+
+const AuthenticatedAccountRouteChildren: AuthenticatedAccountRouteChildren = {
+  AuthenticatedAccountKeysRoute: AuthenticatedAccountKeysRoute,
+  AuthenticatedAccountIndexRoute: AuthenticatedAccountIndexRoute,
+}
+
+const AuthenticatedAccountRouteWithChildren =
+  AuthenticatedAccountRoute._addFileChildren(AuthenticatedAccountRouteChildren)
+
+interface AuthenticatedAdminRouteChildren {
+  AuthenticatedAdminDevRoute: typeof AuthenticatedAdminDevRoute
+  AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
+  AuthenticatedAdminIndexRoute: typeof AuthenticatedAdminIndexRoute
+}
+
+const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
+  AuthenticatedAdminDevRoute: AuthenticatedAdminDevRoute,
+  AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
+  AuthenticatedAdminIndexRoute: AuthenticatedAdminIndexRoute,
+}
+
+const AuthenticatedAdminRouteWithChildren =
+  AuthenticatedAdminRoute._addFileChildren(AuthenticatedAdminRouteChildren)
+
 interface AuthenticatedRouteChildren {
-  AuthenticatedItemsRoute: typeof AuthenticatedItemsRoute
-  AuthenticatedProfileRoute: typeof AuthenticatedProfileRoute
-  AuthenticatedDevCountersRoute: typeof AuthenticatedDevCountersRoute
-  AuthenticatedDevPlaygroundRoute: typeof AuthenticatedDevPlaygroundRoute
+  AuthenticatedAccountRoute: typeof AuthenticatedAccountRouteWithChildren
+  AuthenticatedAdminRoute: typeof AuthenticatedAdminRouteWithChildren
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
-  AuthenticatedItemsRoute: AuthenticatedItemsRoute,
-  AuthenticatedProfileRoute: AuthenticatedProfileRoute,
-  AuthenticatedDevCountersRoute: AuthenticatedDevCountersRoute,
-  AuthenticatedDevPlaygroundRoute: AuthenticatedDevPlaygroundRoute,
+  AuthenticatedAccountRoute: AuthenticatedAccountRouteWithChildren,
+  AuthenticatedAdminRoute: AuthenticatedAdminRouteWithChildren,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
@@ -209,8 +246,6 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
-  LoginRoute: LoginRoute,
-  RegisterRoute: RegisterRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

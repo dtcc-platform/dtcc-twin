@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { userAgentMaxLength } from "../../src/modules/auth/sessions.table.js";
 import { UsersService } from "../../src/modules/users/users.service.js";
 import { createTestApp } from "../helpers/create-test-app.js";
-import { truncateAllTables } from "../helpers/database.js";
+import { query, truncateAllTables } from "../helpers/database.js";
 
 const ada = { email: "ada@example.com", name: "Ada", password: "correct horse" };
 const grace = { email: "grace@example.com", name: "Grace", password: "correct horse" };
@@ -70,6 +70,12 @@ describe("Auth (e2e)", () => {
 
       expect(userSchema.parse(response.body)).toMatchObject({ email: ada.email, name: ada.name, role: "user" });
       expect((await sessionsOf(agent)).items).toHaveLength(1);
+    });
+
+    it("registers the user as pending on the default tier, until an admin approves them", async () => {
+      const response = await browser().post("/api/auth/register").send(ada).expect(201);
+
+      expect(userSchema.parse(response.body)).toMatchObject({ status: "pending", tier: "default" });
     });
 
     it("sets both cookies HttpOnly and SameSite=Lax, the refresh cookie for /api/auth only", async () => {
@@ -137,6 +143,42 @@ describe("Auth (e2e)", () => {
       expect(unknownEmailError.message).toBe(wrongPasswordError.message);
       expect(setCookies(wrongPassword)).toEqual({});
     });
+
+    it("logs in a pending user, who sees their status", async () => {
+      await browser().post("/api/auth/register").send(grace).expect(201);
+
+      const { login } = await loggedIn(grace);
+
+      expect(userSchema.parse(login.body).status).toBe("pending");
+    });
+
+    it("refuses a disabled user with 403 ACCOUNT_DISABLED and sets no cookies", async () => {
+      await query("update users set status = 'disabled' where email = $1", [ada.email]);
+
+      const response = await browser()
+        .post("/api/auth/login")
+        .send({ email: ada.email, password: ada.password })
+        .expect(403);
+
+      // The login form shows the message as it is.
+      expect(errorResponseSchema.parse(response.body).error).toMatchObject({
+        status: 403,
+        code: "ACCOUNT_DISABLED",
+        message: "This account has been disabled.",
+      });
+      expect(setCookies(response)).toEqual({});
+    });
+
+    it("answers a disabled user's wrong password like anyone's, so it reveals nothing", async () => {
+      await query("update users set status = 'disabled' where email = $1", [ada.email]);
+
+      const response = await browser()
+        .post("/api/auth/login")
+        .send({ email: ada.email, password: "wrong horse" })
+        .expect(401);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("UNAUTHORIZED");
+    });
   });
 
   describe("GET /api/auth/me", () => {
@@ -181,6 +223,17 @@ describe("Auth (e2e)", () => {
       const response = await refreshWith(cookieValue(setCookies(login)["refresh_token"])).expect(204);
 
       expect(Object.keys(setCookies(response))).toEqual(["access_token", "refresh_token"]);
+    });
+
+    it("answers 401 and ends the session of a user disabled since they logged in", async () => {
+      const { agent } = await loggedIn(ada);
+      // Disabling through the API also ends the sessions; this is the moment in between.
+      await query("update users set status = 'disabled' where email = $1", [ada.email]);
+
+      await agent.post("/api/auth/refresh").expect(401);
+
+      const [row] = await query<{ count: number }>("select count(*)::int as count from sessions");
+      expect(row?.count).toBe(0);
     });
 
     it.each([

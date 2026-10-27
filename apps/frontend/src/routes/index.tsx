@@ -1,25 +1,28 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import { authQueries } from "@/api/auth";
+import { AuthDialog } from "@/features/auth/auth-dialog";
+import { authSearchSchema } from "@/features/auth/auth-search";
+import { safeRedirect } from "@/features/auth/safe-redirect";
+import { Workspace } from "@/features/workspace/workspace";
 
-export const Route = createFileRoute("/")({ component: Home });
+export const Route = createFileRoute("/")({ validateSearch: authSearchSchema, component: WorkspacePage });
 
-function Home() {
+function WorkspacePage() {
+  const { auth, redirect } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const me = useQuery(authQueries.me());
+
   return (
-    <main className="mx-auto flex min-h-svh max-w-2xl flex-col justify-center gap-4 p-8">
-      <h1 className="text-4xl font-semibold tracking-tight">DTCC Twin</h1>
-      <p className="text-muted-foreground">
-        Admins can try the backend in the{" "}
-        <Link to="/dev/playground" className="font-medium text-foreground underline underline-offset-4">
-          API playground
-        </Link>
-        .
-      </p>
-      <p className="text-muted-foreground">
-        They can also see{" "}
-        <Link to="/dev/counters" className="font-medium text-foreground underline underline-offset-4">
-          two counters with localized Zustand stores
-        </Link>
-        .
-      </p>
+    <main className="relative h-svh">
+      <Workspace />
+      <AuthDialog
+        // Only for nobody: a logged-in user following an old `?auth=` link just sees the map.
+        mode={me.data === null ? auth : undefined}
+        onModeChange={(mode) => void navigate({ search: (search) => ({ ...search, auth: mode }), replace: true })}
+        onClose={() => void navigate({ search: {}, replace: true })}
+        onDone={() => void navigate({ href: safeRedirect(redirect), replace: true })}
+      />
     </main>
   );
 }

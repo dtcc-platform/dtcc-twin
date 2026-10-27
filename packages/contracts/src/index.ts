@@ -1,3 +1,25 @@
+export {
+  createUserBodySchema,
+  roleSchema,
+  setUserStatusBodySchema,
+  setUserTierBodySchema,
+  tierSchema,
+  updateUserBodySchema,
+  userListQuerySchema,
+  userPageSchema,
+  userSchema,
+  userStatusSchema,
+  type CreateUserBody,
+  type Role,
+  type SetUserStatusBody,
+  type SetUserTierBody,
+  type Tier,
+  type UpdateUserBody,
+  type User,
+  type UserListQuery,
+  type UserPage,
+  type UserStatus,
+} from "./accounts/accounts.js";
 // Not `export *`: module files also export building blocks internal to contracts.
 export {
   loginBodySchema,
@@ -20,6 +42,14 @@ export {
   type ErrorBody,
   type ValidationIssue,
 } from "./common/error-response.js";
+export {
+  datasetListSchema,
+  datasetNameParamsSchema,
+  datasetSchema,
+  type Dataset,
+  type DatasetList,
+  type DatasetNameParams,
+} from "./datasets/datasets.js";
 export { healthStatusSchema, type HealthStatus } from "./health/health.js";
 export {
   createItemBodySchema,
@@ -32,6 +62,43 @@ export {
   type UpdateItemBody,
 } from "./items/items.js";
 export {
+  createJobBodySchema,
+  jobPageSchema,
+  jobProgressSchema,
+  jobSchema,
+  jobStateSchema,
+  type CreateJobBody,
+  type Job,
+  type JobPage,
+  type JobProgress,
+  type JobState,
+} from "./jobs/jobs.js";
+export {
+  apiKeyListSchema,
+  apiKeySchema,
+  createApiKeyBodySchema,
+  createdApiKeySchema,
+  maxApiKeysPerUser,
+  userKeyParamsSchema,
+  type ApiKey,
+  type ApiKeyList,
+  type CreateApiKeyBody,
+  type CreatedApiKey,
+  type UserKeyParams,
+} from "./keys/keys.js";
+export {
+  areaBoxSchema,
+  createSavedAreaBodySchema,
+  savedAreaPageSchema,
+  savedAreaSchema,
+  updateSavedAreaBodySchema,
+  type AreaBox,
+  type CreateSavedAreaBody,
+  type SavedArea,
+  type SavedAreaPage,
+  type UpdateSavedAreaBody,
+} from "./saved-areas/saved-areas.js";
+export {
   settingsSchema,
   themeSchema,
   updateSettingsBodySchema,
@@ -39,15 +106,3 @@ export {
   type Theme,
   type UpdateSettingsBody,
 } from "./settings/settings.js";
-export {
-  createUserBodySchema,
-  roleSchema,
-  updateUserBodySchema,
-  userPageSchema,
-  userSchema,
-  type CreateUserBody,
-  type Role,
-  type UpdateUserBody,
-  type User,
-  type UserPage,
-} from "./users/users.js";

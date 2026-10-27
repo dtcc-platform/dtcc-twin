@@ -8,10 +8,12 @@ import {
   Param,
   Post,
   SerializeOptions,
+  StreamableFile,
   type Type,
 } from "@nestjs/common";
 import { DiscoveryModule, DiscoveryService } from "@nestjs/core";
 import { describe, expect, it } from "vitest";
+import { FileResponse } from "../../src/common/decorators/file-response.decorator.js";
 import { createTestApp } from "../helpers/create-test-app.js";
 import { findContractViolations } from "../helpers/route-contract.js";
 
@@ -37,6 +39,13 @@ class BrokenController {
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(): null {
     return null;
+  }
+
+  // Not a violation: a file has no schema, and @FileResponse declares it instead.
+  @Get("file")
+  @FileResponse("application/zip")
+  file(): StreamableFile {
+    return new StreamableFile(new Uint8Array());
   }
 }
 

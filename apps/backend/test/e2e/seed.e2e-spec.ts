@@ -62,6 +62,16 @@ describe("pnpm db:seed (e2e)", { timeout: childTimeout + 10_000 }, () => {
     expect(await verifyPassword(admin?.password_hash ?? "", developmentPassword)).toBe(true);
   });
 
+  it("seeds an active admin and users in every status and tier", async () => {
+    await seed();
+
+    const [admin] = await query<{ status: string }>("select status from users where email = 'admin@example.com'");
+    const rows = await query<{ status: string; tier: string }>("select status, tier from users");
+    expect(admin?.status).toBe("active");
+    expect(new Set(rows.map((row) => row.status))).toEqual(new Set(["pending", "active", "disabled"]));
+    expect(new Set(rows.map((row) => row.tier))).toEqual(new Set(["default", "elevated"]));
+  });
+
   it.each([
     ["answered no", "n\n"],
     ["given no answer", ""],

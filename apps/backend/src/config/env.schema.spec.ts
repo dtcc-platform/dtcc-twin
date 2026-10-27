@@ -7,14 +7,44 @@ const JWT_SECRET = "a-test-secret-that-is-32-chars-long";
 const required = { DATABASE_URL, JWT_SECRET };
 
 describe("envSchema", () => {
-  it("fills in the defaults for everything but the secrets", () => {
-    expect(envSchema.parse(required)).toStrictEqual({
+  it("fills in the defaults for everything but the secrets, and leaves the engine and the gateway unconfigured", () => {
+    const {
+      ENGINE_URL,
+      ENGINE_API_TOKEN,
+      ENGINE_GATEWAY_KEY,
+      APISIX_ADMIN_URL,
+      APISIX_ADMIN_KEY,
+      ADMIN_EMAIL,
+      ADMIN_PASSWORD,
+      ...rest
+    } = envSchema.parse(required);
+
+    expect(rest).toStrictEqual({
       NODE_ENV: "development",
       PORT: 3030,
       CORS_ORIGINS: [],
       DATABASE_URL,
       JWT_SECRET,
+      PACKAGE_STORAGE_DIR: ".data/packages",
     });
+    expect(ENGINE_URL).toBeUndefined();
+    expect(ENGINE_API_TOKEN).toBeUndefined();
+    expect(ENGINE_GATEWAY_KEY).toBeUndefined();
+    expect(APISIX_ADMIN_URL).toBeUndefined();
+    expect(APISIX_ADMIN_KEY).toBeUndefined();
+    expect(ADMIN_EMAIL).toBeUndefined();
+    expect(ADMIN_PASSWORD).toBeUndefined();
+  });
+
+  it("treats empty ADMIN_EMAIL and ADMIN_PASSWORD as unset, and checks them when set", () => {
+    const empty = envSchema.parse({ ADMIN_EMAIL: "", ADMIN_PASSWORD: "", ...required });
+    expect(empty.ADMIN_EMAIL).toBeUndefined();
+    expect(empty.ADMIN_PASSWORD).toBeUndefined();
+
+    const set = envSchema.parse({ ADMIN_EMAIL: "admin@example.com", ADMIN_PASSWORD: "a-long-password", ...required });
+    expect(set.ADMIN_EMAIL).toBe("admin@example.com");
+    expect(() => envSchema.parse({ ADMIN_EMAIL: "admin", ...required })).toThrow(/ADMIN_EMAIL/);
+    expect(() => envSchema.parse({ ADMIN_PASSWORD: "short", ...required })).toThrow(/ADMIN_PASSWORD/);
   });
 
   it("requires DATABASE_URL, since a default would carry credentials", () => {
@@ -55,6 +85,42 @@ describe("envSchema", () => {
 
   it("rejects a NODE_ENV outside the known environments", () => {
     expect(() => envSchema.parse({ NODE_ENV: "staging", ...required })).toThrow(/NODE_ENV/);
+  });
+
+  it("treats empty engine variables as unset, since .env.example leaves them empty", () => {
+    const env = envSchema.parse({ ENGINE_URL: "", ENGINE_API_TOKEN: "", ENGINE_GATEWAY_KEY: "", ...required });
+
+    expect(env.ENGINE_URL).toBeUndefined();
+    expect(env.ENGINE_API_TOKEN).toBeUndefined();
+    expect(env.ENGINE_GATEWAY_KEY).toBeUndefined();
+  });
+
+  it("accepts only an http(s) ENGINE_URL", () => {
+    expect(envSchema.parse({ ENGINE_URL: "https://engine.example.com", ...required }).ENGINE_URL).toBe(
+      "https://engine.example.com",
+    );
+    expect(() => envSchema.parse({ ENGINE_URL: "ftp://engine.example.com", ...required })).toThrow(/ENGINE_URL/);
+    expect(() => envSchema.parse({ ENGINE_URL: "localhost:8000", ...required })).toThrow(/ENGINE_URL/);
+  });
+
+  it("accepts only an ENGINE_API_TOKEN the engine accepts", () => {
+    expect(envSchema.parse({ ENGINE_API_TOKEN: "a1-._~+/==", ...required }).ENGINE_API_TOKEN).toBe("a1-._~+/==");
+    expect(() => envSchema.parse({ ENGINE_API_TOKEN: "has space", ...required })).toThrow(/ENGINE_API_TOKEN/);
+    expect(() => envSchema.parse({ ENGINE_API_TOKEN: "a=b", ...required })).toThrow(/ENGINE_API_TOKEN/);
+  });
+
+  it("treats empty gateway variables as unset, since .env.example leaves them empty", () => {
+    const env = envSchema.parse({ APISIX_ADMIN_URL: "", APISIX_ADMIN_KEY: "", ...required });
+
+    expect(env.APISIX_ADMIN_URL).toBeUndefined();
+    expect(env.APISIX_ADMIN_KEY).toBeUndefined();
+  });
+
+  it("accepts only an http(s) APISIX_ADMIN_URL", () => {
+    expect(envSchema.parse({ APISIX_ADMIN_URL: "http://127.0.0.1:9180", ...required }).APISIX_ADMIN_URL).toBe(
+      "http://127.0.0.1:9180",
+    );
+    expect(() => envSchema.parse({ APISIX_ADMIN_URL: "127.0.0.1:9180", ...required })).toThrow(/APISIX_ADMIN_URL/);
   });
 
   it("drops the unrelated variables that process.env always carries", () => {

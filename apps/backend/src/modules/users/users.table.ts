@@ -15,6 +15,12 @@ export const users = snakeCase.table(
     role: text({ enum: ["user", "admin"] })
       .notNull()
       .default("user"),
+    status: text({ enum: ["pending", "active", "disabled"] })
+      .notNull()
+      .default("pending"),
+    tier: text({ enum: ["default", "elevated"] })
+      .notNull()
+      .default("default"),
     ...timestamps,
   },
   (table) => [uniqueIndex("users_email_unique").on(sql`lower(${table.email})`)],
