@@ -5,7 +5,6 @@ import { GatewayClient } from "../../infra/gateway/gateway.client.js";
 import { UsersService } from "../users/users.service.js";
 import { KeysRepository } from "./keys.repository.js";
 
-// unsure if we need a prefix
 const keyPrefix = "dtcc_";
 const shownPrefixLength = 12;
 

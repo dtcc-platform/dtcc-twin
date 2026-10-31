@@ -41,14 +41,13 @@ Two files in `TWIN_SETTINGS_DIR` (default `/etc/dtcc-twin`), mode 600, never in 
 |              | ENGINE_URL         | `https://api.dtcc.chalmers.se/engine`                                       |
 |              | ENGINE_GATEWAY_KEY | The Twin backend consumer's key, listed in the gateway's `ENGINE_CONSUMERS` |
 |              | ENGINE_API_TOKEN   | Empty: the gateway supplies it                                              |
-|              | APISIX_ADMIN_URL   | The private Admin API endpoint (T3); empty until then and until E6          |
+|              | APISIX_ADMIN_URL   | The private Admin API endpoint (T3); empty until then                       |
 |              | APISIX_ADMIN_KEY   | The backend's Admin API credential                                          |
 |              | ADMIN_EMAIL        | The first admin, created by `migrate` while there is no active admin        |
 |              | ADMIN_PASSWORD     | That admin's password, at least 8 characters                                |
 
 Empty engine or gateway settings leave those routes answering 503. If the Admin API's certificate is not publicly
-trusted, mount its CA and set `NODE_EXTRA_CA_CERTS`. Until E6 is deployed every gateway key opens the Engine, so no
-user keys may be issued against the production gateway.
+trusted, mount its CA and set `NODE_EXTRA_CA_CERTS`.
 
 ## State
 
@@ -57,7 +56,8 @@ user keys may be issued against the production gateway.
 | Database     | `postgres-data` → `/var/lib/postgresql`    |
 | Job packages | `packages` → `/var/lib/dtcc-twin/packages` |
 
-Both volumes belong on a retained data disk; packages must be writable by uid 10001.
+Both volumes and `TWIN_SETTINGS_DIR` belong on a retained data disk, so a replaced host keeps them: a new
+`POSTGRES_PASSWORD` would not open the existing database. Packages must be writable by uid 10001.
 
 ## Network
 
@@ -65,3 +65,5 @@ Both volumes belong on a retained data disk; packages must be writable by uid 10
 - **Outbound (backend):** `api.dtcc.chalmers.se:443`, and the private Admin API through Twin's private interface.
 - **TLS** is terminated in front of the web server and is required: production auth cookies are `Secure`, so login
   fails over HTTP. Redirect HTTP to HTTPS and set HSTS.
+- **The TLS proxy** forwards everything to `web:8080` and must not buffer responses, since job packages stream. It
+  allows request bodies of at least 4 MB and waits at least 120 s for a response, as the web server does.
