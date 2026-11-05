@@ -15,14 +15,16 @@ Built from the repository root. Base images are pinned by digest, for `linux/amd
 
 ## Services
 
-| Service  | Image           | Role                                    | Health                  |
-| -------- | --------------- | --------------------------------------- | ----------------------- |
-| postgres | `postgres:18.6` | Database, internal network only         | `pg_isready`            |
-| migrate  | backend         | `node dist/migrate.js`, then exits      | exit code 0             |
-| backend  | backend         | The API                                 | `GET /api/health/ready` |
-| web      | web             | Public HTTP entry point, read-only root | `GET /healthz`          |
+| Service  | Image                 | Role                                        | Health                  |
+| -------- | --------------------- | ------------------------------------------- | ----------------------- |
+| postgres | `postgres:18.6`       | Database, internal network only             | `pg_isready`            |
+| valkey   | `valkey/valkey:9.1.3` | Short-lived counters, internal network only | `valkey-cli ping`       |
+| migrate  | backend               | `node dist/migrate.js`, then exits          | exit code 0             |
+| backend  | backend               | The API                                     | `GET /api/health/ready` |
+| web      | web                   | Public HTTP entry point, read-only root     | `GET /healthz`          |
 
-They start in that order.
+They start in that order, except that Postgres and Valkey start together: the backend waits for `migrate` to exit
+and for Valkey to be healthy.
 
 ## Releases
 
@@ -37,6 +39,7 @@ Two files in `TWIN_SETTINGS_DIR` (default `/etc/dtcc-twin`), mode 600, never in 
 | ------------ | ------------------ | --------------------------------------------------------------------------- |
 | postgres.env | POSTGRES_PASSWORD  | Random, generated once                                                      |
 | backend.env  | DATABASE_URL       | `postgres://twin:<POSTGRES_PASSWORD>@postgres:5432/twin`                    |
+|              | VALKEY_URL         | `redis://valkey:6379`                                                       |
 |              | JWT_SECRET         | Random, at least 32 characters, generated once                              |
 |              | ENGINE_URL         | `https://api.dtcc.chalmers.se/engine`                                       |
 |              | ENGINE_GATEWAY_KEY | The Twin backend consumer's key, listed in the gateway's `ENGINE_CONSUMERS` |
@@ -59,9 +62,12 @@ trusted, mount its CA and set `NODE_EXTRA_CA_CERTS`.
 Both volumes and `TWIN_SETTINGS_DIR` belong on a retained data disk, so a replaced host keeps them: a new
 `POSTGRES_PASSWORD` would not open the existing database. Packages must be writable by uid 10001.
 
+Valkey has no volume and nothing to retain: nothing it holds needs to survive a restart.
+
 ## Network
 
-- **Inbound:** the web server's 8080 only, behind TLS. Postgres and the backend publish no port.
+- **Inbound:** the web server's 8080 only, behind TLS. Postgres, Valkey and the backend publish no port.
+- **Valkey** has no password: it is on an internal network that only the backend joins.
 - **Outbound (backend):** `api.dtcc.chalmers.se:443`, and the private Admin API through Twin's private interface.
 - **TLS** is terminated in front of the web server and is required: production auth cookies are `Secure`, so login
   fails over HTTP. Redirect HTTP to HTTPS and set HSTS.

@@ -1,4 +1,4 @@
-# The production stack: Postgres, a one-shot migration, the backend and the web server. It is the reference for
+# The production stack: Postgres, Valkey, a one-shot migration, the backend and the web server. It is the reference for
 # dtcc-infra's Twin bundle and what `pnpm check:prod` runs locally; docs/deployment.md is the contract.
 # TWIN_SETTINGS_DIR (default /etc/dtcc-twin) holds postgres.env and backend.env, which are never committed.
 # Not the directory's name, which the development compose.yaml uses: its volumes would be shared.
@@ -41,6 +41,17 @@ services:
       retries: 12
     logging: *logging
 
+  valkey:
+    image: valkey/valkey:9.1.3@sha256:3add1a336a920ea54770a001ab6feb3da5fceea96a40373a3a2cd469b815f0b7
+    restart: unless-stopped
+    networks: [valkey]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging: *logging
+
   migrate:
     <<: *backend
     command: ["node", "dist/migrate.js"]
@@ -58,10 +69,12 @@ services:
     volumes:
       - packages:/var/lib/dtcc-twin/packages
     # default: the web server and outbound calls to the API gateway.
-    networks: [default, database]
+    networks: [default, database, valkey]
     depends_on:
       migrate:
         condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
 
   web:
     image: ${TWIN_WEB_IMAGE:-dtcc-twin-web:local}
@@ -86,4 +99,7 @@ volumes:
 networks:
   # No outside route: only the migration and the backend reach Postgres.
   database:
+    internal: true
+  # Valkey has no password, so only the backend joins its network.
+  valkey:
     internal: true

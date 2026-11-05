@@ -16,7 +16,7 @@ mkdir -p "$TWIN_SETTINGS_DIR"
 password=$(secret)
 printf 'POSTGRES_PASSWORD=%s\n' "$password" > "$TWIN_SETTINGS_DIR/postgres.env"
 admin_password=$(secret)
-printf 'DATABASE_URL=postgres://twin:%s@postgres:5432/twin\nJWT_SECRET=%s\nADMIN_EMAIL=admin@example.com\nADMIN_PASSWORD=%s\n' \
+printf 'DATABASE_URL=postgres://twin:%s@postgres:5432/twin\nVALKEY_URL=redis://valkey:6379\nJWT_SECRET=%s\nADMIN_EMAIL=admin@example.com\nADMIN_PASSWORD=%s\n' \
     "$password" "$(secret)" "$admin_password" > "$TWIN_SETTINGS_DIR/backend.env"
 
 compose build
@@ -25,7 +25,12 @@ compose up --detach --wait --wait-timeout 180
 [ "$(compose ps --all --format '{{.ExitCode}}' migrate)" = 0 ] || fail "the migration did not exit 0"
 [ "$(compose exec -T backend id -u)" = 10001 ] || fail "the backend does not run as uid 10001"
 [ "$(compose exec -T web id -u)" = 101 ] || fail "the web server does not run as uid 101"
-echo "stack: migrated, healthy, not root"
+compose exec -T backend node -e '
+const socket = require("node:net").connect(6379, "valkey", () => socket.write("PING\r\n"));
+socket.setTimeout(3000, () => socket.destroy());
+socket.on("data", (data) => process.exit(String(data).startsWith("+PONG") ? 0 : 1)).on("close", () => process.exit(1));
+' || fail "the backend cannot reach Valkey"
+echo "stack: migrated, healthy, not root, the backend reaches Valkey"
 
 curl -fsS "$base/healthz" > /dev/null || fail "/healthz"
 curl -fsS "$base/" | grep -q '<div id="root">' || fail "/ does not serve index.html"
