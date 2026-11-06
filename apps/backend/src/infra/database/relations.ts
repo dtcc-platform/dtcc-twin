@@ -1,5 +1,6 @@
 import { defineRelations } from "drizzle-orm";
 import { sessions } from "../../modules/auth/sessions.table.js";
+import { chatJobs } from "../../modules/chats/chat-jobs.table.js";
 import { chatMessages } from "../../modules/chats/chat-messages.table.js";
 import { chatTurns } from "../../modules/chats/chat-turns.table.js";
 import { chats } from "../../modules/chats/chats.table.js";
@@ -12,7 +13,7 @@ import { users } from "../../modules/users/users.table.js";
 
 // Add every new table here, even one without relations, or `db.query.<table>` won't exist.
 export const relations = defineRelations(
-  { users, settings, items, sessions, jobs, apiKeys, savedAreas, chats, chatMessages, chatTurns },
+  { users, settings, items, sessions, jobs, apiKeys, savedAreas, chats, chatMessages, chatTurns, chatJobs },
   (r) => ({
     users: {
       settings: r.one.settings({ from: r.users.id, to: r.settings.userId }),
@@ -35,6 +36,7 @@ export const relations = defineRelations(
     },
     jobs: {
       user: r.one.users({ from: r.jobs.userId, to: r.users.id, optional: false }),
+      chatJob: r.one.chatJobs({ from: r.jobs.id, to: r.chatJobs.jobId }),
     },
     apiKeys: {
       user: r.one.users({ from: r.apiKeys.userId, to: r.users.id, optional: false }),
@@ -46,9 +48,14 @@ export const relations = defineRelations(
       user: r.one.users({ from: r.chats.userId, to: r.users.id, optional: false }),
       messages: r.many.chatMessages(),
       turns: r.many.chatTurns(),
+      jobs: r.many.chatJobs(),
     },
     chatMessages: {
       chat: r.one.chats({ from: r.chatMessages.chatId, to: r.chats.id, optional: false }),
+    },
+    chatJobs: {
+      chat: r.one.chats({ from: r.chatJobs.chatId, to: r.chats.id, optional: false }),
+      job: r.one.jobs({ from: r.chatJobs.jobId, to: r.jobs.id, optional: false }),
     },
     chatTurns: {
       user: r.one.users({ from: r.chatTurns.userId, to: r.users.id, optional: false }),

@@ -41,6 +41,8 @@ describe("chatSchema", () => {
       updatedAt: "2026-11-06T10:00:05.000Z",
       entries: [{ id: "a", type: "assistant", text: "Hi", createdAt: "2026-11-06T10:00:05.000Z" }],
       answering: false,
+      jobs: [],
+      waitingJobs: 0,
     };
 
     expect(chatSchema.parse({ ...chat, userId: "0199a6b4-7c1e-7d2a-9f3b-2c4d5e6f7a8b" })).toEqual(chat);

@@ -1,9 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { InjectDrizzle } from "@nestjs/drizzle";
 import type { ChatSummary } from "@repo/contracts";
-import { and, asc, desc, eq, isNull, lt, max, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, max, or, sql } from "drizzle-orm";
 import type { Database } from "../../infra/database/database.js";
 import type { ChatMessage, NewChatMessage } from "./chat-messages.js";
+import { chatJobs } from "./chat-jobs.table.js";
 import { chatMessages } from "./chat-messages.table.js";
 import { chatTurns } from "./chat-turns.table.js";
 import { chats } from "./chats.table.js";
@@ -26,6 +27,9 @@ export type ChatTurnRecord = Pick<
 >;
 
 export type TurnClaim = "claimed" | "busy" | "missing";
+
+/** A job the assistant started in a chat; `reported` once the model has been told how it ended. */
+export type ChatJobLink = { jobId: string; reported: boolean };
 
 // A turn holds its chat for minutes at most, so an older claim belongs to a process that died mid-turn.
 const claimLifetime = sql`interval '10 minutes'`;
@@ -111,8 +115,11 @@ export class ChatsRepository {
     return rows.map(toChatMessage);
   }
 
-  /** Appends messages in order. Only the turn holding the chat appends, so positions never collide. */
-  async appendMessages(chatId: string, messages: NewChatMessage[]): Promise<void> {
+  /**
+   * Appends messages in order, and marks the chat's jobs whose end they tell the model as reported, together: a job's
+   * result reaches the model exactly once. Only the turn holding the chat appends, so positions never collide.
+   */
+  async appendMessages(chatId: string, messages: NewChatMessage[], reportedJobIds: string[] = []): Promise<void> {
     if (messages.length === 0) return;
     await this.db.transaction(async (tx) => {
       const [last] = await tx
@@ -123,7 +130,26 @@ export class ChatsRepository {
       await tx
         .insert(chatMessages)
         .values(messages.map((message, index) => ({ chatId, seq: first + index, ...message })));
+      if (reportedJobIds.length === 0) return;
+      await tx
+        .update(chatJobs)
+        .set({ reportedAt: sql`now()` })
+        .where(and(eq(chatJobs.chatId, chatId), inArray(chatJobs.jobId, reportedJobIds), isNull(chatJobs.reportedAt)));
     });
+  }
+
+  async linkJob(chatId: string, jobId: string): Promise<void> {
+    await this.db.insert(chatJobs).values({ chatId, jobId });
+  }
+
+  // Only for a chat the caller has already found by its owner.
+  async listJobLinks(chatId: string): Promise<ChatJobLink[]> {
+    const rows = await this.db
+      .select({ jobId: chatJobs.jobId, reportedAt: chatJobs.reportedAt })
+      .from(chatJobs)
+      .where(eq(chatJobs.chatId, chatId))
+      .orderBy(asc(chatJobs.createdAt), asc(chatJobs.id));
+    return rows.map((row) => ({ jobId: row.jobId, reported: row.reportedAt !== null }));
   }
 
   async insertTurn(record: ChatTurnRecord): Promise<void> {

@@ -4,16 +4,16 @@ import {
   notice,
   toEntries,
   toModelMessages,
+  toolResults,
   userMessage,
   type ChatMessage,
+  type NewChatMessage,
 } from "./chat-messages.js";
 
 const createdAt = "2026-11-06T10:00:00.000Z";
 
 // Stored messages as the repository answers them: the new message plus its id, position and time.
-function stored(
-  ...messages: ReturnType<typeof userMessage | typeof notice | typeof assistantMessage>[]
-): ChatMessage[] {
+function stored(...messages: NewChatMessage[]): ChatMessage[] {
   return messages.map((message, index) => ({ ...message, id: `m${String(index)}`, seq: index + 1, createdAt }));
 }
 
@@ -74,5 +74,37 @@ describe("toEntries", () => {
     const messages = stored(assistantMessage([{ type: "thinking", thinking: "", signature: "sig" }]));
 
     expect(toEntries(messages)).toEqual([]);
+  });
+});
+
+describe("toolResults", () => {
+  const started = {
+    toolUseId: "a",
+    tool: "run_trees",
+    dataset: "trees",
+    jobId: "0199a6b4-7c1e-7d2a-9f3b-2c4d5e6f7a8c",
+  };
+  const refused = { toolUseId: "b", tool: "run_trees", dataset: "trees", jobId: null };
+  const results = toolResults([
+    { block: { type: "tool_result", tool_use_id: "a", content: '{"state":"running"}' }, call: started },
+    { block: { type: "tool_result", tool_use_id: "b", content: "No area", is_error: true }, call: refused },
+  ]);
+
+  it("sends every result to the model in one user message", () => {
+    expect(toModelMessages(stored(results))).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "a", content: '{"state":"running"}' },
+          { type: "tool_result", tool_use_id: "b", content: "No area", is_error: true },
+        ],
+      },
+    ]);
+  });
+
+  it("shows a card for each job a call started", () => {
+    expect(toEntries(stored(results))).toEqual([
+      { id: "m0:0", type: "job", jobId: started.jobId, dataset: "trees", createdAt },
+    ]);
   });
 });

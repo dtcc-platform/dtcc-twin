@@ -64,6 +64,7 @@ export async function startStubEngine(token = "stub-engine-token", { gatewayKey 
   let jobs = new Map<string, StubJob>();
   let nextSubmit: SubmitResponse | "unconfirmed" | null = null;
   let reachable = true;
+  let onSubmit: ((jobId: string) => void) | null = null;
   const submissions: StubSubmission[] = [];
 
   const server = createServer((request, response) => {
@@ -146,6 +147,7 @@ export async function startStubEngine(token = "stub-engine-token", { gatewayKey 
       packageBytes: null,
     });
     submissions.push({ body, jobId });
+    onSubmit?.(jobId);
     const statusUrl = `/api/v1/jobs/${jobId}`;
     if (planned === "unconfirmed") {
       send(response, 503, {
@@ -252,6 +254,11 @@ export async function startStubEngine(token = "stub-engine-token", { gatewayKey 
       jobs.delete(jobId);
     },
 
+    /** Runs `callback` on every job the engine accepts, before it answers: `onSubmit((id) => completeJob(id, bytes))`. */
+    onSubmit(callback: (jobId: string) => void): void {
+      onSubmit = callback;
+    },
+
     /** While false, every connection is dropped, as if the engine were down. */
     setReachable(value: boolean): void {
       reachable = value;
@@ -262,6 +269,7 @@ export async function startStubEngine(token = "stub-engine-token", { gatewayKey 
       jobs = new Map();
       nextSubmit = null;
       reachable = true;
+      onSubmit = null;
       submissions.length = 0;
     },
 

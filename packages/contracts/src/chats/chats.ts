@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { offsetPage } from "../common/pagination.js";
+import { jobSchema } from "../jobs/jobs.js";
 
 /** EPSG:3006 bounds in metres, `[minX, minY, maxX, maxY]`: what a Dataset takes as `bounds`. */
 export const boundsSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]).check((context) => {
@@ -33,6 +34,8 @@ export const chatEntrySchema = z.discriminatedUnion("type", [
     bounds: z.tuple([z.number(), z.number(), z.number(), z.number()]).nullable(),
   }),
   z.object({ ...entry, type: z.literal("assistant"), text: z.string() }),
+  /** A job the assistant started; its state is in the chat's `jobs`. */
+  z.object({ ...entry, type: z.literal("job"), jobId: z.uuid(), dataset: z.string() }),
   /** Something that isn't the assistant's answer, such as a turn that failed. */
   z.object({ ...entry, type: z.literal("notice"), text: z.string() }),
 ]);
@@ -42,6 +45,10 @@ export const chatSchema = chatSummarySchema.extend({
   entries: z.array(chatEntrySchema),
   /** A turn is running: the chat takes no new message until it ends. */
   answering: z.boolean(),
+  /** The jobs the assistant started in this chat, in the order it started them. */
+  jobs: z.array(jobSchema),
+  /** How many of those jobs the assistant hasn't seen finish yet. */
+  waitingJobs: z.int().nonnegative(),
 });
 export type Chat = z.infer<typeof chatSchema>;
 

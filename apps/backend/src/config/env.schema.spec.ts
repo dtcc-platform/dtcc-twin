@@ -16,6 +16,7 @@ describe("envSchema", () => {
       APISIX_ADMIN_KEY,
       ADMIN_EMAIL,
       ADMIN_PASSWORD,
+      CHAT_DATASETS,
       ...rest
     } = envSchema.parse(required);
 
@@ -28,7 +29,9 @@ describe("envSchema", () => {
       PACKAGE_STORAGE_DIR: ".data/packages",
       JOBS_REFRESH_INTERVAL_SECONDS: 10,
       SCRIPTED_MODEL_DELAY_MS: 800,
+      CHAT_JOB_WAIT_MS: 20_000,
     });
+    expect(CHAT_DATASETS).toBeUndefined();
     expect(ENGINE_URL).toBeUndefined();
     expect(ENGINE_API_TOKEN).toBeUndefined();
     expect(ENGINE_GATEWAY_KEY).toBeUndefined();
@@ -130,6 +133,14 @@ describe("envSchema", () => {
     expect(() => envSchema.parse({ JOBS_REFRESH_INTERVAL_SECONDS: "-1", ...required })).toThrow(
       /JOBS_REFRESH_INTERVAL_SECONDS/,
     );
+  });
+
+  it("splits CHAT_DATASETS on commas, and treats it empty as every Dataset", () => {
+    expect(envSchema.parse({ CHAT_DATASETS: "trees, footprints", ...required }).CHAT_DATASETS).toEqual([
+      "trees",
+      "footprints",
+    ]);
+    expect(envSchema.parse({ CHAT_DATASETS: "", ...required }).CHAT_DATASETS).toBeUndefined();
   });
 
   it("drops the unrelated variables that process.env always carries", () => {

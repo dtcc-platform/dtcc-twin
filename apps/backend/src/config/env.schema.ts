@@ -34,6 +34,19 @@ export const envSchema = z.object({
   PACKAGE_STORAGE_DIR: z.string().min(1).default(".data/packages"),
   JOBS_REFRESH_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(10),
   SCRIPTED_MODEL_DELAY_MS: z.coerce.number().int().min(0).default(800),
+  CHAT_JOB_WAIT_MS: z.coerce.number().int().min(0).default(20_000),
+  CHAT_DATASETS: z.preprocess(
+    emptyAsUnset,
+    z
+      .string()
+      .transform((value) =>
+        value
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean),
+      )
+      .optional(),
+  ),
   APISIX_ADMIN_URL: z.preprocess(
     emptyAsUnset,
     z.url({ protocol: /^https?$/, error: "must be an http(s) URL" }).optional(),

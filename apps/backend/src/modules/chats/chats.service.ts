@@ -1,5 +1,6 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import type { Chat, ChatMessageBody, ChatPage, OffsetPaginationQuery } from "@repo/contracts";
+import { JobsService } from "../jobs/jobs.service.js";
 import { UsersService } from "../users/users.service.js";
 import { toEntries, userMessage } from "./chat-messages.js";
 import { ChatTurnRunner } from "./chat-turns.js";
@@ -13,6 +14,7 @@ export class ChatsService {
     private readonly repository: ChatsRepository,
     private readonly turns: ChatTurnRunner,
     private readonly users: UsersService,
+    private readonly jobs: JobsService,
   ) {}
 
   async list(userId: string, { limit, offset }: OffsetPaginationQuery): Promise<ChatPage> {
@@ -23,8 +25,9 @@ export class ChatsService {
   async get(userId: string, id: string): Promise<Chat> {
     const chat = await this.repository.findById(userId, id);
     if (!chat) throw new NotFoundException(`Chat ${id} not found`);
-    const messages = await this.repository.listMessages(id);
-    return { ...chat, entries: toEntries(messages) };
+    const [messages, links] = await Promise.all([this.repository.listMessages(id), this.repository.listJobLinks(id)]);
+    const jobs = await Promise.all(links.map((link) => this.jobs.get(userId, link.jobId)));
+    return { ...chat, entries: toEntries(messages), jobs, waitingJobs: links.filter((link) => !link.reported).length };
   }
 
   /** Starts a chat with its first message, and answers it. */
