@@ -30,6 +30,8 @@ from kombu import Connection
 from kombu.exceptions import ChannelError, OperationalError
 from kombu.pidbox import Mailbox
 from pydantic import BaseModel, ConfigDict, ValidationError
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
 VERSIONED_PACKAGES = ("dtcc-engine", "dtcc-core", "dtcc-sim")
 # How long a finished job and its package stay available, unless the deployment sets ENGINE_RETENTION_DAYS.
@@ -42,16 +44,27 @@ RETENTION_DAYS_PATTERN = re.compile(r"[1-9][0-9]*")
 RUN_DATASET = "dtcc_engine.run_dataset"
 # How often a worker deletes the packages that no job can deliver.
 CLEANUP_INTERVAL = timedelta(hours=1)
-# A target's identifier also names its worker's node, celery@<identifier>, which claims hold between spaces.
+# A target's identifier also ends its workers' node names, <name>@<identifier>, which claims hold between spaces.
 TARGET_PATTERN = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+# A worker's name, which starts its node name: celery for a host's own worker, and the deployment's for the others.
+WORKER_NAME_PATTERN = re.compile(r"[a-z0-9]+")
 IMAGE_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 # How long a starting worker waits for an answer from another running worker with its node name, once connected.
 NODE_CHECK_TIMEOUT = 0.5
+# How long a worker's registration lasts, and how often the worker renews it while it runs.
+WORKER_REGISTRATION = timedelta(seconds=30)
+WORKER_REGISTRATION_RENEWAL = timedelta(seconds=10)
+# How many keys at a time Redis visits for an observation's scan of the registrations, which goes over every key, the
+# job records among them, so that the scan makes few round trips.
+REGISTRY_SCAN_COUNT = 1000
 # How long an observation waits for a target's worker to answer, once connected.
 OBSERVATION_TIMEOUT = 0.5
 # Kombu's transport options for an observation's broker connection: no reconnection, and no read longer than 2 s, which
 # still outlasts the 1 s BRPOP whose answer the connection reads as it closes.
 OBSERVATION_BROKER = {"socket_connect_timeout": 1, "socket_timeout": 2, "max_retries": 0}
+# The same bounds for the Redis client of the workers' registrations, which an observation reads, and which a worker
+# writes on its event loop, where a Redis that stops answering would otherwise hold the worker.
+REGISTRY_BOUNDS = {"socket_connect_timeout": 1, "socket_timeout": 2, "retry": Retry(NoBackoff(), 0)}
 # Engine's inspect command, which a worker answers with what an observation needs.
 DESCRIBE_WORKER = "engine_worker"
 # Celery's states of a job without a recorded outcome; SUCCESS follows the outcome, so it never appears alone.
@@ -185,6 +198,11 @@ def record_key(job_id: str) -> str:
     return f"dtcc-engine:job:{job_id}"
 
 
+def worker_key(node: str) -> str:
+    """Return the Redis key of a worker's registration."""
+    return f"dtcc-engine:worker:{node}"
+
+
 def store_progress(task: Task, progress: dict[str, Any]) -> None:
     """Store a progress report from Core, unchanged, as the task's PROGRESS state."""
     try:
@@ -270,7 +288,7 @@ class Jobs:
     Args:
         redis_url: Redis for Celery's broker and result backend, and for Engine's job records.
         target: Identifier of this compute target, lowercase letters and digits in words joined by single hyphens;
-            its jobs use the Celery queue of that name, and its worker runs as `celery@<target>`.
+            its jobs use the Celery queue of that name, and its workers run as `<name>@<target>`.
         package_dir: Directory of completed packages, shared by this host's API and worker.
         image_digest: The platform-specific digest of the image this host runs, `sha256:` and 64 lowercase
             hexadecimal digits, if the deployment supplies it.
@@ -300,6 +318,7 @@ class Jobs:
         self.retention = retention
         self.record_lifetime = retention + RECORD_MARGIN
         self.records = redis.Redis.from_url(redis_url, decode_responses=True)
+        self.registry = redis.Redis.from_url(redis_url, decode_responses=True, **REGISTRY_BOUNDS)
         self.queued_script = self.records.register_script(QUEUED)
         self.start_script = self.records.register_script(START)
         self.finish_script = self.records.register_script(FINISH)
@@ -307,6 +326,8 @@ class Jobs:
         self.lost_script = self.records.register_script(LOST)
         # Identifies this run of the worker, so that a worker started again tells its earlier run's claims from its own.
         self.worker_run = uuid4().hex
+        # The node name of the worker this process runs, set when Celery creates the worker; the API has none.
+        self.node: str | None = None
         self.celery_app = Celery("dtcc_engine", broker=redis_url, backend=redis_url)
         # Where Engine's inspect command, which Celery registers for every app, finds this app's jobs.
         self.celery_app.engine_jobs = self
@@ -340,12 +361,50 @@ class Jobs:
         jobs = self
 
         class CheckWorker(bootsteps.StartStopStep):
-            """Refuses to start a worker that would not run as this target's worker; see `Jobs.check_worker`."""
+            """Refuses to start a worker that would not run as this target's worker; see `Jobs.check_worker`.
+
+            When Celery creates the step, before any step starts and the pool forks the processes that run the jobs,
+            it also gives the jobs the worker's node name. `task.request.hostname` is that name only under Celery's
+            worker command, which sets its tracer up; a worker started in a test's process reports the machine's name.
+            """
+
+            def create(self, worker: Any) -> None:
+                jobs.node = worker.hostname
 
             def start(self, worker: Any) -> None:
                 jobs.check_worker(worker.hostname, set(worker.app.amqp.queues.consume_from))
 
         self.celery_app.steps["worker"].add(CheckWorker)
+
+        class RegisterWorker(bootsteps.StartStopStep):
+            """Registers the worker for observations while it runs, renewing the registration before it lapses, and
+            deregisters it when the worker stops, warm or cold."""
+
+            # After the check, so that a refused worker registers nothing.
+            requires = {"celery.worker.components:Timer", CheckWorker}
+
+            def start(self, worker: Any) -> None:
+                self.node = worker.hostname
+                self.register()
+                self.renewal = worker.timer.call_repeatedly(WORKER_REGISTRATION_RENEWAL.total_seconds(), self.register)
+
+            def register(self) -> None:
+                try:
+                    jobs.register_worker(self.node)
+                except redis.RedisError:
+                    # The worker runs on, and is observed again once a renewal succeeds.
+                    logger.warning("Could not register %s for observations", self.node, exc_info=True)
+
+            def stop(self, worker: Any) -> None:
+                self.renewal.cancel()
+                try:
+                    jobs.deregister_worker(self.node)
+                except redis.RedisError:
+                    logger.warning("Could not deregister %s; its registration lapses", self.node, exc_info=True)
+
+            terminate = stop
+
+        self.celery_app.steps["worker"].add(RegisterWorker)
 
         class RecordLostClaims(bootsteps.StartStopStep):
             """When the worker starts, records the failure of the jobs that an earlier run of it claimed and left."""
@@ -376,7 +435,7 @@ class Jobs:
 
             def start(self, worker: Any) -> None:
                 # Celery starts the consumer after every other step, so none of this worker's exports runs yet.
-                jobs.clean_staging()
+                jobs.clean_staging(worker.hostname)
                 jobs.clean_packages()
                 self.cleanup = worker.timer.call_repeatedly(CLEANUP_INTERVAL.total_seconds(), jobs.clean_packages)
 
@@ -388,6 +447,37 @@ class Jobs:
     def package_path(self, job_id: str) -> Path:
         """Return where the job's package is stored once the job completes."""
         return self.package_dir / f"{job_id}.dtccpkg"
+
+    def staging_dir(self, node: str) -> Path:
+        """Return the directory under the package directory in which this node's worker stages its exports."""
+        return self.package_dir / f".dtcc-staging-{node}"
+
+    def register_worker(self, node: str) -> None:
+        """Register a running worker as this target's for `WORKER_REGISTRATION`; the worker renews it while it runs.
+
+        Raises:
+            redis.RedisError: If Redis did not answer within the registry's bounds.
+        """
+        self.registry.set(worker_key(node), self.target, ex=WORKER_REGISTRATION)
+
+    def deregister_worker(self, node: str) -> None:
+        """Remove a worker's registration, as a worker that stops does.
+
+        Raises:
+            redis.RedisError: If Redis did not answer within the registry's bounds; the registration lapses on its own.
+        """
+        self.registry.delete(worker_key(node))
+
+    def registered_workers(self, target: str) -> list[str]:
+        """Return the node names of the target's registered workers, sorted.
+
+        Raises:
+            redis.RedisError: If Redis did not answer within the registry's bounds.
+        """
+        prefix = worker_key("")
+        found = self.registry.scan_iter(worker_key(f"*@{target}"), count=REGISTRY_SCAN_COUNT)
+        # A scan can give a key twice.
+        return sorted({key.removeprefix(prefix) for key in found})
 
     def submit(self, dataset_name: str, parameters: dict[str, Any], target: str | None = None) -> str:
         """Record and queue a job that runs a Dataset with parameters the caller has validated; return its ID.
@@ -556,27 +646,32 @@ class Jobs:
     def run(self, task: Task, dataset_name: str, parameters: dict[str, Any]) -> None:
         """Run a job in the worker if this delivery claims it, and record how the job ended.
 
-        The job invokes the Dataset, exports its realization, and validates the package.
+        The job invokes the Dataset, exports its realization into this node's staging directory, validates the package,
+        and moves it into place.
 
         Raises:
             Ignore: If this delivery does not claim the job, or the job's record is gone or no longer claimed when the
                 job ends; Celery then stores no result.
-            Exception: Whatever the Dataset, the export, or the validation raised; the job then fails.
+            Exception: Whatever the staging directory, the Dataset, the export, or the validation raised; the job then
+                fails.
         """
         job_id = task.request.id
-        if not self.claim(job_id, f"{task.request.hostname} {self.worker_run} {os.getpid()}"):
+        if not self.claim(job_id, f"{self.node} {self.worker_run} {os.getpid()}"):
             raise Ignore()
-        path = self.package_path(job_id)
+        staging = self.staging_dir(self.node)
+        staged = staging / f"{job_id}.dtccpkg"
         previous_callback = get_progress_callback()
         set_progress_callback(lambda progress: store_progress(task, progress))
         try:
+            staging.mkdir(exist_ok=True)
             realization = datasets.get_dataset(dataset_name)(**parameters)
-            realization.export(path, canonical=True)
+            realization.export(staged, canonical=True)
             try:
-                datasets.load_model_package(path)
+                datasets.load_model_package(staged)
             except Exception:
-                path.unlink()
+                staged.unlink()
                 raise
+            os.replace(staged, self.package_path(job_id))
         except Exception as error:
             upstream = public_upstream_error(error) if isinstance(error, DatasetUpstreamError) else None
             self.finish(job_id, "failed", type(error).__name__, upstream)
@@ -648,28 +743,34 @@ class Jobs:
         except redis.RedisError:
             logger.warning("Could not read job records; packages are deleted at the next pass", exc_info=True)
 
-    def clean_staging(self) -> None:
-        """Delete the directories in which Core staged exports beside the packages.
+    def clean_staging(self, node: str) -> None:
+        """Delete the node's staging directory, in which its worker's exports were staged under the package directory.
 
-        Call it only before the worker runs jobs: the host's worker is the only one that exports here, and its earlier
-        run has stopped, so every such directory belongs to an export that was killed.
+        Call it only before the node's worker runs jobs: its earlier run has stopped, so every export there was killed.
+        Other nodes' directories stay, since their workers may be exporting.
         """
-        for staging in self.package_dir.glob(".dtcc-package-*"):
+        staging = self.staging_dir(node)
+        if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
-            logger.info("Deleted %s, left by an export that was killed", staging.name)
+            logger.info("Deleted %s, left by exports that were killed", staging.name)
 
     def check_worker(self, node: str, queues: set[str]) -> None:
-        """Check that a worker may start: as `celery@<target>`, consuming only this target's queue.
+        """Check that a worker may start: as `<name>@<target>`, with a name of lowercase letters and digits, consuming
+        only this target's queue.
 
         It also refuses a node name that another running worker answers to, as a best effort: a running worker whose
         answer is late or lost, or a broker error, which is logged, lets the worker start, as do two that start at once.
 
         Raises:
-            ValueError: If `node` is not `celery@<target>`, or `queues` are not this target's queue alone.
+            ValueError: If `node` is not a node name of this target, or `queues` are not this target's queue alone.
             RuntimeError: If another running worker answers as `node`.
         """
-        if node != f"celery@{self.target}":
-            raise ValueError(f"A worker of target '{self.target}' must run as celery@{self.target}, not {node}")
+        name, at, target = node.partition("@")
+        if not (at and target == self.target and WORKER_NAME_PATTERN.fullmatch(name)):
+            raise ValueError(
+                f"A worker of target '{self.target}' must run as <name>@{self.target}, "
+                f"with lowercase letters and digits as its name, not {node}"
+            )
         if queues != {self.target}:
             raise ValueError(
                 f"A worker of target '{self.target}' must consume only the queue '{self.target}', not {sorted(queues)}"
@@ -684,63 +785,83 @@ class Jobs:
         if answers:
             raise RuntimeError(f"Another running worker answers as {node}, so this one does not start")
 
+    def compatible(self, target: str, image_digest: str | None) -> bool:
+        """Return whether a worker of the target, reporting this image digest, runs this host's image.
+
+        For this host's own target, the digests are compared only when both are set: a development deployment supplies
+        none, and runs locally only. For a remote target, both must be set and equal.
+        """
+        digests = (self.image_digest, image_digest)
+        if target == self.target:
+            return None in digests or digests[0] == digests[1]
+        return None not in digests and digests[0] == digests[1]
+
     def observe(self, target: str) -> dict[str, Any]:
-        """Observe a target's worker through the broker, with the count of jobs waiting in its queue.
+        """Observe a target's workers through the broker, with the count of jobs waiting in its queue.
+
+        The workers asked are the target's registered ones, or `celery@<target>` when none is registered.
 
         Returns:
-            `state`, `reason`, `worker`, the worker's answer, and `waiting`. The state is `ready` if the worker can
-            start a job now; `busy` if it holds as many jobs as its limit, or jobs wait; `unavailable` if it does not
-            consume exactly its target's queue; `incompatible` if its image digest does not match this host's; and
-            `unknown` if the broker or the worker did not answer, or the answer is malformed, which does not show that
-            the worker stopped. Only ready and busy have no reason; a value not obtained is None.
+            `state`, `reason`, `worker`, the answers added up, `waiting`, and `workers`, each worker asked, by node,
+            with its answer, or None if it gave none or a malformed one. The state is `ready` if a worker can start a
+            job now; `busy` if the answering workers hold as many jobs as the consuming ones' limits add up to, or jobs
+            wait; `unavailable` if a worker consumes another queue, or none of the answering ones consumes exactly the
+            target's queue; `incompatible` if a consuming worker's image digest does not match this host's; and
+            `unknown` if the broker or no worker answered, or an answer is malformed, which does not show that a worker
+            stopped. A registered worker that does not answer is listed without an answer and not counted. Only ready
+            and busy have no reason; a value not obtained is None.
         """
-        node = f"celery@{target}"
+        unknown: dict[str, Any] = {"state": "unknown", "worker": None}
         try:
+            nodes = self.registered_workers(target) or [f"celery@{target}"]
             # A connection of its own: on a pooled one, an earlier call that timed out can lose this answer.
             with ObservationConnection(
                 self.celery_app.conf.broker_url, transport_options=OBSERVATION_BROKER
             ) as connection:
-                # Before the worker answers: a job it takes from the queue in between is counted twice, not missed.
+                # Before the workers answer: a job one takes from the queue in between is counted twice, not missed.
                 try:
                     waiting = connection.default_channel.queue_declare(queue=target, passive=True).message_count
                 except ChannelError:
                     # Kombu keeps no list for an empty queue, so its passive declaration finds none.
                     waiting = 0
-                answers = self.observation_mailbox(connection).call(
-                    [node], DESCRIBE_WORKER, timeout=OBSERVATION_TIMEOUT
-                )
+                answers = self.observation_mailbox(connection).call(nodes, DESCRIBE_WORKER, timeout=OBSERVATION_TIMEOUT)
         except (OperationalError, redis.RedisError):
-            logger.warning("Could not observe the worker of %s", target, exc_info=True)
-            return {"state": "unknown", "reason": "The broker did not answer", "worker": None, "waiting": None}
-        answer = next((reply[node] for reply in answers if node in reply), None)
-        if answer is None:
+            logger.warning("Could not observe the workers of %s", target, exc_info=True)
+            return {**unknown, "reason": "The broker did not answer", "waiting": None, "workers": None}
+        workers: dict[str, dict[str, Any] | None] = {}
+        malformed = False
+        for node in nodes:
+            answer = next((reply[node] for reply in answers if node in reply), None)
+            try:
+                workers[node] = WorkerDescription.model_validate(answer).model_dump() if answer is not None else None
+            except ValidationError:
+                workers[node], malformed = None, True
+        if malformed:
+            return {**unknown, "reason": "Its worker's answer is malformed", "waiting": waiting, "workers": workers}
+        described = {node: worker for node, worker in workers.items() if worker is not None}
+        if not described:
             reason = f"Its worker did not answer within {OBSERVATION_TIMEOUT} s"
-            return {"state": "unknown", "reason": reason, "worker": None, "waiting": waiting}
-        try:
-            worker = WorkerDescription.model_validate(answer).model_dump()
-        except ValidationError:
-            return {
-                "state": "unknown",
-                "reason": "Its worker's answer is malformed",
-                "worker": None,
-                "waiting": waiting,
-            }
-        digests = (self.image_digest, worker["image_digest"])
-        if target == self.target:
-            # Compared only when both are set: a development deployment supplies none, and runs locally only.
-            compatible = None in digests or digests[0] == digests[1]
-        else:
-            compatible = None not in digests and digests[0] == digests[1]
+            return {**unknown, "reason": reason, "waiting": waiting, "workers": workers}
+        consuming = {node: worker for node, worker in described.items() if worker["queues"] == [target]}
+        first = next(iter((consuming or described).values()))
+        worker = {
+            "image_digest": first["image_digest"],
+            "versions": first["versions"],
+            "job_limit": sum(each["job_limit"] for each in consuming.values()),
+            # A worker leaving the queue still holds its jobs.
+            "reserved": sum(each["reserved"] for each in described.values()),
+            "queues": sorted({queue for each in described.values() for queue in each["queues"]}),
+        }
         reason = None
-        if worker["queues"] != [target]:
+        if not consuming or any(each["queues"] not in ([target], []) for each in described.values()):
             state, reason = "unavailable", f"Its worker does not consume exactly the queue '{target}'"
-        elif not compatible:
+        elif not all(self.compatible(target, each["image_digest"]) for each in consuming.values()):
             state, reason = "incompatible", "Its worker's image digest is missing or differs from this host's"
         elif worker["reserved"] < worker["job_limit"] and waiting == 0:
             state = "ready"
         else:
             state = "busy"
-        return {"state": state, "reason": reason, "worker": worker, "waiting": waiting}
+        return {"state": state, "reason": reason, "worker": worker, "waiting": waiting, "workers": workers}
 
     def record_lost_process(self, sender: Task, task_id: str, exception: BaseException, **kwargs: Any) -> None:
         """Record the failure of a job whose pool process was lost, reported by Celery in the worker's main process."""

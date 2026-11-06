@@ -23,7 +23,6 @@ from typing import Any
 
 import pytest
 import requests
-from celery import Celery
 from dtcc_core.datasets import DatasetBaseArgs, DatasetDescriptor, unregister
 from fastapi.testclient import TestClient
 
@@ -43,47 +42,6 @@ def wait_for(condition: Callable[[], bool], timeout: float = 120.0) -> None:
     while not condition():
         assert time.monotonic() < deadline
         time.sleep(0.2)
-
-
-def answers(app: Celery, node: str) -> bool:
-    with app.connection_for_write() as connection:
-        return bool(app.control.ping([node], timeout=0.5, connection=connection))
-
-
-@pytest.fixture(scope="module")
-def run_worker_process(redis_url: str, tmp_path_factory: pytest.TempPathFactory) -> Callable[..., Any]:
-    """Run a target's worker in a process of its own until the context ends, as the worker service runs it.
-
-    The worker also runs `engine_held_probe` (`target_worker.py`). Its log is in a temporary directory, which a failure
-    to start reports.
-    """
-    logs = tmp_path_factory.mktemp("worker-logs")
-    app = Celery(broker=redis_url, set_as_current=False)
-
-    @contextmanager
-    def run(target: str, package_dir: Path, image_digest: str | None = None) -> Iterator[None]:
-        environment = {
-            **os.environ,
-            "ENGINE_REDIS_URL": redis_url,
-            "ENGINE_TARGET": target,
-            "ENGINE_PACKAGE_DIR": str(package_dir),
-            "ENGINE_IMAGE_DIGEST": image_digest or "",
-            "PYTHONPATH": str(Path(__file__).parent),
-        }
-        command = ["celery", "--app", "target_worker", "worker", "--hostname", f"celery@{target}", "--concurrency", "1"]
-        log = logs / f"{target}.log"
-        with log.open("w") as output:
-            process = subprocess.Popen([sys.executable, "-m", *command], env=environment, stdout=output, stderr=output)
-        try:
-            deadline = time.monotonic() + 120
-            while not answers(app, f"celery@{target}"):
-                assert process.poll() is None and time.monotonic() < deadline, log.read_text()
-            yield
-        finally:
-            process.terminate()
-            process.wait(timeout=60)
-
-    return run
 
 
 @pytest.fixture(scope="module")
@@ -135,7 +93,7 @@ def run_api_process(redis_url: str, tmp_path_factory: pytest.TempPathFactory) ->
 def hosts(
     redis_url: str,
     tmp_path_factory: pytest.TempPathFactory,
-    run_worker_process: Callable[..., AbstractContextManager[None]],
+    run_worker_process: Callable[..., AbstractContextManager[Any]],
     run_api_process: Callable[..., AbstractContextManager[str]],
 ) -> Iterator[dict[str, Any]]:
     """The entry host, target `entry`, and a remote host, target `remote`, each with its worker and API, in one deployment.
@@ -199,17 +157,19 @@ def test_targets_report_each_hosts_discovery_and_its_workers_own_answer(hosts: d
     }
     assert list(targets) == ["entry", "remote"]
     for target, listed in targets.items():
+        worker = {
+            "image_digest": DIGEST,
+            "versions": installed_versions(),
+            "job_limit": 1,
+            "reserved": 0,
+            "queues": [target],
+        }
         assert listed == {
             "state": "ready",
             "reason": None,
-            "worker": {
-                "image_digest": DIGEST,
-                "versions": installed_versions(),
-                "job_limit": 1,
-                "reserved": 0,
-                "queues": [target],
-            },
+            "worker": worker,
             "waiting": 0,
+            "workers": {f"celery@{target}": worker},
             "host": host,
             "host_error": None,
         }

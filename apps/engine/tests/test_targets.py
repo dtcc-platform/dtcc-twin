@@ -7,6 +7,7 @@ to start ends its process.
 
 import contextlib
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -21,11 +22,19 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
+import redis
 from celery.worker.control import Panel
 from fastapi.testclient import TestClient
 
-from dtcc_engine.api import create_app, create_app_from_environment
-from dtcc_engine.jobs import Jobs, jobs_from_environment, record_key
+from dtcc_engine.api import create_app, create_app_from_environment, installed_versions
+from dtcc_engine.jobs import (
+    WORKER_REGISTRATION,
+    WORKER_REGISTRATION_RENEWAL,
+    Jobs,
+    jobs_from_environment,
+    record_key,
+    worker_key,
+)
 
 BOUNDS = [319891.0, 6399790.0, 320091.0, 6399990.0]
 DIGEST = "sha256:" + "0123456789abcdef" * 4
@@ -94,10 +103,15 @@ def run_worker(
     return subprocess.run([sys.executable, "-m", *command], env=environment, capture_output=True, text=True, timeout=30)
 
 
-def test_worker_refuses_a_node_name_other_than_its_targets(redis_url: str, tmp_path: Path) -> None:
-    ended = run_worker(redis_url, tmp_path, "named", "celery@engine-worker")
+@pytest.mark.parametrize(
+    "node",
+    ["celery@engine-worker", "w-1@named", "W1@named", "w1.a@named"],
+    ids=["other-target", "hyphen", "uppercase", "dot"],
+)
+def test_worker_refuses_a_node_name_that_is_not_a_name_of_its_target(redis_url: str, tmp_path: Path, node: str) -> None:
+    ended = run_worker(redis_url, tmp_path, "named", node)
     assert ended.returncode == 1
-    assert "must run as celery@named, not celery@engine-worker" in ended.stderr
+    assert "must run as <name>@named, with lowercase letters and digits as its name, not " in ended.stderr
 
 
 @pytest.mark.parametrize("queues", ["intended", "other,intended"])
@@ -220,6 +234,7 @@ def test_target_whose_worker_does_not_answer_is_unknown(redis_url: str, tmp_path
         "reason": "Its worker did not answer within 0.5 s",
         "worker": None,
         "waiting": 1,
+        "workers": {"celery@absent": None},
     }
 
 
@@ -230,6 +245,7 @@ def test_target_is_unknown_while_the_broker_does_not_answer(tmp_path: Path) -> N
         "reason": "The broker did not answer",
         "worker": None,
         "waiting": None,
+        "workers": None,
     }
 
 
@@ -332,7 +348,9 @@ def test_observation_ends_within_seconds_while_the_broker_does_not_answer(
     start = time.monotonic()
     observation.start()
     observation.join(30)
-    assert observed == [{"state": "unknown", "reason": "The broker did not answer", "worker": None, "waiting": None}]
+    assert observed == [
+        {"state": "unknown", "reason": "The broker did not answer", "worker": None, "waiting": None, "workers": None}
+    ]
     assert time.monotonic() - start < 4
 
 
@@ -344,7 +362,13 @@ def test_worker_without_engines_inspect_command_is_unknown(
     jobs = Jobs(redis_url, "commandless", tmp_path)
     with start_target_worker(jobs):
         observed = jobs.observe("commandless")
-    assert observed == {"state": "unknown", "reason": "Its worker's answer is malformed", "worker": None, "waiting": 0}
+    assert observed == {
+        "state": "unknown",
+        "reason": "Its worker's answer is malformed",
+        "worker": None,
+        "waiting": 0,
+        "workers": {"celery@commandless": None},
+    }
 
 
 @pytest.mark.parametrize("change", ["added", "cancelled"])
@@ -425,6 +449,197 @@ def test_worker_is_compatible_when_its_image_digest_matches_this_hosts(
         assert observation["worker"]["image_digest"] == worker_digest
         if observation["state"] == "incompatible":
             assert observation["reason"] == "Its worker's image digest is missing or differs from this host's"
+
+
+def test_worker_may_run_under_another_name_of_its_target(
+    redis_url: str, tmp_path: Path, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "pooled", tmp_path)
+    with start_target_worker(jobs, node="w1@pooled"):
+        observed = observe_until(jobs, "pooled", lambda observed: observed["state"] != "unknown")
+    assert (observed["state"], observed["worker"]["queues"]) == ("ready", ["pooled"])
+    assert observed["workers"] == {"w1@pooled": observed["worker"]}
+
+
+def test_worker_registers_itself_while_it_runs_and_renews_its_registration(
+    redis_url: str, tmp_path: Path, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "registered", tmp_path)
+    key = worker_key("celery@registered")
+    with start_target_worker(jobs):
+        assert jobs.records.get(key) == "registered"
+        assert 0 < jobs.records.ttl(key) <= WORKER_REGISTRATION.total_seconds()
+        assert jobs.registered_workers("registered") == ["celery@registered"]
+        time.sleep(WORKER_REGISTRATION_RENEWAL.total_seconds() + 2)
+        # Without the renewal, 18 s or less would be left.
+        assert jobs.records.ttl(key) > 20
+    # A worker that stops deregisters itself; one that is killed is registered until its registration lapses.
+    assert not jobs.records.exists(key)
+
+
+def test_observation_asks_the_registered_workers_and_lists_one_that_does_not_answer(
+    redis_url: str, tmp_path: Path, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "ghosted", tmp_path)
+    with start_target_worker(jobs):
+        # As a worker that was killed is, until its registration lapses.
+        jobs.register_worker("ghost@ghosted")
+        observed = observe_until(jobs, "ghosted", lambda observed: observed["state"] != "unknown")
+    assert observed["state"] == "ready"
+    assert observed["workers"] == {"celery@ghosted": observed["worker"], "ghost@ghosted": None}
+
+
+def test_registration_ends_within_seconds_while_redis_does_not_answer(silent_broker: str, tmp_path: Path) -> None:
+    jobs = Jobs(silent_broker, "unregistered", tmp_path)
+    errors: list[Exception] = []
+
+    def register_and_deregister() -> None:
+        for change in (jobs.register_worker, jobs.deregister_worker):
+            try:
+                change("celery@unregistered")
+            except redis.RedisError as error:
+                errors.append(error)
+
+    # In a thread of its own, so that a call that never ends fails the test instead of stopping the run.
+    registration = threading.Thread(target=register_and_deregister, daemon=True)
+    start = time.monotonic()
+    registration.start()
+    registration.join(30)
+    assert len(errors) == 2
+    assert time.monotonic() - start < 8
+
+
+def described(observed: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the workers of an observation that answered, by node."""
+    return {node: worker for node, worker in observed["workers"].items() if worker is not None}
+
+
+def hold_a_job(jobs: Jobs, on: str | None = None) -> tuple[str, str, str]:
+    """Submit a job that holds its worker until a test releases it, on the node `on` if given, while the target's other
+    workers leave its queue; return the job's ID, its release key, and its holder."""
+    others = [node for node in jobs.registered_workers(jobs.target) if node != on] if on else []
+    if others:
+        jobs.celery_app.control.cancel_consumer(jobs.target, destination=others, reply=True)
+    release = f"engine-test:release:{uuid.uuid4()}"
+    job_id = jobs.submit("engine_held_probe", {"bounds": BOUNDS, "release_key": release})
+    observed = observe_until(
+        jobs, jobs.target, lambda observed: any(worker["reserved"] for worker in described(observed).values())
+    )
+    holder = next(node for node, worker in described(observed).items() if worker["reserved"])
+    if others:
+        jobs.celery_app.control.add_consumer(jobs.target, destination=others, reply=True)
+    return job_id, release, holder
+
+
+def test_target_with_two_workers_adds_their_capacity_and_lists_both(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "doubled", tmp_path)
+    with run_worker_process("doubled", tmp_path), run_worker_process("doubled", tmp_path, node="w1@doubled"):
+        observed = observe_until(jobs, "doubled", lambda observed: len(described(observed)) == 2)
+    assert observed["state"] == "ready"
+    versions = installed_versions()
+    assert observed["worker"] == {
+        "image_digest": None,
+        "versions": versions,
+        "job_limit": 2,
+        "reserved": 0,
+        "queues": ["doubled"],
+    }
+    assert list(observed["workers"]) == ["celery@doubled", "w1@doubled"]
+    # Both stopped, warm, and deregistered themselves.
+    assert jobs.registered_workers("doubled") == []
+
+
+def test_leaving_worker_still_counts_the_job_it_holds(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "leaving", tmp_path)
+    with run_worker_process("leaving", tmp_path), run_worker_process("leaving", tmp_path, node="w1@leaving"):
+        job_id, release, holder = hold_a_job(jobs)
+        try:
+            jobs.celery_app.control.cancel_consumer("leaving", destination=[holder], reply=True)
+            observed = observe_until(
+                jobs, "leaving", lambda observed: described(observed).get(holder, {}).get("queues") == []
+            )
+            # The job it still holds fills the remaining worker's limit.
+            assert (observed["state"], observed["worker"]["reserved"], observed["worker"]["job_limit"]) == (
+                "busy",
+                1,
+                1,
+            )
+        finally:
+            jobs.records.set(release, 1)
+        observed = observe_until(
+            jobs, "leaving", lambda observed: observed["worker"] is not None and observed["worker"]["reserved"] == 0
+        )
+        assert observed["state"] == "ready"
+        assert jobs.status(job_id)["state"] == "completed"
+
+
+def test_target_none_of_whose_workers_consumes_its_queue_is_unavailable(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "idle", tmp_path)
+    with run_worker_process("idle", tmp_path), run_worker_process("idle", tmp_path, node="w1@idle"):
+        jobs.celery_app.control.cancel_consumer("idle", destination=["celery@idle", "w1@idle"], reply=True)
+        observed = observe_until(
+            jobs, "idle", lambda observed: [worker["queues"] for worker in described(observed).values()] == [[], []]
+        )
+    assert (observed["state"], observed["reason"]) == (
+        "unavailable",
+        "Its worker does not consume exactly the queue 'idle'",
+    )
+    assert observed["worker"]["job_limit"] == 0
+
+
+@pytest.mark.parametrize("silenced", ["holder", "other"])
+@pytest.mark.parametrize("holder", ["celery@silenced", "w1@silenced"])
+def test_worker_that_holds_a_job_and_does_not_answer_is_listed_without_an_answer(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any], holder: str, silenced: str
+) -> None:
+    jobs = Jobs(redis_url, "silenced", tmp_path)
+    with (
+        run_worker_process("silenced", tmp_path) as entry,
+        run_worker_process("silenced", tmp_path, node="w1@silenced") as other,
+    ):
+        job_id, release, held_by = hold_a_job(jobs, on=holder)
+        processes = {"celery@silenced": entry, "w1@silenced": other}
+        silent = holder if silenced == "holder" else next(node for node in processes if node != holder)
+        processes[silent].send_signal(signal.SIGSTOP)
+        try:
+            assert held_by == holder
+            observed = observe_until(jobs, "silenced", lambda observed: observed["workers"].get(silent, {}) is None)
+            # The answering worker's state is the target's: a job whose worker does not answer is not counted.
+            assert (observed["state"], observed["worker"]["reserved"]) == (
+                ("ready", 0) if silenced == "holder" else ("busy", 1)
+            )
+        finally:
+            processes[silent].send_signal(signal.SIGCONT)
+            jobs.records.set(release, 1)
+        observe_until(
+            jobs,
+            "silenced",
+            lambda observed: len(described(observed)) == 2 and observed["worker"]["reserved"] == 0,
+        )
+        assert jobs.status(job_id)["state"] == "completed"
+
+
+def test_target_with_a_worker_of_another_image_is_incompatible(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "mixed", tmp_path, DIGEST)
+    with (
+        run_worker_process("mixed", tmp_path, DIGEST),
+        run_worker_process("mixed", tmp_path, OTHER_DIGEST, node="w1@mixed"),
+    ):
+        observed = observe_until(jobs, "mixed", lambda observed: len(described(observed)) == 2)
+    assert (observed["state"], observed["reason"]) == (
+        "incompatible",
+        "Its worker's image digest is missing or differs from this host's",
+    )
+    digests = {node: worker["image_digest"] for node, worker in observed["workers"].items()}
+    assert digests == {"celery@mixed": DIGEST, "w1@mixed": OTHER_DIGEST}
 
 
 # The placement order of the API that `submit_observed` submits through.

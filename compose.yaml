@@ -77,7 +77,8 @@ services:
     build:
       context: apps/engine
       target: dev
-    # The node name must be celery@ and ENGINE_TARGET; the worker refuses any other, and one that a running worker uses.
+    # The node name must be a name@ENGINE_TARGET, celery@ for a host's own worker; the worker refuses any other, and one
+    # that a running worker uses.
     command:
       [
         "celery",

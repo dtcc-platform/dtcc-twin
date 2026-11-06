@@ -20,6 +20,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 - **Increment 5 is split.** 5a, the production image for the HTTP service, is expanded into executable tasks and runs before increment 2, so that the worker is built and tested on the final environment layers. 5b, the worker's part of the production image and what a deployment needs from the image, is expanded into Task 33; on 2026-10-19 the user moved the deployment on Linux hosts to the `dtcc-infra` repository.
 - **Progress, 2026-10-20:** increments 0 to 5 are executed, in Tasks 1 to 33, and merged into `develop`. Increment 6 is not expanded yet: it waits on Core's decision on `RemoteDatasetDescriptor` ([dtcc-core#161](https://github.com/dtcc-platform/dtcc-core/issues/161)).
 - **Progress, 2026-10-21:** two changes for the deployment, from [dtcc-twin#11](https://github.com/dtcc-platform/dtcc-twin/issues/11), are merged into `develop` without a task of their own: `status_url` includes the API's root path (`e2f3823`), and `ENGINE_RETENTION_DAYS` sets the retention, 30 days by default, with records kept a day longer (`5df7a4a`). [DESIGN.md](DESIGN.md#package-creation-delivery-and-retention) states both. Text below written before them gives the default's 30 and 31 days.
+- **Progress, 2026-11-06:** Increment 7, several workers of one target for `dtcc-infra`'s Engine worker pool ([dtcc-twin#20](https://github.com/dtcc-platform/dtcc-twin/issues/20)), is expanded into Task 34 and executed the same day.
 
 ## Global Constraints
 
@@ -63,7 +64,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 26. A job never finishes, because its message was lost, its submission was never queued, or its worker never returned: its record expires the retention plus a day, 31 days by default, after its submission or its claim, and the job is then unknown; a record lost while its job is sent is not recreated when the broker confirms the message. Pinned in Task 22 (`test_job_records_outlast_the_package_retention`, `test_claim_restarts_the_lifetime_of_the_record`, `test_confirmation_does_not_recreate_a_record_lost_meanwhile`).
 27. A host's package directory holds packages of expired, failed, cancelled, unknown, and running jobs, and a staging directory that a killed export left: when the worker starts, it deletes the staging directory and the packages no job can deliver, and every hour after, those packages again; it keeps the running job's package, and a staging directory made while it runs, however old. A worker started again deletes at start the package of a job its earlier run left after the export, once it has recorded the job's failure. Pinned in Task 23 (`test_worker_deletes_the_packages_no_job_can_deliver`) and in the branch review's change (`test_worker_started_again_deletes_the_package_its_earlier_run_left`).
 28. The API, the worker, and Redis are restarted one at a time while jobs run and wait, in a Compose project of their own: an API or worker restart, or a graceful Redis restart, loses, fails, and repeats no job; status answers `503` while Redis is down; and after Redis is killed and returns to a snapshot saved before them, the jobs accepted after it are unknown rather than failed. Pinned in Task 24 (`test_restarted_api_serves_the_jobs_the_earlier_one_accepted`, `test_job_queued_while_no_worker_runs_runs_when_a_worker_starts`) and checked in Task 24, Step 3.
-29. A worker starts under a node name other than `celery@<its target>`, with a queue other than its target's, or while a running worker answers to its node name: it exits with code 1 before it checks any claim or consumes, so it runs no other target's job and fails no job of the running worker. A running worker whose answer is late or lost, or two workers that start at once, escape the last check. Pinned in Task 25 (`test_worker_refuses_a_node_name_other_than_its_targets`, `test_worker_refuses_a_queue_other_than_its_targets_and_runs_none_of_its_jobs`, `test_worker_refuses_the_node_name_of_a_running_worker_and_fails_none_of_its_jobs`) and checked through the worker service in Task 25, Step 6.
+29. A worker starts under a node name other than `celery@<its target>`, with a queue other than its target's, or while a running worker answers to its node name: it exits with code 1 before it checks any claim or consumes, so it runs no other target's job and fails no job of the running worker. A running worker whose answer is late or lost, or two workers that start at once, escape the last check. Pinned in Task 25 (`test_worker_refuses_a_node_name_other_than_its_targets`, `test_worker_refuses_a_queue_other_than_its_targets_and_runs_none_of_its_jobs`, `test_worker_refuses_the_node_name_of_a_running_worker_and_fails_none_of_its_jobs`) and checked through the worker service in Task 25, Step 6. Task 34 widens the first test into `test_worker_refuses_a_node_name_that_is_not_a_name_of_its_target`, since a worker may run under another name of its target.
 30. `ENGINE_TARGET` cannot name a Celery node, for example because it holds a space, or `ENGINE_IMAGE_DIGEST` is malformed: the API and the worker refuse to start, rather than write claims that cannot be read back or report a digest that can never match. Pinned in Task 25 (`test_target_identifier_that_cannot_name_a_node_is_refused`, `test_malformed_image_digest_is_refused`).
 31. A remote host's worker holds its limit or has jobs waiting, does not answer, consumes another queue as well or none, or runs another image, or the host's HTTP service cannot be reached, rejects the token, or redirects: `GET /api/v1/targets` reports each target's state from its worker's own answer through the broker, `busy`, `unknown`, `unavailable`, or `incompatible`, and its host-local discovery or why it is missing; a host whose HTTP service answers is not thereby ready, the shared token, and no other credential such as a `.netrc` entry's, goes only to the configured address and not to a redirect's location, and no answer repeats a job's arguments. Pinned in Task 26 (`test_target_whose_worker_holds_its_limit_or_has_jobs_waiting_is_busy`, `test_target_whose_api_answers_but_whose_worker_does_not_is_unknown`, `test_worker_that_does_not_consume_exactly_its_queue_is_unavailable`, `test_worker_is_compatible_when_its_image_digest_matches_this_hosts`, `test_host_whose_discovery_cannot_be_read_is_reported_with_the_reason`, `test_redirect_from_a_host_is_not_followed`, `test_host_is_sent_the_shared_token_and_no_other_credential`) and checked through the worker service in Task 26, Step 6.
 32. `ENGINE_REMOTE_TARGETS` names the local target or one target twice, or gives an address with credentials, a query or a fragment, even an empty one, a scheme other than `http` or `https`, or a form that Python's URL parser rejects: the API refuses to start, and neither its error nor what it was raised from repeats the address. Pinned in Task 26 (`test_remote_targets_that_cannot_be_used_are_refused_without_repeating_their_addresses`).
@@ -74,6 +75,7 @@ The spec requires the plan to "begin with upstream contract and dependency verif
 37. A job is submitted by an entry with an image digest and claimed by a worker with another digest or none, in the API's process or in a worker process of its own, and is delivered again later; or it is submitted by an entry without a digest, as in development, or claimed by a worker with the entry's digest: in the first case the claim fails the job without invoking its Dataset, and the job reports `failed`, `IncompatibleWorker`, a finish time, the claiming worker's environment, and no package, no later delivery runs it, and cancelling it answers `already_finished`; in the others the job runs. Pinned in Task 31 (`test_job_claimed_by_a_worker_without_the_image_at_submission_fails_without_running`, `test_job_runs_when_its_worker_has_the_image_at_submission_or_none_was_recorded`, `test_job_queued_before_its_targets_image_changed_fails_when_a_worker_claims_it`).
 38. Two hosts run in containers of their own on one machine, each with its API, its worker, and its package volume, and one Redis, and the remote host's worker is stopped, started from another image, and killed during a job, and its API is stopped: with both up, both targets are ready with the same catalog, both APIs refuse a missing or another token, and each job runs on its target, its package on its host alone, and downloads through the entry; with the worker stopped, the remote target is unknown, a job sent to it is refused, and a remote job is cancelled through the entry; with a worker of another image, the target is incompatible, and the job queued before fails with `IncompatibleWorker`; with the API stopped, the remote target still takes jobs, and the entry reports their packages unknown and their downloads unavailable until the API is back; and with the worker killed after its job's claim, its job fails with `WorkerRestarted` while the other host's runs on. Pinned in Task 32 (`pnpm engine:check:hosts`, the phases in `apps/engine/host_checks`).
 39. The API and the worker run from the production image, with new named volumes for the packages and the FEniCSx cache, and the worker has its Celery health check: the image's user writes to both volumes, both containers report healthy, a job submitted to the API runs on the worker, and its package downloads unchanged after both containers are recreated. Pinned in Task 33 (`test_package_and_form_cache_volumes_are_writable`, and the job and the recreation in `pnpm engine:check:prod`).
+40. A worker starts as `w1@<its target>`, or as `w-1@`, `W1@`, or `w1.a@` it, or as another target's node; two workers serve one target, and one leaves the target's queue while it holds a job, both leave it, one is stopped with `SIGSTOP` while it holds a job or while the other does, or one runs another image; a worker runs, is observed, and stops, while the registration of a killed worker remains; and a worker starts beside the staging directory of another worker's export: the worker runs under a name of lowercase letters and digits and refuses the rest, with exit code 1; the target lists each worker by node with its answer or `null`, adds up the consuming workers' limits and every answering worker's held jobs, is `busy` while a leaving worker's job fills the rest, `unavailable` when none consumes its queue, counts a silent worker's job not at all, and is `incompatible` with a worker of another image; the worker is registered for 30 s, renewed every 10 s, and deregistered when it stops, the killed worker is listed without an answer, and the worker's start deletes only its own staging directory, into which it stages each package before it moves it into place. Pinned in Task 34 (`test_worker_refuses_a_node_name_that_is_not_a_name_of_its_target`, `test_worker_may_run_under_another_name_of_its_target`, `test_worker_registers_itself_while_it_runs_and_renews_its_registration`, `test_observation_asks_the_registered_workers_and_lists_one_that_does_not_answer`, `test_target_with_two_workers_adds_their_capacity_and_lists_both`, `test_leaving_worker_still_counts_the_job_it_holds`, `test_target_none_of_whose_workers_consumes_its_queue_is_unavailable`, `test_worker_that_holds_a_job_and_does_not_answer_is_listed_without_an_answer`, `test_target_with_a_worker_of_another_image_is_incompatible`, `test_worker_deletes_the_packages_no_job_can_deliver`, `test_package_is_staged_in_the_workers_directory_and_moved_into_place`) and checked across hosts in Task 32's check (`test_entry_target_lists_both_of_its_workers_and_runs_a_job_on_each_at_once`).
 
 ---
 
@@ -10154,6 +10156,941 @@ Set Increment 5b's status to executed with the date and Steps 2 and 4's results,
 **Checks:** the Service replacement row of the acceptance table; each inventoried consumer has a verified transition; retirement is complete only when the upstream change lands.
 
 **Blockers:** Core's compatibility decision on whether `RemoteDatasetDescriptor` is adapted to Engine's API (including its token) or retired; the spec says this requires a separate Core decision, which [dtcc-core#161](https://github.com/dtcc-platform/dtcc-core/issues/161) requests.
+
+## Increment 7: Several workers per target
+
+Status: expanded and executed 2026-11-06, in Task 34, for the Engine worker pool of `dtcc-infra`; the changes are uncommitted at this writing. Task 34's results: with the tests written, `engine:check tests/test_targets.py tests/test_redelivery.py tests/test_hosts.py` failed 11 of its first 53 tests, each as Step 2 expects, and hung in the 54th, `test_worker_may_run_under_another_name_of_its_target`, for 3 h 39 min, since Celery's `start_worker` waits for ever for a worker that refused its node name; with the in-process fixture bounded (Task 34's Decisions), the 16 tests of the task not yet confirmed gave `16 failed` in 114 s, each as Step 2 expects. With the implementation, `engine:check` gave `2 failed, 292 passed` in 298 s: a package was staged into `.dtcc-staging-<container ID>`, since a pool process of the tests' worker reports the machine's hostname as `task.request.hostname`, and a registration was left after the tests' worker stopped, since its cold shutdown calls `terminate` and not `stop` (Interfaces verified); with the node name recorded when the worker is created and `terminate` deregistering too, `294 passed` in 295 s. `engine:check:hosts` passed every phase, 11 tests in phase 1, in 5 min 41 s, and ran `urban_heat_simulation` on both hosts, in 125 and 135 s from submission. Its measurements match Task 32's: the listing's median 61 ms, with 200 of 200 observations `ready`; the targets route 116 ms; the listing with the remote worker stopped 1.09 s, and a submission to it 1.07 s; so the registry's read costs nothing the measurements show. The six concurrent submissions all went to the entry, whose two workers finished them one or two at a time, in 0.05 to 0.16 s. Peak memory through phase 1: 431 MB for `entry-worker-w1`; 1.79 and 1.78 GB for the entry's first worker and the remote worker, which ran the simulation; 288 to 291 MB for each API. Codex's review of 2026-11-06, in `.agents/reviews/engine-pool-workers-review-2026-11-06.md` (local, not committed), found two P2 defects, the registration's writes on the job-record client, whose connections have no socket bounds, and the staging directory made outside the block that records a job's failure, and optional points on the held-job tests' cleanup, the silent-holder test's determinism, a key a scan gives twice, and the plan's wording; all were taken the same day but a check of the export's path during a job (Task 34's Decisions). The two regression tests, written first, gave `2 failed` in 34 s against the code before the fixes, as Step 2 expects; with the fixes, `engine:check` gave `298 passed` in 329 s, and `engine:check:hosts` passed every phase again, in 5 min 34 s, with the listing's median 58 ms, 200 of 200 observations `ready`, and the targets route 111 ms. Ruff and Prettier passed; ruff's formatter would change `tests/test_discovery.py`, which this task does not touch. Not run: `pnpm check`, which pnpm refuses with the installed Node, v26.0.0, against `engines.node` `^24.20.0`; `prettier . --check` with the repository's Prettier passed in its place.
+
+**Scope:** several workers of one target, for the Engine worker pool that `dtcc-infra` designs ([the pool design](https://github.com/dtcc-platform/dtcc-infra/blob/develop/docs/design/engine-pool.md), [dtcc-twin#20](https://github.com/dtcc-platform/dtcc-twin/issues/20)): a target's workers run under node names of their own, `<name>@<target>`, and share the target's queue and, provided by the deployment, its package directory; each registers itself in Redis while it runs, so that an observation asks the target's workers, adds up their answers, and lists each one by node; and each stages its exports in a directory of its own node, and deletes only that at start. The Twin backend, the API's routes, and the production worker's health check are unchanged; the pool's hosts, controller, and configuration are `dtcc-infra`'s.
+
+**Upstream interfaces:** Celery 5.6.3's bootsteps, worker timer, and `--hostname`; Kombu 5.6.2's `Mailbox.call` with several destinations; redis-py 6.4.0's `Retry` and `scan_iter`; Core's `export` at the pinned commit, which stages beside its path.
+
+**Checks:** the tests of Task 34 in `pnpm engine:check`; `pnpm engine:check:hosts` with a second worker of the entry target, which lists both and runs a job on each at once.
+
+**Blockers:** none.
+
+### Expansion
+
+**Expansion** (2026-11-06): proposed and decided with the user the same day; Task 34 is the increment's only task. The pool design, merged into `dtcc-infra` on 2026-11-06, runs the pool's workers as `w<n>@aws` beside the entry host's `celery@aws`, and asks Engine for the change its decision D2 names, which [dtcc-twin#20](https://github.com/dtcc-platform/dtcc-twin/issues/20) requests: a worker runs under a name of its target, an observation asks every worker of the target, and the listing names each worker.
+
+**Decisions:**
+
+- Observation (the user's choice, 2026-11-06, over static names from the configuration and over a broadcast): each worker registers itself in Redis under its node name while it runs, and an observation asks the registered workers. Kombu's `Mailbox.call` to named nodes returns once each has answered, while a broadcast to every node waits the whole timeout, about 1 s with the connection's close, for every observation; static names would make Engine's configuration carry the pool's size, which the deployment changes.
+- Node names: `<name>@<target>`, with a name of lowercase letters and digits; `celery` for a host's own worker, so that a deployment without a pool changes nothing, and the deployment's names for the others. A name without `@` cannot reach the worker's check, since Celery's `--hostname` makes `named` into `celery@named`, so no test has one.
+- The target's state from the answers together, with each reason that Task 26 gave: `unknown` when no worker answered or an answer is malformed; `unavailable` when a worker consumes another queue, or none of the answering workers consumes the target's queue, so that a target whose workers all left its queue is not `busy` for ever; `incompatible` when a consuming worker runs another image; and otherwise `ready` or `busy` from the jobs held by every answering worker, one that left the queue included, against the limits of the consuming ones added up. The `worker` of an observation keeps Task 26's shape, with the first consuming worker's image digest and versions, and `workers` lists each worker asked, by node, with its answer or `null`; the API spreads the observation into `GET /api/v1/targets`, so the listing gains `workers` without a change of its own. A registered worker that does not answer is listed without an answer and not counted: Engine does not conclude that it stopped or that it holds nothing, so the deployment reconciles the listing against the workers it runs.
+- Registration: a Redis key per node, `dtcc-engine:worker:<node>`, holding the target, with a lifetime of 30 s that a bootstep renews every 10 s on the worker's timer, as `CleanPackages` runs its passes; a worker that stops deregisters itself, and one that is killed stays registered until the lifetime lapses. The bootstep runs after `CheckWorker`, so a refused worker registers nothing, and a Redis error at a renewal is logged while the worker runs on. An observation reads the registrations with a Redis client of its own, bounded as its broker connection is, 1 s to connect, 2 s to read, and no retry, since redis-py's default retries with backoff would hold an observation for seconds while Redis does not answer. The read is a `SCAN` of the whole database, which the job records and Celery's results fill for 31 days, with a count of 1000 keys per round trip; a set of each target's workers would cost one round trip whatever the database holds, at the price of a second structure whose members outlive killed workers, which a review may prefer. When no worker is registered, the observation asks `celery@<target>`, so a worker of an earlier Engine is still observed, and an absent target answers as before.
+- Packages: each worker exports into `.dtcc-staging-<node>` under the package directory and moves a validated package into place, in the same filesystem; Core stages an export in a temporary directory beside its path, so with the package directory shared, one worker's start would delete another's running export. A worker's start deletes its own node's directory alone. The staging directories that an earlier Engine's killed export may have left beside the packages, `.dtcc-package-*`, are not deleted: no worker's start may delete what another worker could be exporting, and an operator removes such a remnant once every worker of the earlier Engine has stopped.
+- Tests: the tests with several workers run them in processes of their own, through the fixture that `tests/test_hosts.py` had, moved to `conftest.py` with a node name, since stopping one with `SIGSTOP` needs a process; `engine_held_probe` holds a job on one of them. The in-process fixture starts its worker through a `TestWorkController` whose `ensure_started` fails when the worker stopped before it started, where Celery's waits for ever; the first run of the task's tests hung there for hours on a refused `w1@pooled`.
+- Across hosts: a second worker of the entry target, `w1@entry`, sharing the entry's package volume, in `pnpm engine:check:hosts`; phase 1 lists both and holds a job on each at once, and the script reads its peak memory with the others'.
+- For a follow-up once this task is reviewed: the pool design and dtcc-twin#20 say that the entry broadcasts to every worker and that the deployment works out which workers exist; with the registry, Engine lists the workers registered at the time, which does not replace the deployment's own check of the workers it runs: a worker that never registered is absent, one whose registration lapsed is absent even if a process of it still holds a job, and a killed slot is listed without an answer for up to 30 s. The follow-up also says that the aggregate's image digest and versions are the first consuming worker's.
+
+The tasks:
+
+- Task 34: the node names, the registry, the observation of several workers, the staging directories, and the check across hosts.
+
+### Task 34: Let several workers serve one target
+
+A target has had one worker, `celery@<target>`, which an observation asked by name, and whose start deleted every staging directory beside the packages. This task lets a deployment run several workers of a target, as the pool of `dtcc-infra` does: each under a node name of its own, registered in Redis while it runs, asked by an observation that adds up the answers and lists each worker, and staging its exports in a directory of its own.
+
+**Interfaces verified for the task** (2026-11-06, in the sources of the development image, and in the task's runs):
+
+- Kombu 5.6.2 `Mailbox.call(destination, ...)`: `_broadcast` sets the reply limit to the number of destinations, and `_collect` drains that many replies, or until `drain_events` times out; with no destination there is no limit, and it waits the whole timeout. So an observation of named nodes ends when they answer, and a broadcast lasts the timeout, 0.5 s, and the 1 s `BRPOP` that the connection's close waits for.
+- redis-py 6.4.0: a client from `Redis.from_url` has no socket timeouts, and its connections, in this image, no retries, although `Redis.__init__`'s signature defaults `retry` to three retries with exponential backoff and jitter; so the registry's client sets `socket_connect_timeout=1`, `socket_timeout=2`, and `Retry(NoBackoff(), 0)` explicitly. `scan_iter(match, count=)` passes the count to each `SCAN`, which may give a key twice; `set(..., ex=timedelta)` and `ttl` give a key's lifetime in seconds. Against an endpoint that accepts the connection and never answers, the job-record client's `SET` and `DELETE` blocked for ever (Codex's review); the registry's raise `redis.TimeoutError` within 2 s each.
+- Celery 5.6.3: `start_worker(**kwargs)` passes `WorkController=` to `_start_worker_thread`, whose `TestWorkController.ensure_started` waits on an event that `on_consumer_ready` sets, for ever; `WorkController.start` catches a bootstep's exception, logs `Unrecoverable error`, and stops with exit code 1, so the thread ends without the event. `--hostname` goes through `default_nodename`, which makes `named` into `celery@named`. A bootstep's `requires` may name the worker's `Timer` and another step; `worker.timer.call_repeatedly` runs on the worker's event loop, and its entry's `cancel` stops it, as `CleanPackages` uses them.
+- Core at the pinned commit: `export(path, canonical=True)` writes into `tempfile.TemporaryDirectory(dir=path.parent, prefix=".dtcc-package-")` and replaces `path` with the result, so the path's directory must exist, and the temporary directory lies in it.
+- Celery 5.6.3's `task.request.hostname` in a pool process: `trace_task_ret` sets it to the machine's hostname, and `fast_trace_task` to the worker's node name, which `setup_worker_optimizations` localizes; the worker command sets the optimizations up, and `start_worker` does not, so under the tests' prefork worker a job staged into `.dtcc-staging-<container ID>`. A bootstep's `create` runs when the blueprint is applied, in the worker's constructor, before any step starts and so before the pool forks, so a step created then can give the jobs the node name. The first run of the suite with the implementation gave `2 failed, 292 passed` in 298 s on this and on the next point.
+- Celery 5.6.3's `start_worker` ends its worker with `should_terminate`, a cold shutdown, whose blueprint calls each step's `terminate` and not its `stop`, so a worker in a test's process deregistered nothing; `StartStopStep.terminate` and `stop` both take the worker, so one method serves as both. A worker process ended with `SIGTERM` stops warm, through `stop`.
+- With the behavior missing, `engine:check tests/test_targets.py tests/test_redelivery.py tests/test_hosts.py` ran 53 tests and hung in the 54th, `test_worker_may_run_under_another_name_of_its_target`, for 3 h 39 min: the worker refused `w1@pooled` and ended its thread, and `ensure_started` waited. With the bounded start, the 16 tests of the task ran again and each failed as Step 2 expects.
+
+**Decisions** (proposed with the task):
+
+- `Jobs.observe` keeps its signature and its reasons, and returns `workers` besides; `check_worker` keeps its message's form; `clean_staging` takes the node; and `compatible` takes the image digest comparison out of `observe`, which applies it to each consuming worker.
+- `Jobs.node` is the worker's node name, which `CheckWorker` records when Celery creates it, and `run` uses it for the claim and the staging directory, where the claim read `task.request.hostname`: that is the node name only under the worker command (Interfaces verified), and the claims of the tests' workers held the container's hostname, which no test read. The API's `Jobs` has no node.
+- `RegisterWorker` deregisters the worker on a cold shutdown too, through `terminate`, so a worker that is terminated, as the tests' are, is not listed until its registration lapses; `test_target_with_two_workers_adds_their_capacity_and_lists_both` checks the warm shutdown's deregistration, after its worker processes end.
+- The in-process worker fixture, `start_target_worker`, takes a node name, and fails a worker that stops before it starts; `run_worker_process` moves from `tests/test_hosts.py` to `conftest.py`, takes a node name, and yields the process.
+- The registration's lifetime and renewal, 30 s and 10 s, are constants that the tests import, as `OBSERVATION_TIMEOUT` is; the deployment does not set them.
+- From Codex's review of 2026-11-06 (`.agents/reviews/engine-pool-workers-review-2026-11-06.md`, local): a worker registers and deregisters through the bounded registry client, not the job-record client, whose connections have no socket bounds, so a Redis that accepts connections and stops answering cannot hold the worker's event loop, on which the renewal runs, for ever; the staging directory is made inside the block that records a job's failure, so a directory that cannot be made fails the job with its error type, where the record would otherwise keep `started` without an outcome and the status report `failed` with no error type, which the Twin backend's schema rejects; the node names from a scan are deduplicated, since a scan may give a key twice and a duplicate destination would make the mailbox wait for one answer more; the held-job tests release their jobs in `finally` blocks, and the worker-process fixture kills a worker that does not stop within 60 s, so a failed assertion does not hide behind a worker waiting for its job; `CheckedWorker.ensure_started` waits 120 s at most; and `test_worker_that_holds_a_job_and_does_not_answer_is_listed_without_an_answer` holds the job on each named worker in turn, as dtcc-twin#20 asks, by taking the other off the queue while the job is submitted. Not taken: a check that an export uses the staging directory before the package is in place, which would need a hook in Core's export, where the cleanup test and the failing-directory test already pin the directory.
+
+**Files:**
+
+- Modify: `apps/engine/dtcc_engine/jobs.py`
+- Modify: `apps/engine/dtcc_engine/worker.py` (docstring)
+- Modify: `apps/engine/tests/conftest.py`
+- Modify: `apps/engine/tests/test_targets.py`
+- Modify: `apps/engine/tests/test_redelivery.py`
+- Modify: `apps/engine/tests/test_hosts.py`
+- Modify: `apps/engine/host_checks/compose.yaml`
+- Modify: `apps/engine/host_checks/test_1_hosts_up.py`
+- Modify: `apps/engine/check-hosts.sh`
+- Modify: `apps/engine/DESIGN.md` (Routing and concurrency; Package creation, delivery, and retention; Restart behavior; Deployment and authentication)
+- Modify: `compose.yaml` (the comment on `engine-worker`'s node name)
+- Modify: `apps/engine/PLAN.md` (this increment, the progress list, Review Focus)
+
+**Interfaces:**
+
+- Consumes: from Task 25, `check_worker` and the node name; from Task 26, `observe`, `describe_worker`, and the observation's bounded connection; from Task 23, `clean_staging` and `CleanPackages`; from Task 32, `host_checks` and `engine_held_probe`; Core's `export`.
+- Produces: workers `<name>@<target>`; the registry, `register_worker`, `deregister_worker`, and `registered_workers`; `workers` in each observation and in `GET /api/v1/targets`; `staging_dir`; a second entry worker in `pnpm engine:check:hosts`.
+
+- [x] **Step 1: Write the failing tests**
+
+In `apps/engine/tests/conftest.py`, import `subprocess`, `sys`, `time`, and `contextmanager`, `Celery` from `celery`, and `TestWorkController` beside `start_worker`, and replace the `start_target_worker` fixture with the following, whose last two are moved from `tests/test_hosts.py`, with the node name:
+
+```python
+class CheckedWorker(TestWorkController):
+    """A test worker that fails its test when it stops before it starts, where `start_worker` would wait for ever."""
+
+    def start(self) -> None:
+        try:
+            super().start()
+        finally:
+            self._on_started.set()
+
+    def ensure_started(self) -> None:
+        assert self._on_started.wait(120), "The worker did not start within 120 s"
+        assert self.exitcode is None, f"The worker stopped before it started, with exit code {self.exitcode}"
+
+
+@pytest.fixture(scope="session")
+def start_target_worker() -> Callable[..., Any]:
+    """Start a Celery worker in this process for some jobs, as a node of their target, with `start_worker`'s options.
+
+    The node is `celery@<target>` unless `node` names another of the target's. A worker that refuses to start, as one
+    under another target's node name does, fails the test, where `start_worker` alone would wait for ever.
+    """
+
+    def start(jobs: Jobs, node: str | None = None, **options: Any) -> Any:
+        hostname = node or f"celery@{jobs.target}"
+        return start_worker(jobs.celery_app, hostname=hostname, WorkController=CheckedWorker, **options)
+
+    return start
+
+
+def answers(app: Celery, node: str) -> bool:
+    """Return whether a running worker answers a ping as this node."""
+    with app.connection_for_write() as connection:
+        return bool(app.control.ping([node], timeout=0.5, connection=connection))
+
+
+@pytest.fixture(scope="module")
+def run_worker_process(redis_url: str, tmp_path_factory: pytest.TempPathFactory) -> Callable[..., Any]:
+    """Run a target's worker in a process of its own until the context ends, as the worker service runs it; yield the
+    process.
+
+    The worker runs as `celery@<target>` unless `node` names another of the target's. It also runs `engine_held_probe`
+    (`target_worker.py`). Its log is in a temporary directory, which a failure to start reports.
+    """
+    logs = tmp_path_factory.mktemp("worker-logs")
+    app = Celery(broker=redis_url, set_as_current=False)
+
+    @contextmanager
+    def run(
+        target: str, package_dir: Path, image_digest: str | None = None, node: str | None = None
+    ) -> Iterator[subprocess.Popen[bytes]]:
+        node = node or f"celery@{target}"
+        environment = {
+            **os.environ,
+            "ENGINE_REDIS_URL": redis_url,
+            "ENGINE_TARGET": target,
+            "ENGINE_PACKAGE_DIR": str(package_dir),
+            "ENGINE_IMAGE_DIGEST": image_digest or "",
+            "PYTHONPATH": str(Path(__file__).parent),
+        }
+        command = ["celery", "--app", "target_worker", "worker", "--hostname", node, "--concurrency", "1"]
+        log = logs / f"{node}.log"
+        with log.open("w") as output:
+            process = subprocess.Popen([sys.executable, "-m", *command], env=environment, stdout=output, stderr=output)
+        try:
+            deadline = time.monotonic() + 120
+            while not answers(app, node):
+                assert process.poll() is None and time.monotonic() < deadline, log.read_text()
+            yield process
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                # A worker that a failed test left holding a job would wait for it for ever.
+                process.kill()
+                process.wait()
+
+    return run
+```
+
+In `apps/engine/tests/test_hosts.py`, remove `answers`, the `run_worker_process` fixture, and the `Celery` import; type the `hosts` fixture's `run_worker_process` as `Callable[..., AbstractContextManager[Any]]`; and in `test_targets_report_each_hosts_discovery_and_its_workers_own_answer`, expect each target's listing as:
+
+```python
+    for target, listed in targets.items():
+        worker = {
+            "image_digest": DIGEST,
+            "versions": installed_versions(),
+            "job_limit": 1,
+            "reserved": 0,
+            "queues": [target],
+        }
+        assert listed == {
+            "state": "ready",
+            "reason": None,
+            "worker": worker,
+            "waiting": 0,
+            "workers": {f"celery@{target}": worker},
+            "host": host,
+            "host_error": None,
+        }
+```
+
+In `apps/engine/tests/test_targets.py`, import `signal`, `installed_versions` from `dtcc_engine.api`, and `WORKER_REGISTRATION`, `WORKER_REGISTRATION_RENEWAL`, and `worker_key` from `dtcc_engine.jobs`. Replace `test_worker_refuses_a_node_name_other_than_its_targets` with:
+
+```python
+@pytest.mark.parametrize(
+    "node",
+    ["celery@engine-worker", "w-1@named", "W1@named", "w1.a@named"],
+    ids=["other-target", "hyphen", "uppercase", "dot"],
+)
+def test_worker_refuses_a_node_name_that_is_not_a_name_of_its_target(redis_url: str, tmp_path: Path, node: str) -> None:
+    ended = run_worker(redis_url, tmp_path, "named", node)
+    assert ended.returncode == 1
+    assert "must run as <name>@named, with lowercase letters and digits as its name, not " in ended.stderr
+```
+
+Add `"workers"` to the observations that `test_target_whose_worker_does_not_answer_is_unknown`, `test_target_is_unknown_while_the_broker_does_not_answer`, `test_observation_ends_within_seconds_while_the_broker_does_not_answer`, and `test_worker_without_engines_inspect_command_is_unknown` expect: `{"celery@absent": None}`, `None`, `None`, and `{"celery@commandless": None}`. Add after `test_worker_is_compatible_when_its_image_digest_matches_this_hosts`:
+
+```python
+def test_worker_may_run_under_another_name_of_its_target(
+    redis_url: str, tmp_path: Path, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "pooled", tmp_path)
+    with start_target_worker(jobs, node="w1@pooled"):
+        observed = observe_until(jobs, "pooled", lambda observed: observed["state"] != "unknown")
+    assert (observed["state"], observed["worker"]["queues"]) == ("ready", ["pooled"])
+    assert observed["workers"] == {"w1@pooled": observed["worker"]}
+
+
+def test_worker_registers_itself_while_it_runs_and_renews_its_registration(
+    redis_url: str, tmp_path: Path, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "registered", tmp_path)
+    key = worker_key("celery@registered")
+    with start_target_worker(jobs):
+        assert jobs.records.get(key) == "registered"
+        assert 0 < jobs.records.ttl(key) <= WORKER_REGISTRATION.total_seconds()
+        assert jobs.registered_workers("registered") == ["celery@registered"]
+        time.sleep(WORKER_REGISTRATION_RENEWAL.total_seconds() + 2)
+        # Without the renewal, 18 s or less would be left.
+        assert jobs.records.ttl(key) > 20
+    # A worker that stops deregisters itself; one that is killed is registered until its registration lapses.
+    assert not jobs.records.exists(key)
+
+
+def test_observation_asks_the_registered_workers_and_lists_one_that_does_not_answer(
+    redis_url: str, tmp_path: Path, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "ghosted", tmp_path)
+    with start_target_worker(jobs):
+        # As a worker that was killed is, until its registration lapses.
+        jobs.register_worker("ghost@ghosted")
+        observed = observe_until(jobs, "ghosted", lambda observed: observed["state"] != "unknown")
+    assert observed["state"] == "ready"
+    assert observed["workers"] == {"celery@ghosted": observed["worker"], "ghost@ghosted": None}
+
+
+def test_registration_ends_within_seconds_while_redis_does_not_answer(silent_broker: str, tmp_path: Path) -> None:
+    jobs = Jobs(silent_broker, "unregistered", tmp_path)
+    errors: list[Exception] = []
+
+    def register_and_deregister() -> None:
+        for change in (jobs.register_worker, jobs.deregister_worker):
+            try:
+                change("celery@unregistered")
+            except redis.RedisError as error:
+                errors.append(error)
+
+    # In a thread of its own, so that a call that never ends fails the test instead of stopping the run.
+    registration = threading.Thread(target=register_and_deregister, daemon=True)
+    start = time.monotonic()
+    registration.start()
+    registration.join(30)
+    assert len(errors) == 2
+    assert time.monotonic() - start < 8
+
+
+def described(observed: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the workers of an observation that answered, by node."""
+    return {node: worker for node, worker in observed["workers"].items() if worker is not None}
+
+
+def hold_a_job(jobs: Jobs, on: str | None = None) -> tuple[str, str, str]:
+    """Submit a job that holds its worker until a test releases it, on the node `on` if given, while the target's other
+    workers leave its queue; return the job's ID, its release key, and its holder."""
+    others = [node for node in jobs.registered_workers(jobs.target) if node != on] if on else []
+    if others:
+        jobs.celery_app.control.cancel_consumer(jobs.target, destination=others, reply=True)
+    release = f"engine-test:release:{uuid.uuid4()}"
+    job_id = jobs.submit("engine_held_probe", {"bounds": BOUNDS, "release_key": release})
+    observed = observe_until(
+        jobs, jobs.target, lambda observed: any(worker["reserved"] for worker in described(observed).values())
+    )
+    holder = next(node for node, worker in described(observed).items() if worker["reserved"])
+    if others:
+        jobs.celery_app.control.add_consumer(jobs.target, destination=others, reply=True)
+    return job_id, release, holder
+
+
+def test_target_with_two_workers_adds_their_capacity_and_lists_both(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "doubled", tmp_path)
+    with run_worker_process("doubled", tmp_path), run_worker_process("doubled", tmp_path, node="w1@doubled"):
+        observed = observe_until(jobs, "doubled", lambda observed: len(described(observed)) == 2)
+    assert observed["state"] == "ready"
+    versions = installed_versions()
+    assert observed["worker"] == {
+        "image_digest": None,
+        "versions": versions,
+        "job_limit": 2,
+        "reserved": 0,
+        "queues": ["doubled"],
+    }
+    assert list(observed["workers"]) == ["celery@doubled", "w1@doubled"]
+    # Both stopped, warm, and deregistered themselves.
+    assert jobs.registered_workers("doubled") == []
+
+
+def test_leaving_worker_still_counts_the_job_it_holds(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "leaving", tmp_path)
+    with run_worker_process("leaving", tmp_path), run_worker_process("leaving", tmp_path, node="w1@leaving"):
+        job_id, release, holder = hold_a_job(jobs)
+        try:
+            jobs.celery_app.control.cancel_consumer("leaving", destination=[holder], reply=True)
+            observed = observe_until(
+                jobs, "leaving", lambda observed: described(observed).get(holder, {}).get("queues") == []
+            )
+            # The job it still holds fills the remaining worker's limit.
+            assert (observed["state"], observed["worker"]["reserved"], observed["worker"]["job_limit"]) == (
+                "busy",
+                1,
+                1,
+            )
+        finally:
+            jobs.records.set(release, 1)
+        observed = observe_until(
+            jobs, "leaving", lambda observed: observed["worker"] is not None and observed["worker"]["reserved"] == 0
+        )
+        assert observed["state"] == "ready"
+        assert jobs.status(job_id)["state"] == "completed"
+
+
+def test_target_none_of_whose_workers_consumes_its_queue_is_unavailable(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "idle", tmp_path)
+    with run_worker_process("idle", tmp_path), run_worker_process("idle", tmp_path, node="w1@idle"):
+        jobs.celery_app.control.cancel_consumer("idle", destination=["celery@idle", "w1@idle"], reply=True)
+        observed = observe_until(
+            jobs, "idle", lambda observed: [worker["queues"] for worker in described(observed).values()] == [[], []]
+        )
+    assert (observed["state"], observed["reason"]) == (
+        "unavailable",
+        "Its worker does not consume exactly the queue 'idle'",
+    )
+    assert observed["worker"]["job_limit"] == 0
+
+
+@pytest.mark.parametrize("silenced", ["holder", "other"])
+@pytest.mark.parametrize("holder", ["celery@silenced", "w1@silenced"])
+def test_worker_that_holds_a_job_and_does_not_answer_is_listed_without_an_answer(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any], holder: str, silenced: str
+) -> None:
+    jobs = Jobs(redis_url, "silenced", tmp_path)
+    with (
+        run_worker_process("silenced", tmp_path) as entry,
+        run_worker_process("silenced", tmp_path, node="w1@silenced") as other,
+    ):
+        job_id, release, held_by = hold_a_job(jobs, on=holder)
+        processes = {"celery@silenced": entry, "w1@silenced": other}
+        silent = holder if silenced == "holder" else next(node for node in processes if node != holder)
+        processes[silent].send_signal(signal.SIGSTOP)
+        try:
+            assert held_by == holder
+            observed = observe_until(jobs, "silenced", lambda observed: observed["workers"].get(silent, {}) is None)
+            # The answering worker's state is the target's: a job whose worker does not answer is not counted.
+            assert (observed["state"], observed["worker"]["reserved"]) == (
+                ("ready", 0) if silenced == "holder" else ("busy", 1)
+            )
+        finally:
+            processes[silent].send_signal(signal.SIGCONT)
+            jobs.records.set(release, 1)
+        observe_until(
+            jobs,
+            "silenced",
+            lambda observed: len(described(observed)) == 2 and observed["worker"]["reserved"] == 0,
+        )
+        assert jobs.status(job_id)["state"] == "completed"
+
+
+def test_target_with_a_worker_of_another_image_is_incompatible(
+    redis_url: str, tmp_path: Path, run_worker_process: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "mixed", tmp_path, DIGEST)
+    with (
+        run_worker_process("mixed", tmp_path, DIGEST),
+        run_worker_process("mixed", tmp_path, OTHER_DIGEST, node="w1@mixed"),
+    ):
+        observed = observe_until(jobs, "mixed", lambda observed: len(described(observed)) == 2)
+    assert (observed["state"], observed["reason"]) == (
+        "incompatible",
+        "Its worker's image digest is missing or differs from this host's",
+    )
+    digests = {node: worker["image_digest"] for node, worker in observed["workers"].items()}
+    assert digests == {"celery@mixed": DIGEST, "w1@mixed": OTHER_DIGEST}
+```
+
+In `apps/engine/tests/test_redelivery.py`, replace `test_worker_deletes_the_packages_no_job_can_deliver` with the first of these, and add the second after it:
+
+```python
+def test_worker_deletes_the_packages_no_job_can_deliver(
+    redis_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, start_target_worker: Callable[..., Any]
+) -> None:
+    monkeypatch.setattr("dtcc_engine.jobs.CLEANUP_INTERVAL", timedelta(seconds=1), raising=False)
+    jobs = Jobs(redis_url, "cleaned", tmp_path)
+    now = datetime.now(UTC)
+    finished = {"execution_gate": "started", "finished_at": now.isoformat()}
+    expired = (now - RETENTION - timedelta(seconds=1)).isoformat()
+    packages = {
+        "completed": package_with_record(jobs, {**finished, "outcome": "completed"}),
+        "expired": package_with_record(jobs, {**finished, "outcome": "completed", "finished_at": expired}),
+        "failed": package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "WorkerLostError"}),
+        "cancelled": package_with_record(
+            jobs, {"execution_gate": "cancelled", "outcome": "cancelled", "finished_at": now.isoformat()}
+        ),
+        # Its job may still record completion.
+        "running": package_with_record(jobs, {"execution_gate": "started"}),
+        # Its state cannot be established, so it is kept.
+        "unusable": package_with_record(jobs, {}),
+    }
+    unknown = str(uuid.uuid4())
+    jobs.package_path(unknown).write_bytes(b"package")
+    packages["unknown"] = unknown
+    # Core stages an export in the worker's own staging directory; one there before the worker starts belongs to an
+    # export that was killed, while another worker of the target may still be exporting in its directory.
+    killed_export = jobs.staging_dir("celery@cleaned") / ".dtcc-package-killed"
+    killed_export.mkdir(parents=True)
+    other_workers_export = jobs.staging_dir("w1@cleaned") / ".dtcc-package-running"
+    other_workers_export.mkdir(parents=True)
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
+        kept = {name for name, job_id in packages.items() if jobs.package_path(job_id).exists()}
+        assert kept == {"completed", "running", "unusable"}
+        assert not killed_export.exists()
+        assert other_workers_export.exists()
+        # One that appears while the worker runs may belong to a running export, however old it is.
+        running_export = jobs.staging_dir("celery@cleaned") / ".dtcc-package-running"
+        running_export.mkdir(parents=True)
+        two_days_ago = time.time() - 2 * 86400
+        os.utime(running_export, (two_days_ago, two_days_ago))
+        # A package whose job fails while the worker runs goes at a later pass.
+        failed_later = package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "RuntimeError"})
+        wait_for(lambda: not jobs.package_path(failed_later).exists(), timeout=10)
+        assert running_export.exists()
+
+
+def test_package_is_staged_in_the_workers_directory_and_moved_into_place(
+    redis_url: str, tmp_path: Path, counting_dataset: str, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "staged", tmp_path)
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
+        job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "staged"})
+        wait_until_completed(jobs, job_id)
+    assert jobs.package_path(job_id).is_file()
+    assert list(jobs.staging_dir("celery@staged").iterdir()) == []
+
+
+def test_job_whose_staging_directory_cannot_be_made_fails_without_running(
+    redis_url: str, tmp_path: Path, counting_dataset: str, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "unstageable", tmp_path)
+    # A file where the staging directory belongs, which the worker's start cannot delete and a job cannot make.
+    jobs.staging_dir("celery@unstageable").write_bytes(b"")
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
+        job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "unstageable"})
+        job = wait_until_finished(jobs, job_id)
+    assert (job["state"], job["error"]) == ("failed", {"type": "FileExistsError"})
+    assert job["finished_at"] is not None
+    assert jobs.records.get(runs_key("unstageable")) is None
+    assert not jobs.package_path(job_id).exists()
+```
+
+In `apps/engine/host_checks/compose.yaml`, add after the `entry-worker` service (shown without the file's indentation, as is the comment below):
+
+```yaml
+# A second worker of the entry target, as a pool slot of the deployment is, sharing the entry's package volume.
+entry-worker-w1:
+  <<: *engine
+  command: ["celery", "--app", "target_worker", "worker", "--hostname", "w1@entry", "--concurrency", "1"]
+  environment:
+    <<: [*settings, *worker]
+    ENGINE_TARGET: entry
+  volumes:
+    - entry-packages:/var/lib/dtcc-engine/packages
+```
+
+In `apps/engine/check-hosts.sh`, add `entry-worker-w1` after `entry-worker` in the `compose up` line and in the loop that reads each service's peak memory. In `apps/engine/host_checks/test_1_hosts_up.py`, import `os` and `redis`, and `queue` from `hosts`; add after `test_jobs_run_on_their_targets_and_are_delivered_through_the_entry`:
+
+```python
+def test_entry_target_lists_both_of_its_workers_and_runs_a_job_on_each_at_once() -> None:
+    listed = targets_until(lambda listed: ready(listed) and len(listed["entry"]["workers"]) == 2)
+    assert list(listed["entry"]["workers"]) == ["celery@entry", "w1@entry"]
+    assert listed["entry"]["worker"]["job_limit"] == 2
+    release = f"engine-check:release:{uuid.uuid4()}"
+    held = [queue("engine_held_probe", {"bounds": BOUNDS, "release_key": release}, "entry") for _ in range(2)]
+    try:
+        wait_for(lambda: all(status(job_id)["environment"] is not None for job_id in held))
+        observed = targets_until(lambda listed: listed["entry"]["worker"]["reserved"] == 2)
+        assert observed["entry"]["state"] == "busy"
+        assert [worker["reserved"] for worker in observed["entry"]["workers"].values()] == [1, 1]
+    finally:
+        redis.Redis.from_url(os.environ["ENGINE_REDIS_URL"]).set(release, 1)
+    for job_id in held:
+        assert finished(job_id)["state"] == "completed"
+        assert download(job_id) == stored_package("entry", job_id)
+```
+
+and say in `test_measure_concurrent_submissions` that the entry's two workers finish its jobs one or two at a time.
+
+In `apps/engine/dtcc_engine/jobs.py`, add the names the tests import, so that each test fails for the behavior and not for an import: `WORKER_REGISTRATION = timedelta(seconds=30)`, `WORKER_REGISTRATION_RENEWAL = timedelta(seconds=10)`, `worker_key`, `Jobs.staging_dir`, and `register_worker`, `deregister_worker`, and `registered_workers`, which raise `NotImplementedError`.
+
+Run from `apps/engine`: `uvx ruff@0.6.9 check --select I,F --line-length 120 dtcc_engine tests host_checks` and `uvx ruff@0.6.9 format --check --line-length 120 dtcc_engine tests host_checks`.
+Expected: both pass, but for `tests/test_discovery.py`, which the formatter would change before this task.
+
+- [x] **Step 2: Confirm the new tests fail**
+
+Run: `pnpm engine:check tests/test_targets.py tests/test_redelivery.py tests/test_hosts.py -p no:cacheprovider -q --tb=short`
+Expected: the tests Step 1 added or changed fail, each for the behavior. The four cases of `test_worker_refuses_a_node_name_that_is_not_a_name_of_its_target` fail on the message, which still says `must run as celery@named`; `test_worker_may_run_under_another_name_of_its_target` fails with `The worker stopped before it started, with exit code 1`, the worker having logged that it must run as `celery@pooled`; `test_worker_registers_itself_while_it_runs_and_renews_its_registration` finds no registration, `None == 'registered'`; `test_observation_asks_the_registered_workers_and_lists_one_that_does_not_answer` raises `NotImplementedError`; the six tests with a `w1@` worker process fail in the fixture with the worker's log, which says that it must run as `celery@<target>`, and exit code 1; `test_worker_deletes_the_packages_no_job_can_deliver` finds the killed export still there; `test_package_is_staged_in_the_workers_directory_and_moved_into_place` finds no staging directory; `test_targets_report_each_hosts_discovery_and_its_workers_own_answer` and the four observations in `test_targets.py` find no `workers`. The two tests of the review round, written after the rest passed, fail against the code before their fixes: `test_registration_ends_within_seconds_while_redis_does_not_answer` with no error raised within 30 s, since the registration blocks, and `test_job_whose_staging_directory_cannot_be_made_fails_without_running` with the job's error type `None`. Any other failure, or a run that does not end, means the tests or the fixture are wrong, not the behavior.
+
+- [x] **Step 3: Register, observe, and stage per worker**
+
+In `apps/engine/dtcc_engine/jobs.py`, import `NoBackoff` from `redis.backoff` and `Retry` from `redis.retry`. Replace the comment above `TARGET_PATTERN`, and add the worker's name pattern and the registration's constants, so that the constants from there read:
+
+```python
+# A target's identifier also ends its workers' node names, <name>@<identifier>, which claims hold between spaces.
+TARGET_PATTERN = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+# A worker's name, which starts its node name: celery for a host's own worker, and the deployment's for the others.
+WORKER_NAME_PATTERN = re.compile(r"[a-z0-9]+")
+IMAGE_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+# How long a starting worker waits for an answer from another running worker with its node name, once connected.
+NODE_CHECK_TIMEOUT = 0.5
+# How long a worker's registration lasts, and how often the worker renews it while it runs.
+WORKER_REGISTRATION = timedelta(seconds=30)
+WORKER_REGISTRATION_RENEWAL = timedelta(seconds=10)
+# How many keys at a time Redis visits for an observation's scan of the registrations, which goes over every key, the
+# job records among them, so that the scan makes few round trips.
+REGISTRY_SCAN_COUNT = 1000
+```
+
+Add after `OBSERVATION_BROKER`:
+
+```python
+# The same bounds for the Redis client of the workers' registrations, which an observation reads, and which a worker
+# writes on its event loop, where a Redis that stops answering would otherwise hold the worker.
+REGISTRY_BOUNDS = {"socket_connect_timeout": 1, "socket_timeout": 2, "retry": Retry(NoBackoff(), 0)}
+```
+
+Add after `record_key`:
+
+```python
+def worker_key(node: str) -> str:
+    """Return the Redis key of a worker's registration."""
+    return f"dtcc-engine:worker:{node}"
+```
+
+In `Jobs.__init__`, say in the docstring of `target` that its workers run as `<name>@<target>`; add after `self.records`:
+
+```python
+        self.registry = redis.Redis.from_url(redis_url, decode_responses=True, **REGISTRY_BOUNDS)
+```
+
+add after `self.worker_run`:
+
+```python
+        # The node name of the worker this process runs, set when Celery creates the worker; the API has none.
+        self.node: str | None = None
+```
+
+replace `CheckWorker` with:
+
+```python
+        class CheckWorker(bootsteps.StartStopStep):
+            """Refuses to start a worker that would not run as this target's worker; see `Jobs.check_worker`.
+
+            When Celery creates the step, before any step starts and the pool forks the processes that run the jobs,
+            it also gives the jobs the worker's node name. `task.request.hostname` is that name only under Celery's
+            worker command, which sets its tracer up; a worker started in a test's process reports the machine's name.
+            """
+
+            def create(self, worker: Any) -> None:
+                jobs.node = worker.hostname
+
+            def start(self, worker: Any) -> None:
+                jobs.check_worker(worker.hostname, set(worker.app.amqp.queues.consume_from))
+```
+
+add after it:
+
+```python
+        class RegisterWorker(bootsteps.StartStopStep):
+            """Registers the worker for observations while it runs, renewing the registration before it lapses, and
+            deregisters it when the worker stops, warm or cold."""
+
+            # After the check, so that a refused worker registers nothing.
+            requires = {"celery.worker.components:Timer", CheckWorker}
+
+            def start(self, worker: Any) -> None:
+                self.node = worker.hostname
+                self.register()
+                self.renewal = worker.timer.call_repeatedly(WORKER_REGISTRATION_RENEWAL.total_seconds(), self.register)
+
+            def register(self) -> None:
+                try:
+                    jobs.register_worker(self.node)
+                except redis.RedisError:
+                    # The worker runs on, and is observed again once a renewal succeeds.
+                    logger.warning("Could not register %s for observations", self.node, exc_info=True)
+
+            def stop(self, worker: Any) -> None:
+                self.renewal.cancel()
+                try:
+                    jobs.deregister_worker(self.node)
+                except redis.RedisError:
+                    logger.warning("Could not deregister %s; its registration lapses", self.node, exc_info=True)
+
+            terminate = stop
+
+        self.celery_app.steps["worker"].add(RegisterWorker)
+```
+
+and in `CleanPackages.start`, call `jobs.clean_staging(worker.hostname)`. Replace `staging_dir` and the three methods that raise with:
+
+```python
+    def staging_dir(self, node: str) -> Path:
+        """Return the directory under the package directory in which this node's worker stages its exports."""
+        return self.package_dir / f".dtcc-staging-{node}"
+
+    def register_worker(self, node: str) -> None:
+        """Register a running worker as this target's for `WORKER_REGISTRATION`; the worker renews it while it runs.
+
+        Raises:
+            redis.RedisError: If Redis did not answer within the registry's bounds.
+        """
+        self.registry.set(worker_key(node), self.target, ex=WORKER_REGISTRATION)
+
+    def deregister_worker(self, node: str) -> None:
+        """Remove a worker's registration, as a worker that stops does.
+
+        Raises:
+            redis.RedisError: If Redis did not answer within the registry's bounds; the registration lapses on its own.
+        """
+        self.registry.delete(worker_key(node))
+
+    def registered_workers(self, target: str) -> list[str]:
+        """Return the node names of the target's registered workers, sorted.
+
+        Raises:
+            redis.RedisError: If Redis did not answer within the registry's bounds.
+        """
+        prefix = worker_key("")
+        found = self.registry.scan_iter(worker_key(f"*@{target}"), count=REGISTRY_SCAN_COUNT)
+        # A scan can give a key twice.
+        return sorted({key.removeprefix(prefix) for key in found})
+```
+
+Replace `run` with:
+
+```python
+    def run(self, task: Task, dataset_name: str, parameters: dict[str, Any]) -> None:
+        """Run a job in the worker if this delivery claims it, and record how the job ended.
+
+        The job invokes the Dataset, exports its realization into this node's staging directory, validates the package,
+        and moves it into place.
+
+        Raises:
+            Ignore: If this delivery does not claim the job, or the job's record is gone or no longer claimed when the
+                job ends; Celery then stores no result.
+            Exception: Whatever the staging directory, the Dataset, the export, or the validation raised; the job then
+                fails.
+        """
+        job_id = task.request.id
+        if not self.claim(job_id, f"{self.node} {self.worker_run} {os.getpid()}"):
+            raise Ignore()
+        staging = self.staging_dir(self.node)
+        staged = staging / f"{job_id}.dtccpkg"
+        previous_callback = get_progress_callback()
+        set_progress_callback(lambda progress: store_progress(task, progress))
+        try:
+            staging.mkdir(exist_ok=True)
+            realization = datasets.get_dataset(dataset_name)(**parameters)
+            realization.export(staged, canonical=True)
+            try:
+                datasets.load_model_package(staged)
+            except Exception:
+                staged.unlink()
+                raise
+            os.replace(staged, self.package_path(job_id))
+        except Exception as error:
+            upstream = public_upstream_error(error) if isinstance(error, DatasetUpstreamError) else None
+            self.finish(job_id, "failed", type(error).__name__, upstream)
+            raise
+        finally:
+            set_progress_callback(previous_callback)
+        self.finish(job_id, "completed")
+```
+
+Replace `clean_staging` with:
+
+```python
+    def clean_staging(self, node: str) -> None:
+        """Delete the node's staging directory, in which its worker's exports were staged under the package directory.
+
+        Call it only before the node's worker runs jobs: its earlier run has stopped, so every export there was killed.
+        Other nodes' directories stay, since their workers may be exporting.
+        """
+        staging = self.staging_dir(node)
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+            logger.info("Deleted %s, left by exports that were killed", staging.name)
+```
+
+In `check_worker`, replace the docstring and the check of the node name with:
+
+```python
+    def check_worker(self, node: str, queues: set[str]) -> None:
+        """Check that a worker may start: as `<name>@<target>`, with a name of lowercase letters and digits, consuming
+        only this target's queue.
+
+        It also refuses a node name that another running worker answers to, as a best effort: a running worker whose
+        answer is late or lost, or a broker error, which is logged, lets the worker start, as do two that start at once.
+
+        Raises:
+            ValueError: If `node` is not a node name of this target, or `queues` are not this target's queue alone.
+            RuntimeError: If another running worker answers as `node`.
+        """
+        name, at, target = node.partition("@")
+        if not (at and target == self.target and WORKER_NAME_PATTERN.fullmatch(name)):
+            raise ValueError(
+                f"A worker of target '{self.target}' must run as <name>@{self.target}, "
+                f"with lowercase letters and digits as its name, not {node}"
+            )
+```
+
+Replace `observe` with:
+
+```python
+    def compatible(self, target: str, image_digest: str | None) -> bool:
+        """Return whether a worker of the target, reporting this image digest, runs this host's image.
+
+        For this host's own target, the digests are compared only when both are set: a development deployment supplies
+        none, and runs locally only. For a remote target, both must be set and equal.
+        """
+        digests = (self.image_digest, image_digest)
+        if target == self.target:
+            return None in digests or digests[0] == digests[1]
+        return None not in digests and digests[0] == digests[1]
+
+    def observe(self, target: str) -> dict[str, Any]:
+        """Observe a target's workers through the broker, with the count of jobs waiting in its queue.
+
+        The workers asked are the target's registered ones, or `celery@<target>` when none is registered.
+
+        Returns:
+            `state`, `reason`, `worker`, the answers added up, `waiting`, and `workers`, each worker asked, by node,
+            with its answer, or None if it gave none or a malformed one. The state is `ready` if a worker can start a
+            job now; `busy` if the answering workers hold as many jobs as the consuming ones' limits add up to, or jobs
+            wait; `unavailable` if a worker consumes another queue, or none of the answering ones consumes exactly the
+            target's queue; `incompatible` if a consuming worker's image digest does not match this host's; and
+            `unknown` if the broker or no worker answered, or an answer is malformed, which does not show that a worker
+            stopped. A registered worker that does not answer is listed without an answer and not counted. Only ready
+            and busy have no reason; a value not obtained is None.
+        """
+        unknown: dict[str, Any] = {"state": "unknown", "worker": None}
+        try:
+            nodes = self.registered_workers(target) or [f"celery@{target}"]
+            # A connection of its own: on a pooled one, an earlier call that timed out can lose this answer.
+            with ObservationConnection(
+                self.celery_app.conf.broker_url, transport_options=OBSERVATION_BROKER
+            ) as connection:
+                # Before the workers answer: a job one takes from the queue in between is counted twice, not missed.
+                try:
+                    waiting = connection.default_channel.queue_declare(queue=target, passive=True).message_count
+                except ChannelError:
+                    # Kombu keeps no list for an empty queue, so its passive declaration finds none.
+                    waiting = 0
+                answers = self.observation_mailbox(connection).call(nodes, DESCRIBE_WORKER, timeout=OBSERVATION_TIMEOUT)
+        except (OperationalError, redis.RedisError):
+            logger.warning("Could not observe the workers of %s", target, exc_info=True)
+            return {**unknown, "reason": "The broker did not answer", "waiting": None, "workers": None}
+        workers: dict[str, dict[str, Any] | None] = {}
+        malformed = False
+        for node in nodes:
+            answer = next((reply[node] for reply in answers if node in reply), None)
+            try:
+                workers[node] = WorkerDescription.model_validate(answer).model_dump() if answer is not None else None
+            except ValidationError:
+                workers[node], malformed = None, True
+        if malformed:
+            return {**unknown, "reason": "Its worker's answer is malformed", "waiting": waiting, "workers": workers}
+        described = {node: worker for node, worker in workers.items() if worker is not None}
+        if not described:
+            reason = f"Its worker did not answer within {OBSERVATION_TIMEOUT} s"
+            return {**unknown, "reason": reason, "waiting": waiting, "workers": workers}
+        consuming = {node: worker for node, worker in described.items() if worker["queues"] == [target]}
+        first = next(iter((consuming or described).values()))
+        worker = {
+            "image_digest": first["image_digest"],
+            "versions": first["versions"],
+            "job_limit": sum(each["job_limit"] for each in consuming.values()),
+            # A worker leaving the queue still holds its jobs.
+            "reserved": sum(each["reserved"] for each in described.values()),
+            "queues": sorted({queue for each in described.values() for queue in each["queues"]}),
+        }
+        reason = None
+        if not consuming or any(each["queues"] not in ([target], []) for each in described.values()):
+            state, reason = "unavailable", f"Its worker does not consume exactly the queue '{target}'"
+        elif not all(self.compatible(target, each["image_digest"]) for each in consuming.values()):
+            state, reason = "incompatible", "Its worker's image digest is missing or differs from this host's"
+        elif worker["reserved"] < worker["job_limit"] and waiting == 0:
+            state = "ready"
+        else:
+            state = "busy"
+        return {"state": state, "reason": reason, "worker": worker, "waiting": waiting, "workers": workers}
+```
+
+In `apps/engine/dtcc_engine/worker.py`, replace the docstring with:
+
+```python
+"""Entry point of the Celery worker that runs this host's Dataset jobs.
+
+Run as `celery --app dtcc_engine.worker worker --hostname <name>@<target>`, where `<target>` is `ENGINE_TARGET` and
+`<name>` is `celery` for the host's own worker, or another name of lowercase letters and digits.
+"""
+```
+
+Run the ruff commands of Step 1.
+Expected: as in Step 1.
+
+- [x] **Step 4: Run the tests to verify they pass**
+
+Run: `pnpm engine:check`
+Expected: every test passes. Record the count and the duration.
+
+- [x] **Step 5: Document**
+
+In `apps/engine/DESIGN.md`, in Routing and concurrency, replace the paragraph that begins "Remote hosts are configured explicitly" with:
+
+```markdown
+Remote hosts are configured explicitly with stable target identifiers and their
+Engine HTTP addresses. They do not register dynamically. Use a Celery queue for
+each configured compute target. A target has one worker, or several that share
+its queue and, provided by the deployment, its package directory; each consumes
+only its target's queue, refusing to start with any other, and enforces its
+configured concurrent-job count.
+```
+
+and the paragraph that begins "Engine observes a target through the broker" with:
+
+```markdown
+Engine observes a target through the broker. Each worker registers itself in
+Redis under its node name while it runs, for 30 seconds at a time, renewed
+every 10 seconds, and deregisters when it stops; a worker that was killed stays
+registered until its registration lapses. Engine asks the target's registered
+workers, or `celery@<target>` when none is registered. Each answers with its
+image digest, versions, job limit, the jobs it holds, and the queues it
+consumes, never with a job's arguments, and the broker counts the jobs waiting
+in the target's queue. The observation reports each worker asked, by node, with
+its answer or none, and the target's state from the answers together: unknown
+when no worker answered or an answer is malformed; unavailable when a worker
+consumes another queue, or none of the answering workers consumes the target's
+queue; incompatible when a worker consuming the queue reports another image
+than this host's; otherwise the target has capacity when the jobs held by every
+answering worker, one leaving the queue included, are fewer than the limits of
+the consuming ones add up to, and none wait. A registered worker that does not
+answer is listed without an answer and not counted: Engine does not conclude
+that it stopped or that it holds nothing, so the deployment reconciles the
+listing against the workers it runs. A target none of whose workers answers is
+unknown, and routing treats it as unavailable.
+```
+
+In Package creation, delivery, and retention, replace the paragraph that begins "Each host's worker deletes the packages" with:
+
+```markdown
+Each host's worker deletes the packages that no job can deliver when it starts
+and every hour: those whose job is unknown or expired, failed, was cancelled, or
+completed more than the retention ago. A package stays while its job has no
+outcome or its record is unusable. Deleting a package is retention; it does not
+show that the job's computation stopped. Each worker exports into a staging
+directory of its own node under the package directory, and moves a validated
+package into place. When the worker starts, before it runs any job, it deletes
+its node's staging directory: it starts only after its earlier run stopped
+(Restart behavior), so the exports there were killed; other workers'
+directories stay, since their exports may be running. A staging directory left
+while the worker runs stays until the worker starts again.
+```
+
+In Restart behavior, replace the paragraph that begins "Engine records a failure for a job whose claimant is gone" with:
+
+```markdown
+Engine records a failure for a job whose claimant is gone and can no longer
+record an outcome. A job whose pool process is lost fails with
+`WorkerLostError`, which Celery reports in the worker's main process. When a
+worker starts, each job that an earlier run of the same worker claimed and left
+without an outcome fails with `WorkerRestarted`. This needs each worker to run
+under a node name of its target, `<name>@<target identifier>` with a name of
+lowercase letters and digits, `celery` for a host's own worker, that no other
+running worker uses, and to start under it only after its earlier run and that
+run's processes have stopped. A worker refuses to start under another target's
+node name, or a malformed one. As a best effort, it also refuses to start while
+a running worker answers to its node name; a late or lost answer, a broker
+error, or two workers that start at once escape that check, so it does not
+replace stopping the earlier run. Both checks come before the worker checks any
+claim. A job whose worker is lost and not started again keeps the state last
+recorded, as does a job whose lost process still appears to exist, because
+Engine cannot tell whether the work stopped.
+```
+
+In Deployment and authentication, replace the paragraph that begins "The worker's container runs" with:
+
+```markdown
+The worker's container runs `celery --app dtcc_engine.worker worker --hostname
+<name>@<ENGINE_TARGET> --concurrency <job limit>`, with the name `celery` for
+the host's own worker, and overrides the image's health check with
+`/opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect ping
+--destination <its node name>`, which succeeds only while the worker answers
+through the broker. A worker's warm shutdown waits for the
+jobs it runs; stopped with a shorter deadline, the worker is killed with them,
+and they fail with `WorkerRestarted` when it starts again.
+```
+
+In `compose.yaml`, replace the comment above `engine-worker`'s command with:
+
+```yaml
+# The node name must be a name@ENGINE_TARGET, celery@ for a host's own worker; the worker refuses any other, and one
+# that a running worker uses.
+```
+
+Run: `npx --yes prettier@3.9.6 --check compose.yaml apps/engine/DESIGN.md apps/engine/host_checks/compose.yaml apps/engine/PLAN.md`
+Expected: passes.
+
+- [x] **Step 6: Check two workers of the entry across hosts**
+
+Run: `pnpm engine:check:hosts`
+Expected: every phase passes, `test_entry_target_lists_both_of_its_workers_and_runs_a_job_on_each_at_once` in phase 1 among them, and the script prints the peak memory of `entry-worker-w1` with the others'. Record the duration and the measurements that changed.
+
+- [x] **Step 7: Validate**
+
+Run: the ruff commands of Step 1, the Prettier command of Step 5, and `pnpm check`.
+Expected: all pass.
+
+- [x] **Step 8: Stop for review**
+
+Set Increment 7's status to executed with the date and the results of Steps 2, 4, and 6, leave changes uncommitted, and report passed, failed, skipped, and not-run checks.
 
 ## Explicitly deferred beyond v1
 

@@ -1,10 +1,12 @@
 """Phase 1: both hosts run. Checks across them, and the baseline measurements."""
 
+import os
 import uuid
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+import redis
 import requests
 from hosts import (
     ADDRESSES,
@@ -19,6 +21,7 @@ from hosts import (
     fetch,
     finished,
     measure,
+    queue,
     remember,
     status,
     stored_package,
@@ -86,6 +89,24 @@ def test_jobs_run_on_their_targets_and_are_delivered_through_the_entry() -> None
     remember("remote_job", placed["remote"])
 
 
+def test_entry_target_lists_both_of_its_workers_and_runs_a_job_on_each_at_once() -> None:
+    listed = targets_until(lambda listed: ready(listed) and len(listed["entry"]["workers"]) == 2)
+    assert list(listed["entry"]["workers"]) == ["celery@entry", "w1@entry"]
+    assert listed["entry"]["worker"]["job_limit"] == 2
+    release = f"engine-check:release:{uuid.uuid4()}"
+    held = [queue("engine_held_probe", {"bounds": BOUNDS, "release_key": release}, "entry") for _ in range(2)]
+    try:
+        wait_for(lambda: all(status(job_id)["environment"] is not None for job_id in held))
+        observed = targets_until(lambda listed: listed["entry"]["worker"]["reserved"] == 2)
+        assert observed["entry"]["state"] == "busy"
+        assert [worker["reserved"] for worker in observed["entry"]["workers"].values()] == [1, 1]
+    finally:
+        redis.Redis.from_url(os.environ["ENGINE_REDIS_URL"]).set(release, 1)
+    for job_id in held:
+        assert finished(job_id)["state"] == "completed"
+        assert download(job_id) == stored_package("entry", job_id)
+
+
 def test_measure_discovery() -> None:
     targets_until(ready)
     listings = [timed(lambda: fetch(ENTRY, "/api/v1/datasets").json()) for _ in range(100)]
@@ -123,7 +144,8 @@ def test_measure_concurrent_submissions() -> None:
         responses = list(pool.map(lambda _: timed(lambda: fetch(ENTRY, "/api/v1/jobs", "POST", json=SMOKE)), range(6)))
     jobs = [finished(response.json()["job_id"]) for response, _ in responses]
     assert [job["state"] for job in jobs] == ["completed"] * 6
-    # Each host's worker runs one job at a time, so the jobs placed on a host finish one after another.
+    # The remote host's worker runs one job at a time, and the entry's two workers two, so the jobs placed on a host
+    # finish one or two at a time.
     durations = {host: sorted(duration(job) for job in jobs if job["target"] == host) for host in ADDRESSES}
     submissions = summary([seconds for _, seconds in responses])
     measure("concurrent_smoke", {"submission_seconds": submissions, "submitted_to_finished_seconds": durations})

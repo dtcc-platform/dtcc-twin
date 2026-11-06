@@ -12,12 +12,12 @@ trap 'compose down --volumes --rmi local --remove-orphans' EXIT
 compose build
 ENGINE_IMAGE_DIGEST=$(docker image inspect --format '{{.Id}}' dtcc-twin-engine-hosts-entry)
 export ENGINE_IMAGE_DIGEST
-compose up --detach --wait redis entry entry-worker remote remote-worker
+compose up --detach --wait redis entry entry-worker entry-worker-w1 remote remote-worker
 phase test_1_hosts_up.py
 # Phase 1 holds the measurements, and later phases replace the remote worker, so the peaks are read now.
 machine=$(docker info --format '{{.NCPU}} CPUs, {{.MemTotal}} bytes of memory, {{.OperatingSystem}}')
 echo "Measured on one machine: $machine, host $(uname -sm)"
-for service in entry entry-worker remote remote-worker; do
+for service in entry entry-worker entry-worker-w1 remote remote-worker; do
     echo "$service: peak memory through phase 1 $(compose exec -T "$service" cat /sys/fs/cgroup/memory.peak) bytes"
 done
 compose stop remote-worker
