@@ -54,12 +54,15 @@ export function descriptor(name: string, overrides: Record<string, unknown> = {}
 }
 
 /**
- * Starts a fake DTCC Engine on a random local port, answering its routes with its response shapes. Tests set what it
- * returns; call `reset()` before each test and `close()` after the file. Like the engine, it answers 401 without the
+ * Starts a fake DTCC Engine on a local port, random unless `port` is given, answering its routes with its response
+ * shapes. Tests set what it returns; call `reset()` before each test and `close()` after the file. Like the engine, it answers 401 without the
  * right bearer token. With `gatewayKey`, it is the engine behind dtcc-infra's API gateway instead: it answers 401
  * without that `apikey` header and ignores the bearer token, which the gateway replaces with its own.
  */
-export async function startStubEngine(token = "stub-engine-token", { gatewayKey }: { gatewayKey?: string } = {}) {
+export async function startStubEngine(
+  token = "stub-engine-token",
+  { gatewayKey, port = 0 }: { gatewayKey?: string; port?: number } = {},
+) {
   let datasets: StubDescriptor[] = [];
   let jobs = new Map<string, StubJob>();
   let nextSubmit: SubmitResponse | "unconfirmed" | null = null;
@@ -173,11 +176,11 @@ export async function startStubEngine(token = "stub-engine-token", { gatewayKey 
     return { finishedAt: new Date(now).toISOString(), expiresAt: new Date(now + retentionMs).toISOString() };
   }
 
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
+  await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
 
   return {
-    url: `http://127.0.0.1:${String(port)}`,
+    url: `http://127.0.0.1:${String(address.port)}`,
     token,
     /** Every `POST /api/v1/jobs` body, in order, with the job id it created or null when it was rejected. */
     submissions,

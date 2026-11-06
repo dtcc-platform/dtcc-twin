@@ -58,24 +58,25 @@ See [the cancellation plan](apps/engine/PLAN.md#cancellation) for the contract a
 
 From the repo root:
 
-| Command                                      | Purpose                                                                                      |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `pnpm dev`                                   | The backend and the frontend in watch mode                                                   |
-| `pnpm check`                                 | Everything CI runs: format, lint, typecheck, unit, e2e, build. Needs Docker                  |
-| `pnpm lint` / `pnpm typecheck` / `pnpm test` | The fast subset while iterating                                                              |
-| `pnpm test:e2e`                              | Backend e2e tests                                                                            |
-| `pnpm format`                                | Format the repo with Prettier                                                                |
-| `pnpm db:push`                               | Sync the backend tables into `DATABASE_URL`                                                  |
-| `pnpm db:generate`                           | Write the migration for a table change into `apps/backend/drizzle`                           |
-| `pnpm db:seed`                               | Add the sample users; asks before wiping a non-empty database                                |
-| `pnpm db:reset`                              | Recreate the database, push and seed; with Engine's profile on, deletes its volumes too      |
-| `pnpm engine:check`                          | Run the engine's tests in its image. Needs Docker                                            |
-| `pnpm dev:engine`                            | Engine API with automatic reload, Redis, and a worker requiring manual restart. Needs Docker |
-| `pnpm engine:check:prod`                     | Build the engine's production image and check it. Needs Docker                               |
-| `pnpm engine:check:hosts`                    | Check two engine hosts across hosts and print measurements. Needs Docker                     |
-| `pnpm engine:lock`                           | Re-solve the engine's conda lock files. Needs Docker                                         |
-| `pnpm build`                                 | Build the contracts, the backend and the frontend into their `dist/` directories             |
-| `pnpm check:prod`                            | Build the backend and web images and check the production stack. Needs Docker                |
+| Command                                      | Purpose                                                                                       |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                   | The backend and the frontend in watch mode                                                    |
+| `pnpm check`                                 | Everything CI runs: format, lint, typecheck, unit, e2e, build. Needs Docker                   |
+| `pnpm lint` / `pnpm typecheck` / `pnpm test` | The fast subset while iterating                                                               |
+| `pnpm test:e2e`                              | Backend e2e tests                                                                             |
+| `pnpm format`                                | Format the repo with Prettier                                                                 |
+| `pnpm db:push`                               | Sync the backend tables into `DATABASE_URL`                                                   |
+| `pnpm db:generate`                           | Write the migration for a table change into `apps/backend/drizzle`                            |
+| `pnpm db:seed`                               | Add the sample users; asks before wiping a non-empty database                                 |
+| `pnpm db:reset`                              | Recreate the database, push and seed; with Engine's profile on, deletes its volumes too       |
+| `pnpm engine:check`                          | Run the engine's tests in its image. Needs Docker                                             |
+| `pnpm dev:engine`                            | Engine API with automatic reload, Redis, and a worker requiring manual restart. Needs Docker  |
+| `pnpm dev:fake-engine`                       | A fake engine on port 8100 whose jobs finish on their own, for chats without the engine image |
+| `pnpm engine:check:prod`                     | Build the engine's production image and check it. Needs Docker                                |
+| `pnpm engine:check:hosts`                    | Check two engine hosts across hosts and print measurements. Needs Docker                      |
+| `pnpm engine:lock`                           | Re-solve the engine's conda lock files. Needs Docker                                          |
+| `pnpm build`                                 | Build the contracts, the backend and the frontend into their `dist/` directories              |
+| `pnpm check:prod`                            | Build the backend and web images and check the production stack. Needs Docker                 |
 
 The package READMEs list their own, such as running one e2e file.
 
