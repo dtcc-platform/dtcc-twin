@@ -62,6 +62,7 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, a
 - **Failures:** `EngineClient` logs why a call failed and throws `EngineUnavailableError`, a 503 unless the caller catches it. The engine's rejections of a job's parameters become a 400.
 - **Jobs update in the background.** The engine never notifies and lists no jobs, so each job row keeps the engine's id for it, and `JobsWatcher` asks the engine about every unfinished job every `JOBS_REFRESH_INTERVAL_SECONDS` (10 by default). A refresh writes only what changed. Reads (`GET /api/jobs/:id` and the list) answer the stored state and never call the engine, so a job's state is at most one interval old. While the engine is down, the stored state stays as it was.
 - **A job is `completed` once its package is stored.** The refresh that sees the engine finish downloads the package into `PACKAGE_STORAGE_DIR` first (`.data/packages` by default), so a completed job's download never depends on the engine. The engine deletes its copy after 30 days, so a package that can't be downloaded for that long is lost. Will switch to object storage later.
+- **A completed job's result is its manifest.** `GET /api/jobs/:id/result` answers the `manifest.json` that Core writes into every package: what was produced, from which request, with its headline, summary and warnings. It is read out of the stored package without unpacking the rest, and passed on whole, since what it holds is Core's to define.
 
 ## Tests
 

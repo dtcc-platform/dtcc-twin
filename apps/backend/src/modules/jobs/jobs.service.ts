@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { ReadStream } from "node:fs";
 import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import type { CreateJobBody, Job, JobPage, OffsetPaginationQuery } from "@repo/contracts";
+import type { CreateJobBody, Job, JobPage, JobResult, OffsetPaginationQuery } from "@repo/contracts";
 import { EngineClient, type EngineJob } from "../../infra/engine/engine.client.js";
 import { EngineUnavailableError } from "../../infra/engine/engine.errors.js";
 import { PackageStorage } from "../../infra/storage/package-storage.js";
@@ -12,6 +12,8 @@ export type JobPackage = { content: ReadStream; fileName: string };
 
 // Engine calls in flight at once during a background refresh.
 const refreshConcurrency = 8;
+// Core's own limit for a package manifest.
+const maxManifestBytes = 4 * 1024 * 1024;
 
 @Injectable()
 export class JobsService {
@@ -61,6 +63,20 @@ export class JobsService {
     const content = await this.storage.open(job.id);
     if (!content) throw new Error(`The package of completed job ${id} is missing from storage`);
     return { content, fileName: `${job.dataset}-${job.id}.dtccpkg` };
+  }
+
+  /** What the completed job produced: its package's manifest, read from storage. */
+  async result(userId: string, id: string): Promise<JobResult> {
+    const job = await this.find(userId, id);
+    if (job.state !== "completed") throw new ConflictException(`Job ${id} has not completed`);
+
+    const manifest = await this.storage.readEntry(job.id, "manifest.json", maxManifestBytes);
+    if (!manifest) throw new Error(`The package of completed job ${id} has no manifest`);
+    const parsed: unknown = JSON.parse(manifest.toString("utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`The manifest of job ${id} is not a JSON object`);
+    }
+    return { manifest: parsed as Record<string, unknown> };
   }
 
   private async find(userId: string, id: string): Promise<StoredJob> {

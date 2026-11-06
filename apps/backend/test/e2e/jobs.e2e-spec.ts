@@ -3,10 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Logger, type INestApplication } from "@nestjs/common";
-import { errorResponseSchema, jobPageSchema, jobSchema, type Job } from "@repo/contracts";
+import { errorResponseSchema, jobPageSchema, jobResultSchema, jobSchema, type Job } from "@repo/contracts";
 import request, { type Agent, type Response } from "supertest";
 import type { App } from "supertest/types.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { dtccPackage, manifestOf } from "../helpers/packages.js";
 import { startStubEngine } from "../helpers/stub-engine.js";
 
 // ConfigModule reads the environment when app.module.ts is imported, so the stub must be listening before that.
@@ -441,6 +442,48 @@ describe("Jobs (e2e)", () => {
 
       expect(errorResponseSchema.parse(other.body).error.code).toBe("NOT_FOUND");
       expect(errorResponseSchema.parse(missing.body).error.code).toBe("NOT_FOUND");
+    });
+  });
+
+  describe("GET /api/jobs/:id/result", () => {
+    it("answers what the completed job produced: its package's manifest", async () => {
+      const manifest = manifestOf("trees", { summary: { tree_count: 1234 } });
+      const job = await submit(ada);
+      engine.completeJob(lastEngineJobId(), await dtccPackage(manifest));
+      await refreshJobs();
+
+      const response = await ada.get(`/api/jobs/${job.id}/result`).expect(200);
+
+      expect(jobResultSchema.parse(response.body)).toEqual({ manifest });
+    });
+
+    it("answers CONFLICT for a job that hasn't completed", async () => {
+      const job = await submit(ada);
+
+      const response = await ada.get(`/api/jobs/${job.id}/result`).expect(409);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("CONFLICT");
+    });
+
+    it("answers NOT_FOUND for another user's job", async () => {
+      const graces = await submit(grace);
+      engine.completeJob(lastEngineJobId(), await dtccPackage(manifestOf("smoke")));
+      await refreshJobs();
+
+      const response = await ada.get(`/api/jobs/${graces.id}/result`).expect(404);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("NOT_FOUND");
+    });
+
+    it("answers INTERNAL_ERROR for a stored package without a readable manifest", async () => {
+      vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const job = await submit(ada);
+      engine.completeJob(lastEngineJobId(), randomBytes(512));
+      await refreshJobs();
+
+      const response = await ada.get(`/api/jobs/${job.id}/result`).expect(500);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("INTERNAL_ERROR");
     });
   });
 });

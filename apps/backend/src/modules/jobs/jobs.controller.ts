@@ -3,12 +3,14 @@ import {
   createJobBodySchema,
   idParamsSchema,
   jobPageSchema,
+  jobResultSchema,
   jobSchema,
   offsetPaginationQuerySchema,
   type CreateJobBody,
   type IdParams,
   type Job,
   type JobPage,
+  type JobResult,
   type OffsetPaginationQuery,
 } from "@repo/contracts";
 import { CurrentUser, Roles, type AuthUser } from "../../common/decorators/auth.decorators.js";
@@ -34,6 +36,12 @@ export class JobsController {
   @Serialize(jobSchema)
   get(@CurrentUser() user: AuthUser, @Param({ schema: idParamsSchema }) { id }: IdParams): Promise<Job> {
     return this.jobs.get(user.userId, id);
+  }
+
+  @Get(":id/result")
+  @Serialize(jobResultSchema)
+  result(@CurrentUser() user: AuthUser, @Param({ schema: idParamsSchema }) { id }: IdParams): Promise<JobResult> {
+    return this.jobs.result(user.userId, id);
   }
 
   @Get(":id/package")

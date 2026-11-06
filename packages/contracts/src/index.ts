@@ -65,12 +65,14 @@ export {
   createJobBodySchema,
   jobPageSchema,
   jobProgressSchema,
+  jobResultSchema,
   jobSchema,
   jobStateSchema,
   type CreateJobBody,
   type Job,
   type JobPage,
   type JobProgress,
+  type JobResult,
   type JobState,
 } from "./jobs/jobs.js";
 export {

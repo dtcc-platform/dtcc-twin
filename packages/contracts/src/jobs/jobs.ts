@@ -26,6 +26,10 @@ export const jobSchema = z.object({
 });
 export type Job = z.infer<typeof jobSchema>;
 
+/** What a completed job produced, as its package's manifest describes it: Core's to define, passed on whole. */
+export const jobResultSchema = z.object({ manifest: z.record(z.string(), z.unknown()) });
+export type JobResult = z.infer<typeof jobResultSchema>;
+
 export const jobPageSchema = offsetPage(jobSchema);
 export type JobPage = z.infer<typeof jobPageSchema>;
 

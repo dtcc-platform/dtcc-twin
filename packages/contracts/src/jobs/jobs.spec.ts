@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createJobBodySchema, jobSchema } from "./jobs.js";
+import { createJobBodySchema, jobResultSchema, jobSchema } from "./jobs.js";
 
 const job = {
   id: "0199a6b4-7c1e-7d2a-9f3b-2c4d5e6f7a8c",
@@ -42,5 +42,13 @@ describe("createJobBodySchema", () => {
     const result = createJobBodySchema.safeParse({ ...body, parameters: { ...body.parameters, format: "geojson" } });
 
     expect(result.error?.issues.map((issue) => issue.path)).toEqual([["parameters", "format"]]);
+  });
+});
+
+describe("jobResultSchema", () => {
+  it("keeps the whole manifest, whatever Core writes in it", () => {
+    const result = { manifest: { identity: { name: "trees" }, summary: { tree_count: 1234 }, new_field: [1, 2] } };
+
+    expect(jobResultSchema.parse(result)).toEqual(result);
   });
 });
