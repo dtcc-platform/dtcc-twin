@@ -514,12 +514,28 @@ def described(observed: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {node: worker for node, worker in observed["workers"].items() if worker is not None}
 
 
+def consume(jobs: Jobs, nodes: list[str], consuming: bool) -> None:
+    """Make the nodes consume the target's queue, or leave it, and wait until an observation shows the change, which
+    the worker makes after it answers the command."""
+    control = jobs.celery_app.control
+    if consuming:
+        control.add_consumer(jobs.target, destination=nodes, reply=True)
+    else:
+        control.cancel_consumer(jobs.target, destination=nodes, reply=True)
+    queues = [jobs.target] if consuming else []
+    observe_until(
+        jobs,
+        jobs.target,
+        lambda observed: all(described(observed).get(node, {}).get("queues") == queues for node in nodes),
+    )
+
+
 def hold_a_job(jobs: Jobs, on: str | None = None) -> tuple[str, str, str]:
     """Submit a job that holds its worker until a test releases it, on the node `on` if given, while the target's other
     workers leave its queue; return the job's ID, its release key, and its holder."""
     others = [node for node in jobs.registered_workers(jobs.target) if node != on] if on else []
     if others:
-        jobs.celery_app.control.cancel_consumer(jobs.target, destination=others, reply=True)
+        consume(jobs, others, False)
     release = f"engine-test:release:{uuid.uuid4()}"
     job_id = jobs.submit("engine_held_probe", {"bounds": BOUNDS, "release_key": release})
     observed = observe_until(
@@ -527,7 +543,7 @@ def hold_a_job(jobs: Jobs, on: str | None = None) -> tuple[str, str, str]:
     )
     holder = next(node for node, worker in described(observed).items() if worker["reserved"])
     if others:
-        jobs.celery_app.control.add_consumer(jobs.target, destination=others, reply=True)
+        consume(jobs, others, True)
     return job_id, release, holder
 
 
