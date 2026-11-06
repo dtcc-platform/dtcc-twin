@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 import { createStore, useStore } from "zustand";
 
 /** What the panel column on the right of the map can show; one at a time. */
-export type RightContent = "bookmarks" | "datasets" | "simulations" | "downloads" | "upload";
+export type RightContent = "assistant" | "bookmarks" | "datasets" | "simulations" | "downloads" | "upload";
 
 /** What the panel column beside the toolbar can show; one at a time. */
 export type LeftContent = "layers" | "bounds";

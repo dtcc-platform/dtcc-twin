@@ -1,5 +1,6 @@
 import {
   BookmarkIcon,
+  BotMessageSquareIcon,
   BoxIcon,
   DownloadIcon,
   FolderTreeIcon,
@@ -167,6 +168,17 @@ export function Toolbar() {
         Upload
       </Button>
       <Separator className="my-1" />
+      <Button
+        variant="ghost"
+        className={item}
+        aria-expanded={right === "assistant"}
+        onClick={() => {
+          openOrCloseRight("assistant");
+        }}
+      >
+        <BotMessageSquareIcon />
+        Assistant
+      </Button>
       <Button variant="ghost" className={item} disabled>
         <SearchIcon />
         Search
