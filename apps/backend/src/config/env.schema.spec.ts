@@ -27,6 +27,7 @@ describe("envSchema", () => {
       JWT_SECRET,
       PACKAGE_STORAGE_DIR: ".data/packages",
       JOBS_REFRESH_INTERVAL_SECONDS: 10,
+      SCRIPTED_MODEL_DELAY_MS: 800,
     });
     expect(ENGINE_URL).toBeUndefined();
     expect(ENGINE_API_TOKEN).toBeUndefined();

@@ -5,6 +5,7 @@ import { configModuleOptions } from "./config/config.module.js";
 import { databaseModuleOptions } from "./infra/database/database.js";
 import { AccountsModule } from "./modules/accounts/accounts.module.js";
 import { AuthModule } from "./modules/auth/auth.module.js";
+import { ChatsModule } from "./modules/chats/chats.module.js";
 import { DatasetsModule } from "./modules/datasets/datasets.module.js";
 import { HealthModule } from "./modules/health/health.module.js";
 import { ItemsModule } from "./modules/items/items.module.js";
@@ -28,6 +29,7 @@ import { UsersModule } from "./modules/users/users.module.js";
     DatasetsModule,
     JobsModule,
     SavedAreasModule,
+    ChatsModule,
   ],
 })
 export class AppModule {}

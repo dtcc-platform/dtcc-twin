@@ -31,6 +31,20 @@ export {
   type Session,
   type SessionList,
 } from "./auth/auth.js";
+export {
+  boundsSchema,
+  chatEntrySchema,
+  chatMessageBodySchema,
+  chatPageSchema,
+  chatSchema,
+  chatSummarySchema,
+  type Bounds,
+  type Chat,
+  type ChatEntry,
+  type ChatMessageBody,
+  type ChatPage,
+  type ChatSummary,
+} from "./chats/chats.js";
 export { errorCodeSchema, type ErrorCode } from "./common/error-code.js";
 export { offsetPage, offsetPaginationQuerySchema, type OffsetPaginationQuery } from "./common/pagination.js";
 export { idParamsSchema, type IdParams } from "./common/params.js";

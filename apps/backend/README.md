@@ -16,6 +16,7 @@ src/
   infra/database/         pool, shared columns, relations.ts
   infra/engine/           EngineClient: the only code that calls DTCC Engine
   infra/gateway/          GatewayClient: the only code that calls APISIX's Admin API
+  infra/model/            ModelClient: the only code that calls the chat model (ScriptedModel for now)
   infra/storage/          PackageStorage: the packages of completed jobs
   docs/                   OpenAPI document and Swagger UI
   modules/<name>/         controller → service → repository, plus table and module
@@ -63,6 +64,18 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, a
 - **Jobs update in the background.** The engine never notifies and lists no jobs, so each job row keeps the engine's id for it, and `JobsWatcher` asks the engine about every unfinished job every `JOBS_REFRESH_INTERVAL_SECONDS` (10 by default). A refresh writes only what changed. Reads (`GET /api/jobs/:id` and the list) answer the stored state and never call the engine, so a job's state is at most one interval old. While the engine is down, the stored state stays as it was.
 - **A job is `completed` once its package is stored.** The refresh that sees the engine finish downloads the package into `PACKAGE_STORAGE_DIR` first (`.data/packages` by default), so a completed job's download never depends on the engine. The engine deletes its copy after 30 days, so a package that can't be downloaded for that long is lost. Will switch to object storage later.
 - **A completed job's result is its manifest.** `GET /api/jobs/:id/result` answers the `manifest.json` that Core writes into every package: what was produced, from which request, with its headline, summary and warnings. It is read out of the stored package without unpacking the rest, and passed on whole, since what it holds is Core's to define.
+
+## Chats
+
+`/api/chats` holds a user's conversations with the assistant: the stored messages, and a lock for the turn that answers them.
+
+- **A turn runs within the request.** `POST /api/chats` starts a chat with its first message and `POST /api/chats/:id/messages` continues one. Each stores the user's message, runs the model, stores its answer and responds with the whole chat, so a turn must stay well under the web server's 120 seconds.
+- **One turn at a time.** A turn claims its chat (`chats.turn_started_at`) and releases it however it ends, and the chat's `answering` says a claim is held. A message sent meanwhile answers 409. A claim older than 10 minutes belongs to a process that died, so the next message takes the chat over.
+- **Stored as the model saw it.** A message's `content` is exactly what the model was sent or answered, thinking blocks included, and every later turn replays it unchanged: the prompt cache and the thinking blocks depend on it, so earlier messages are never edited. `data` holds what the transcript shows (`entries`). The app's own blocks in a user message are tagged, such as `<map_context>` with the area selected on the map, so the model can tell them from the user's words.
+- **A failed turn keeps the message.** When the model fails or refuses, the turn stores a notice instead of an answer. Notices are shown, never sent to the model, and the next message carries on.
+- **Every turn is recorded** in `chat_turns`, with its outcome and tokens. The records stay when their chat is deleted.
+- **Only active accounts chat**, since every turn costs model tokens.
+- **The model** is `ModelClient` (`infra/model/`), one Messages API request per call in the Anthropic SDK's types. `ScriptedModel` stands in until the Bedrock adapter exists: it answers from a fixed script after `SCRIPTED_MODEL_DELAY_MS` (800 by default), and `[fail]` or `[refuse]` in a message makes it fail or refuse. The system prompt is in `modules/chats/system-prompt.ts`.
 
 ## Tests
 
