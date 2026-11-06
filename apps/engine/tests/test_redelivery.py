@@ -303,22 +303,52 @@ def test_worker_deletes_the_packages_no_job_can_deliver(
     unknown = str(uuid.uuid4())
     jobs.package_path(unknown).write_bytes(b"package")
     packages["unknown"] = unknown
-    # Core stages an export beside the package; one there before the worker starts belongs to an export that was killed.
-    killed_export = tmp_path / ".dtcc-package-killed"
-    killed_export.mkdir()
+    # Core stages an export in the worker's own staging directory; one there before the worker starts belongs to an
+    # export that was killed, while another worker of the target may still be exporting in its directory.
+    killed_export = jobs.staging_dir("celery@cleaned") / ".dtcc-package-killed"
+    killed_export.mkdir(parents=True)
+    other_workers_export = jobs.staging_dir("w1@cleaned") / ".dtcc-package-running"
+    other_workers_export.mkdir(parents=True)
     with start_target_worker(jobs, pool="prefork", concurrency=1):
         kept = {name for name, job_id in packages.items() if jobs.package_path(job_id).exists()}
         assert kept == {"completed", "running", "unusable"}
         assert not killed_export.exists()
+        assert other_workers_export.exists()
         # One that appears while the worker runs may belong to a running export, however old it is.
-        running_export = tmp_path / ".dtcc-package-running"
-        running_export.mkdir()
+        running_export = jobs.staging_dir("celery@cleaned") / ".dtcc-package-running"
+        running_export.mkdir(parents=True)
         two_days_ago = time.time() - 2 * 86400
         os.utime(running_export, (two_days_ago, two_days_ago))
         # A package whose job fails while the worker runs goes at a later pass.
         failed_later = package_with_record(jobs, {**finished, "outcome": "failed", "error_type": "RuntimeError"})
         wait_for(lambda: not jobs.package_path(failed_later).exists(), timeout=10)
         assert running_export.exists()
+
+
+def test_package_is_staged_in_the_workers_directory_and_moved_into_place(
+    redis_url: str, tmp_path: Path, counting_dataset: str, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "staged", tmp_path)
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
+        job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "staged"})
+        wait_until_completed(jobs, job_id)
+    assert jobs.package_path(job_id).is_file()
+    assert list(jobs.staging_dir("celery@staged").iterdir()) == []
+
+
+def test_job_whose_staging_directory_cannot_be_made_fails_without_running(
+    redis_url: str, tmp_path: Path, counting_dataset: str, start_target_worker: Callable[..., Any]
+) -> None:
+    jobs = Jobs(redis_url, "unstageable", tmp_path)
+    # A file where the staging directory belongs, which the worker's start cannot delete and a job cannot make.
+    jobs.staging_dir("celery@unstageable").write_bytes(b"")
+    with start_target_worker(jobs, pool="prefork", concurrency=1):
+        job_id = jobs.submit(counting_dataset, {"bounds": BOUNDS, "label": "unstageable"})
+        job = wait_until_finished(jobs, job_id)
+    assert (job["state"], job["error"]) == ("failed", {"type": "FileExistsError"})
+    assert job["finished_at"] is not None
+    assert jobs.records.get(runs_key("unstageable")) is None
+    assert not jobs.package_path(job_id).exists()
 
 
 def test_worker_started_again_deletes_the_package_its_earlier_run_left(

@@ -240,9 +240,10 @@ Core's lossless Protobuf contract.
 
 Remote hosts are configured explicitly with stable target identifiers and their
 Engine HTTP addresses. They do not register dynamically. Use a Celery queue for
-each configured compute target. Each host's worker consumes only its designated
-queue, refusing to start with any other, and enforces the configured
-concurrent-job count.
+each configured compute target. A target has one worker, or several that share
+its queue and, provided by the deployment, its package directory; each consumes
+only its target's queue, refusing to start with any other, and enforces its
+configured concurrent-job count.
 
 Requests select automatic placement, local execution, or a named remote target.
 
@@ -259,14 +260,25 @@ Availability means that a target can accept queued work; capacity means that it
 appears to have room to start another job. A busy target can still be available.
 HTTP liveness alone must not be treated as proof that its Celery worker is ready.
 
-Engine observes a target through the broker. The target's worker answers with
-its image digest, versions, job limit, the jobs it holds, and the queues it
+Engine observes a target through the broker. Each worker registers itself in
+Redis under its node name while it runs, for 30 seconds at a time, renewed
+every 10 seconds, and deregisters when it stops; a worker that was killed stays
+registered until its registration lapses. Engine asks the target's registered
+workers, or `celery@<target>` when none is registered. Each answers with its
+image digest, versions, job limit, the jobs it holds, and the queues it
 consumes, never with a job's arguments, and the broker counts the jobs waiting
-in the target's queue. A target is available when its worker answers and
-consumes exactly its target's queue, and has capacity when the worker holds
-fewer jobs than its limit and none wait. A target whose worker does not answer
-is unknown: Engine does not conclude that the worker stopped, and routing
-treats the target as unavailable.
+in the target's queue. The observation reports each worker asked, by node, with
+its answer or none, and the target's state from the answers together: unknown
+when no worker answered or an answer is malformed; unavailable when a worker
+consumes another queue, or none of the answering workers consumes the target's
+queue; incompatible when a worker consuming the queue reports another image
+than this host's; otherwise the target has capacity when the jobs held by every
+answering worker, one leaving the queue included, are fewer than the limits of
+the consuming ones add up to, and none wait. A registered worker that does not
+answer is listed without an answer and not counted: Engine does not conclude
+that it stopped or that it holds nothing, so the deployment reconciles the
+listing against the workers it runs. A target none of whose workers answers is
+unknown, and routing treats it as unavailable.
 
 A request names a configured target or none. Engine validates the request
 before it observes any target, and rejects an identifier that is not configured
@@ -429,12 +441,13 @@ Each host's worker deletes the packages that no job can deliver when it starts
 and every hour: those whose job is unknown or expired, failed, was cancelled, or
 completed more than the retention ago. A package stays while its job has no
 outcome or its record is unusable. Deleting a package is retention; it does not
-show that the job's computation stopped. When the worker starts, before it runs
-any job, it also deletes the staging directories that exports left beside the
-packages: the host's worker is the only one that exports there, and it starts
-only after its earlier run stopped (Restart behavior), so those exports were
-killed. A staging directory left while the worker runs stays until the worker
-starts again.
+show that the job's computation stopped. Each worker exports into a staging
+directory of its own node under the package directory, and moves a validated
+package into place. When the worker starts, before it runs any job, it deletes
+its node's staging directory: it starts only after its earlier run stopped
+(Restart behavior), so the exports there were killed; other workers'
+directories stay, since their exports may be running. A staging directory left
+while the worker runs stays until the worker starts again.
 
 The retention is a temporary policy, not a persistence guarantee.
 Downstream consumers must store results they need to retain durably.
@@ -551,15 +564,17 @@ record an outcome. A job whose pool process is lost fails with
 `WorkerLostError`, which Celery reports in the worker's main process. When a
 worker starts, each job that an earlier run of the same worker claimed and left
 without an outcome fails with `WorkerRestarted`. This needs each worker to run
-as `celery@<target identifier>`, a node name that no other running worker uses,
-and to start under it only after its earlier run and that run's processes have
-stopped. A worker refuses to start under another node name. As a best effort,
-it also refuses to start while a running worker answers to its node name; a
-late or lost answer, a broker error, or two workers that start at once escape
-that check, so it does not replace stopping the earlier run. Both checks come
-before the worker checks any claim. A job whose worker is lost and not started
-again keeps the state last recorded, as does a job whose lost process still
-appears to exist, because Engine cannot tell whether the work stopped.
+under a node name of its target, `<name>@<target identifier>` with a name of
+lowercase letters and digits, `celery` for a host's own worker, that no other
+running worker uses, and to start under it only after its earlier run and that
+run's processes have stopped. A worker refuses to start under another target's
+node name, or a malformed one. As a best effort, it also refuses to start while
+a running worker answers to its node name; a late or lost answer, a broker
+error, or two workers that start at once escape that check, so it does not
+replace stopping the earlier run. Both checks come before the worker checks any
+claim. A job whose worker is lost and not started again keeps the state last
+recorded, as does a job whose lost process still appears to exist, because
+Engine cannot tell whether the work stopped.
 
 Engine's record of a job that never finishes expires the retention plus a day
 after the job's submission or, once a delivery claimed it, after the claim. The job is then
@@ -649,10 +664,11 @@ containers from the same production image. A production deployment provides:
   references Engine returns include it.
 
 The worker's container runs `celery --app dtcc_engine.worker worker --hostname
-celery@<ENGINE_TARGET> --concurrency <job limit>` and overrides the image's
-health check with `/opt/conda/envs/engine/bin/celery --app dtcc_engine.worker
-inspect ping --destination celery@$ENGINE_TARGET`, which succeeds only while
-the worker answers through the broker. A worker's warm shutdown waits for the
+<name>@<ENGINE_TARGET> --concurrency <job limit>`, with the name `celery` for
+the host's own worker, and overrides the image's health check with
+`/opt/conda/envs/engine/bin/celery --app dtcc_engine.worker inspect ping
+--destination <its node name>`, which succeeds only while the worker answers
+through the broker. A worker's warm shutdown waits for the
 jobs it runs; stopped with a shorter deadline, the worker is killed with them,
 and they fail with `WorkerRestarted` when it starts again.
 

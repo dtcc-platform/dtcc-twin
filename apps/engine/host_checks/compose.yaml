@@ -56,6 +56,16 @@ services:
     volumes:
       - entry-packages:/var/lib/dtcc-engine/packages
 
+  # A second worker of the entry target, as a pool slot of the deployment is, sharing the entry's package volume.
+  entry-worker-w1:
+    <<: *engine
+    command: ["celery", "--app", "target_worker", "worker", "--hostname", "w1@entry", "--concurrency", "1"]
+    environment:
+      <<: [*settings, *worker]
+      ENGINE_TARGET: entry
+    volumes:
+      - entry-packages:/var/lib/dtcc-engine/packages
+
   remote:
     <<: [*engine, *api]
     environment:
