@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { offsetPage } from "../common/pagination.js";
-import { jobSchema } from "../jobs/jobs.js";
+import { jobSchema, jobStateSchema } from "../jobs/jobs.js";
 
 /** EPSG:3006 bounds in metres, `[minX, minY, maxX, maxY]`: what a Dataset takes as `bounds`. */
 export const boundsSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]).check((context) => {
@@ -36,6 +36,8 @@ export const chatEntrySchema = z.discriminatedUnion("type", [
   z.object({ ...entry, type: z.literal("assistant"), text: z.string() }),
   /** A job the assistant started; its state is in the chat's `jobs`. */
   z.object({ ...entry, type: z.literal("job"), jobId: z.uuid(), dataset: z.string() }),
+  /** The app telling the assistant how a job it started ended, after the turn that started it. */
+  z.object({ ...entry, type: z.literal("job_update"), jobId: z.uuid(), dataset: z.string(), state: jobStateSchema }),
   /** Something that isn't the assistant's answer, such as a turn that failed. */
   z.object({ ...entry, type: z.literal("notice"), text: z.string() }),
 ]);

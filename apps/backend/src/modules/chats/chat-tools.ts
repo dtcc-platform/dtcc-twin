@@ -8,7 +8,7 @@ import type { Env } from "../../config/env.schema.js";
 import { EngineUnavailableError } from "../../infra/engine/engine.errors.js";
 import { DatasetsService } from "../datasets/datasets.service.js";
 import { JobsService } from "../jobs/jobs.service.js";
-import type { ToolCall } from "./chat-messages.js";
+import type { JobReport, ToolCall } from "./chat-messages.js";
 import { ChatsRepository } from "./chats.repository.js";
 
 const datasetToolPrefix = "run_";
@@ -29,9 +29,6 @@ export type ToolOutcome = {
   /** A job whose end this result tells the model, so the chat stops waiting for it. */
   reportedJobId: string | null;
 };
-
-/** What the model is told about a job: in a tool result, and when it finishes later. */
-export type JobReport = Record<string, unknown> & { job_id: string; dataset: string; state: Job["state"] };
 
 const getJobTool: Anthropic.Tool = {
   name: "get_job",
@@ -189,7 +186,7 @@ export class ChatTools {
     return {
       block: { type: "tool_result", tool_use_id: use.id, content: JSON.stringify(report) },
       call,
-      reportedJobId: isFinished(job) ? job.id : null,
+      reportedJobId: isFinishedJob(job) ? job.id : null,
     };
   }
 
@@ -198,7 +195,7 @@ export class ChatTools {
     const deadline = Date.now() + this.waitMs;
     const pause = Math.min(1000, Math.max(50, this.waitMs / 20));
     let current = job;
-    while (!isFinished(current) && Date.now() + pause <= deadline) {
+    while (!isFinishedJob(current) && Date.now() + pause <= deadline) {
       await sleep(pause);
       current = await this.jobs.refresh(userId, current.id);
     }
@@ -236,7 +233,7 @@ function rejectionOf(error: HttpException): string {
   return `The parameters were rejected: ${error.errors.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`;
 }
 
-function isFinished(job: Job): boolean {
+export function isFinishedJob(job: Job): boolean {
   return job.state === "completed" || job.state === "failed" || job.state === "cancelled";
 }
 

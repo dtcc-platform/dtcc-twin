@@ -30,6 +30,7 @@ describe("envSchema", () => {
       JOBS_REFRESH_INTERVAL_SECONDS: 10,
       SCRIPTED_MODEL_DELAY_MS: 800,
       CHAT_JOB_WAIT_MS: 20_000,
+      CHAT_RESUME_INTERVAL_SECONDS: 5,
     });
     expect(CHAT_DATASETS).toBeUndefined();
     expect(ENGINE_URL).toBeUndefined();

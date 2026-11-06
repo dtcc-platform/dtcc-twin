@@ -8,10 +8,11 @@ import { ChatTurnRunner } from "./chat-turns.js";
 import { ChatsController } from "./chats.controller.js";
 import { ChatsRepository } from "./chats.repository.js";
 import { ChatsService } from "./chats.service.js";
+import { ChatsWatcher } from "./chats.watcher.js";
 
 @Module({
   imports: [ModelModule, UsersModule, JobsModule, DatasetsModule],
   controllers: [ChatsController],
-  providers: [ChatsService, ChatsRepository, ChatTurnRunner, ChatTools],
+  providers: [ChatsService, ChatsRepository, ChatTurnRunner, ChatTools, ChatsWatcher],
 })
 export class ChatsModule {}

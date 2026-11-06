@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Bounds, ChatEntry } from "@repo/contracts";
+import type { Bounds, ChatEntry, JobState } from "@repo/contracts";
 
-export const chatMessageKinds = ["user_message", "assistant", "tool_results", "notice"] as const;
+export const chatMessageKinds = ["user_message", "assistant", "tool_results", "job_update", "notice"] as const;
 export type ChatMessageKind = (typeof chatMessageKinds)[number];
 
 /**
@@ -9,7 +9,7 @@ export type ChatMessageKind = (typeof chatMessageKinds)[number];
  * so the prompt cache and thinking blocks stay valid; `data` is what the transcript shows when `content` isn't for
  * people. A notice is for people only and never reaches the model.
  */
-export type NewChatMessage = UserMessage | AssistantMessage | ToolResults | Notice;
+export type NewChatMessage = UserMessage | AssistantMessage | ToolResults | JobUpdate | Notice;
 export type UserMessage = {
   kind: "user_message";
   content: Anthropic.TextBlockParam[];
@@ -21,7 +21,15 @@ export type ToolResults = {
   content: Anthropic.ToolResultBlockParam[];
   data: { calls: ToolCall[] };
 };
+export type JobUpdate = {
+  kind: "job_update";
+  content: Anthropic.TextBlockParam[];
+  data: { jobs: { jobId: string; dataset: string; state: JobState }[] };
+};
 export type Notice = { kind: "notice"; content: null; data: { text: string } };
+
+/** What the model is told about a job: in a tool's result, and in an update when it ends after that. */
+export type JobReport = Record<string, unknown> & { job_id: string; dataset: string; state: JobState };
 
 /** One tool call the assistant made, as the transcript shows it. */
 export type ToolCall = {
@@ -60,6 +68,18 @@ export function toolResults(results: { block: Anthropic.ToolResultBlockParam; ca
   };
 }
 
+/** How jobs the model was waiting on ended; the app tells it, so the blocks are tagged like the map context. */
+export function jobUpdate(reports: JobReport[]): JobUpdate {
+  return {
+    kind: "job_update",
+    content: reports.map((report) => ({
+      type: "text",
+      text: `<job_update>\n${JSON.stringify(report)}\n</job_update>`,
+    })),
+    data: { jobs: reports.map((report) => ({ jobId: report.job_id, dataset: report.dataset, state: report.state })) },
+  };
+}
+
 export function notice(text: string): Notice {
   return { kind: "notice", content: null, data: { text } };
 }
@@ -74,6 +94,7 @@ export function toModelMessage(message: NewChatMessage): Anthropic.MessageParam 
   switch (message.kind) {
     case "user_message":
     case "tool_results":
+    case "job_update":
       return { role: "user", content: message.content };
     case "assistant":
       return { role: "assistant", content: message.content };
@@ -99,6 +120,13 @@ export function toEntries(messages: ChatMessage[]): ChatEntry[] {
             ? [{ id: `${id}:${String(index)}`, createdAt, type: "job", jobId: call.jobId, dataset: call.dataset }]
             : [],
         );
+      case "job_update":
+        return message.data.jobs.map((job, index) => ({
+          id: `${id}:${String(index)}`,
+          createdAt,
+          type: "job_update",
+          ...job,
+        }));
       case "notice":
         return [{ id, createdAt, type: "notice", text: message.data.text }];
     }

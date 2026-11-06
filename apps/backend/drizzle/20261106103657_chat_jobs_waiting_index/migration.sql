@@ -1,0 +1,1 @@
+CREATE INDEX "chat_jobs_waiting_index" ON "chat_jobs" ("chat_id") WHERE "reported_at" is null;

@@ -16,7 +16,8 @@ export const chatTurns = snakeCase.table(
       .references(() => users.id, { onDelete: "cascade" }),
     // Kept when the chat is deleted, so its turns still count against the user.
     chatId: uuid().references(() => chats.id, { onDelete: "set null" }),
-    trigger: text({ enum: ["message"] }).notNull(),
+    // What started the turn: the user's message, or jobs ending after the turn that started them.
+    trigger: text({ enum: ["message", "job_update"] }).notNull(),
     outcome: text({ enum: ["answered", "refused", "failed", "stopped"] }).notNull(),
     steps: integer().notNull(),
     inputTokens: integer().notNull(),

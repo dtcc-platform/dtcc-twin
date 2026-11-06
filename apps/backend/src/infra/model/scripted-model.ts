@@ -9,8 +9,8 @@ import { ModelClient, ModelUnavailableError, type ModelReply, type ModelRequest 
 /**
  * Stands in for the chat model with a fixed script, so a chat runs end to end without Bedrock. Like a real model it
  * reads only the request: it calls the tool of every Dataset the user names, looks up the latest job when asked
- * whether it is done, and answers tool results from what they say. `[fail]` in the user's words makes it fail as an
- * unreachable model does, `[refuse]` refuse.
+ * whether it is done, and answers tool results and job updates from what they say. `[fail]` in the user's words makes
+ * it fail as an unreachable model does, `[refuse]` refuse.
  */
 @Injectable()
 export class ScriptedModel extends ModelClient {
@@ -32,16 +32,24 @@ export function scriptedReply(request: ModelRequest): ModelReply {
   const results = last?.role === "user" ? toolResultsOf(last) : [];
   if (results.length > 0) return replyWith(request, [text(results.map(describeResult).join("\n"))], "end_turn");
 
-  const words = latestUserWords(request.messages);
+  // It answers the job updates since its last answer and the latest message's words; a turn for an update alone has
+  // no words, so it runs nothing again.
+  const unanswered = request.messages.slice(
+    request.messages.findLastIndex((message) => message.role === "assistant") + 1,
+  );
+  const updates = unanswered.flatMap(jobUpdatesOf).map(describeJob);
+  const words = last ? userWordsIn([last]) : "";
   if (words.includes("[fail]")) throw new ModelUnavailableError("The scripted model was told to fail");
   if (words.includes("[refuse]")) return replyWith(request, [], "refusal");
+  if (!words) return replyWith(request, [text(updates.join("\n"))], "end_turn");
 
+  const before = updates.map((update) => `${update}\n`).join("");
   const calls = toolCallsFor(words, request);
   if (calls.length > 0) {
     const names = calls.map((call) => call.name).join(", ");
-    return replyWith(request, [text(`Let me call ${names}.`), ...calls], "tool_use");
+    return replyWith(request, [text(`${before}Let me call ${names}.`), ...calls], "tool_use");
   }
-  return replyWith(request, [text(`You said: "${words}". ${areaNote(request.messages)}`)], "end_turn");
+  return replyWith(request, [text(`${before}You said: "${words}". ${areaNote(request.messages)}`)], "end_turn");
 }
 
 function replyWith(
@@ -161,13 +169,20 @@ function textBlocks(message: Anthropic.MessageParam): string[] {
   return message.content.flatMap((block) => (block.type === "text" ? [block.text] : []));
 }
 
-function latestUserWords(messages: Anthropic.MessageParam[]): string {
-  for (const message of messages.toReversed()) {
-    if (message.role !== "user") continue;
-    const words = textBlocks(message).filter((block) => !isAppBlock(block));
-    if (words.length > 0) return words.join("\n");
-  }
-  return "";
+function userWordsIn(messages: Anthropic.MessageParam[]): string {
+  return messages
+    .flatMap((message) => (message.role === "user" ? textBlocks(message) : []))
+    .filter((block) => !isAppBlock(block))
+    .join("\n");
+}
+
+function jobUpdatesOf(message: Anthropic.MessageParam): Record<string, unknown>[] {
+  if (message.role !== "user") return [];
+  return textBlocks(message).flatMap((block) => {
+    const body = /^<job_update>\n([\s\S]*)\n<\/job_update>$/.exec(block)?.[1];
+    const report = body === undefined ? undefined : parseObject(body);
+    return report ? [report] : [];
+  });
 }
 
 function areaNote(messages: Anthropic.MessageParam[]): string {

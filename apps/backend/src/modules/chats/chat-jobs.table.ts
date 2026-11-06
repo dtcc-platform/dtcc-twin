@@ -22,5 +22,11 @@ export const chatJobs = snakeCase.table(
     reportedAt: timestamp({ withTimezone: true }),
     ...timestamps,
   },
-  (table) => [index("chat_jobs_chat_id_index").on(table.chatId)],
+  (table) => [
+    index("chat_jobs_chat_id_index").on(table.chatId),
+    // The watcher reads every chat still waiting for a job.
+    index("chat_jobs_waiting_index")
+      .on(table.chatId)
+      .where(sql`${table.reportedAt} is null`),
+  ],
 );

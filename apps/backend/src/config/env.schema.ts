@@ -35,6 +35,7 @@ export const envSchema = z.object({
   JOBS_REFRESH_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(10),
   SCRIPTED_MODEL_DELAY_MS: z.coerce.number().int().min(0).default(800),
   CHAT_JOB_WAIT_MS: z.coerce.number().int().min(0).default(20_000),
+  CHAT_RESUME_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(5),
   CHAT_DATASETS: z.preprocess(
     emptyAsUnset,
     z

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assistantMessage,
+  jobUpdate,
   notice,
   toEntries,
   toModelMessages,
@@ -105,6 +106,31 @@ describe("toolResults", () => {
   it("shows a card for each job a call started", () => {
     expect(toEntries(stored(results))).toEqual([
       { id: "m0:0", type: "job", jobId: started.jobId, dataset: "trees", createdAt },
+    ]);
+  });
+});
+
+describe("jobUpdate", () => {
+  const jobId = "0199a6b4-7c1e-7d2a-9f3b-2c4d5e6f7a8c";
+  const update = jobUpdate([{ job_id: jobId, dataset: "trees", state: "completed", result: { identity: {} } }]);
+
+  it("tells the model how each job ended in a block of its own, from the app rather than the user", () => {
+    expect(toModelMessages(stored(update))).toEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `<job_update>\n{"job_id":"${jobId}","dataset":"trees","state":"completed","result":{"identity":{}}}\n</job_update>`,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("shows each job's end in the transcript", () => {
+    expect(toEntries(stored(update))).toEqual([
+      { id: "m0:0", type: "job_update", jobId, dataset: "trees", state: "completed", createdAt },
     ]);
   });
 });

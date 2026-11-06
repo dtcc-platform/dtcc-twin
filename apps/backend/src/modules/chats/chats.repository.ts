@@ -152,6 +152,25 @@ export class ChatsRepository {
     return rows.map((row) => ({ jobId: row.jobId, reported: row.reportedAt !== null }));
   }
 
+  /** Every chat still waiting for a job, with its owner: the one query across owners, for the watcher. */
+  async findWaitingChats(): Promise<{ id: string; userId: string }[]> {
+    return this.db
+      .selectDistinct({ id: chats.id, userId: chats.userId })
+      .from(chatJobs)
+      .innerJoin(chats, eq(chats.id, chatJobs.chatId))
+      .where(isNull(chatJobs.reportedAt));
+  }
+
+  // Only for a chat the caller has already found by its owner.
+  async listWaitingJobIds(chatId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ jobId: chatJobs.jobId })
+      .from(chatJobs)
+      .where(and(eq(chatJobs.chatId, chatId), isNull(chatJobs.reportedAt)))
+      .orderBy(asc(chatJobs.createdAt), asc(chatJobs.id));
+    return rows.map((row) => row.jobId);
+  }
+
   async insertTurn(record: ChatTurnRecord): Promise<void> {
     await this.db.insert(chatTurns).values({ ...record, finishedAt: sql`now()` });
   }

@@ -128,3 +128,42 @@ describe("scriptedReply with tools", () => {
     );
   });
 });
+
+describe("scriptedReply to job updates", () => {
+  const tools: Anthropic.Tool[] = [
+    { name: "run_trees", description: "Trees. Tree locations.", input_schema: { type: "object" } },
+  ];
+  const update: Anthropic.TextBlockParam = {
+    type: "text",
+    text: `<job_update>\n${JSON.stringify({ job_id: "j1", dataset: "trees", state: "completed", result: { summary: { tree_count: 3 } } })}\n</job_update>`,
+  };
+
+  function afterTreesStarted(...later: Anthropic.MessageParam[]): ModelRequest {
+    const request = said("How many trees are there?");
+    request.tools = tools;
+    request.messages.push({ role: "assistant", content: [{ type: "text", text: "Trees is running." }] }, ...later);
+    return request;
+  }
+
+  it("answers an update on its own, without running the Dataset again", () => {
+    const reply = scriptedReply(afterTreesStarted({ role: "user", content: [update] }));
+
+    expect(reply.stopReason).toBe("end_turn");
+    expect(textOf(reply.content)).toContain("tree_count: 3");
+  });
+
+  it("answers an update that arrived before the user's next words, and the words", () => {
+    const words: Anthropic.MessageParam = {
+      role: "user",
+      content: [
+        { type: "text", text: "<map_context>No area is selected on the map.</map_context>" },
+        { type: "text", text: "Thanks" },
+      ],
+    };
+
+    const answer = textOf(scriptedReply(afterTreesStarted({ role: "user", content: [update] }, words)).content);
+
+    expect(answer).toContain("tree_count: 3");
+    expect(answer).toContain("Thanks");
+  });
+});

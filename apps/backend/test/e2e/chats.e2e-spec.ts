@@ -32,6 +32,8 @@ const { authHeader } = await import("../helpers/auth.js");
 const { query, truncateAllTables } = await import("../helpers/database.js");
 const { UsersService } = await import("../../src/modules/users/users.service.js");
 const { JobsService } = await import("../../src/modules/jobs/jobs.service.js");
+const { ChatsService } = await import("../../src/modules/chats/chats.service.js");
+const { ModelClient, ModelUnavailableError } = await import("../../src/infra/model/model.client.js");
 
 const treesSchema = {
   type: "object",
@@ -398,6 +400,147 @@ describe("Chats (e2e)", () => {
 
       const jobs = jobPageSchema.parse((await ada.get("/api/jobs").expect(200)).body);
       expect(jobs.items.map((job) => job.id)).toEqual(chat.jobs.map((job) => job.id));
+    });
+  });
+
+  describe("Finished jobs", () => {
+    // What the two background watchers do on each run; the tests run them themselves.
+    async function backgroundRun(): Promise<void> {
+      await app.get(JobsService).refreshActive();
+      await app.get(ChatsService).resumeFinished();
+    }
+
+    async function read(chatId: string): Promise<Chat> {
+      return chatSchema.parse((await ada.get(`/api/chats/${chatId}`).expect(200)).body);
+    }
+
+    function lastEngineJobId(): string {
+      const id = engine.submissions.at(-1)?.jobId;
+      if (!id) throw new Error("The stub engine created no job");
+      return id;
+    }
+
+    function lastAssistantText(chat: Chat): string {
+      const entry = chat.entries.findLast((candidate) => candidate.type === "assistant");
+      return entry?.type === "assistant" ? entry.text : "";
+    }
+
+    const started = ["user", "assistant", "job", "assistant"];
+
+    it("reports a job that finishes after its turn, in a turn of its own", async () => {
+      const chat = await start(ada, "How many trees are in this area?");
+      engine.completeJob(lastEngineJobId(), await dtccPackage(manifestOf("trees", { summary: { tree_count: 42 } })));
+
+      await backgroundRun();
+
+      const reported = await read(chat.id);
+      expect(types(reported.entries)).toEqual([...started, "job_update", "assistant"]);
+      expect(reported.entries[4]).toMatchObject({ type: "job_update", jobId: chat.jobs[0]?.id, state: "completed" });
+      expect(lastAssistantText(reported)).toContain("tree_count: 42");
+      expect(reported).toMatchObject({ waitingJobs: 0, answering: false });
+      const turns = await query<{ trigger: string }>("select trigger from chat_turns order by created_at");
+      expect(turns.map((turn) => turn.trigger)).toEqual(["message", "job_update"]);
+    });
+
+    it("reports each job once", async () => {
+      const chat = await start(ada, "How many trees are in this area?");
+      engine.completeJob(lastEngineJobId(), await dtccPackage(manifestOf("trees")));
+
+      await backgroundRun();
+      await backgroundRun();
+
+      expect(types((await read(chat.id)).entries)).toEqual([...started, "job_update", "assistant"]);
+    });
+
+    it("waits while the job runs", async () => {
+      const chat = await start(ada, "How many trees are in this area?");
+      engine.setJob(lastEngineJobId(), "running", { percent: 40, message: null, phase: null });
+
+      await backgroundRun();
+
+      const waiting = await read(chat.id);
+      expect(types(waiting.entries)).toEqual(started);
+      expect(waiting.waitingJobs).toBe(1);
+    });
+
+    it("reports a job that failed", async () => {
+      const chat = await start(ada, "How many trees are in this area?");
+      engine.failJob(lastEngineJobId(), "UpstreamError");
+
+      await backgroundRun();
+
+      const reported = await read(chat.id);
+      expect(reported.entries.at(-2)).toMatchObject({ type: "job_update", state: "failed" });
+      expect(lastAssistantText(reported)).toContain("UpstreamError");
+    });
+
+    it("reports jobs that finished by the same run in one update, answered once", async () => {
+      const chat = await start(ada, "Show me trees and footprints here");
+      for (const submission of engine.submissions) {
+        engine.completeJob(submission.jobId ?? "", await dtccPackage(manifestOf("trees")));
+      }
+
+      await backgroundRun();
+
+      const reported = await read(chat.id);
+      expect(types(reported.entries)).toEqual([
+        ...started.slice(0, 3),
+        "job",
+        "assistant",
+        "job_update",
+        "job_update",
+        "assistant",
+      ]);
+      expect(reported.waitingJobs).toBe(0);
+    });
+
+    it("waits for a turn running in the chat, and reports once it has ended", async () => {
+      const chat = await start(ada, "How many trees are in this area?");
+      engine.completeJob(lastEngineJobId(), await dtccPackage(manifestOf("trees")));
+      await query("update chats set turn_started_at = now() where id = $1", [chat.id]);
+
+      await backgroundRun();
+      expect(types((await read(chat.id)).entries)).toEqual(started);
+
+      await query("update chats set turn_started_at = null where id = $1", [chat.id]);
+      await backgroundRun();
+      expect(types((await read(chat.id)).entries)).toEqual([...started, "job_update", "assistant"]);
+    });
+
+    it("tells the model how a job ended before it reads the user's next message", async () => {
+      const chat = await start(ada, "How many trees are in this area?");
+      engine.completeJob(lastEngineJobId(), await dtccPackage(manifestOf("trees", { summary: { tree_count: 9 } })));
+      await app.get(JobsService).refreshActive();
+
+      const continued = await send(ada, chat.id, "Thanks");
+
+      expect(types(continued.entries)).toEqual([...started, "job_update", "user", "assistant"]);
+      expect(lastAssistantText(continued)).toContain("tree_count: 9");
+      expect(lastAssistantText(continued)).toContain("Thanks");
+    });
+
+    it("keeps the update when the model can't answer it, so the next turn still sees it", async () => {
+      const chat = await start(ada, "How many trees are in this area?");
+      engine.completeJob(lastEngineJobId(), await dtccPackage(manifestOf("trees")));
+      vi.spyOn(app.get(ModelClient), "reply").mockRejectedValueOnce(new ModelUnavailableError("Bedrock is down"));
+
+      await backgroundRun();
+
+      const reported = await read(chat.id);
+      expect(types(reported.entries)).toEqual([...started, "job_update", "notice"]);
+      expect(reported.waitingJobs).toBe(0);
+    });
+
+    it("forgets the jobs of a deleted chat, which stay the user's", async () => {
+      const chat = await start(ada, "How many trees are in this area?");
+      engine.completeJob(lastEngineJobId(), await dtccPackage(manifestOf("trees")));
+      await ada.delete(`/api/chats/${chat.id}`).expect(204);
+
+      await backgroundRun();
+
+      const jobs = jobPageSchema.parse((await ada.get("/api/jobs").expect(200)).body);
+      expect(jobs.items.map((job) => job.state)).toEqual(["completed"]);
+      expect(await query("select id from chat_turns where trigger = 'job_update'")).toEqual([]);
     });
   });
 });
