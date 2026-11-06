@@ -32,6 +32,12 @@
 - Don't catch database errors; the exception filter already maps them to 409 and 503.
 - Throw Nest's HTTP exceptions (`NotFoundException`, …). Add `withErrorCode()` only when a client must tell apart two failures with the same status; the code goes in the contracts' `errorCodeSchema` first.
 
+### Background work
+
+- Work on a timer is a `<name>.watcher.ts` provider in its module. It runs one service method with `every()` from `src/common/background/`, on an interval read from the environment where 0 turns it off, starting in `onApplicationBootstrap` and stopping in `onModuleDestroy`, before the database pool closes (`jobs.watcher.ts`).
+- What it works through lives in the database, so a restart loses nothing and the next run picks up where the last one stopped.
+- E2E files run with it off (`test/setup-env.ts`) and call the service method themselves.
+
 ### Config
 
 - Read configuration through `ConfigService` only; lint forbids `process.env` outside `src/config/`. Constructors inject `ConfigService<Env, true>`; elsewhere annotate with `EnvConfigService`.

@@ -12,7 +12,7 @@ src/
   migrate.ts              applies drizzle/ to DATABASE_URL; deploys run it before main.ts
   app.module.ts           every module is imported here
   config/                 env schema, validated once at boot
-  common/                 decorators, error handling, request id
+  common/                 decorators, error handling, request id, background timers
   infra/database/         pool, shared columns, relations.ts
   infra/engine/           EngineClient: the only code that calls DTCC Engine
   infra/gateway/          GatewayClient: the only code that calls APISIX's Admin API
@@ -60,8 +60,8 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, a
 
 - **Configuration:** `ENGINE_URL` and `ENGINE_API_TOKEN`. Left empty, the backend still boots, warns once, and answers the engine routes with 503; health is unaffected. To run both locally, start `pnpm dev:engine` and set `ENGINE_URL=http://127.0.0.1:8000` and `ENGINE_API_TOKEN=local-dev-engine-token` in `.env`.
 - **Failures:** `EngineClient` logs why a call failed and throws `EngineUnavailableError`, a 503 unless the caller catches it. The engine's rejections of a job's parameters become a 400.
-- **Jobs update when they are read.** The engine never notifies and lists no jobs, so each job row keeps the engine's id for it, and reading an unfinished job (`GET /api/jobs/:id` or the list) asks the engine first. While the engine is down, a read answers the last stored state.
-- **A job is `completed` once its package is stored.** The read that sees the engine finish downloads the package into `PACKAGE_STORAGE_DIR` first (`.data/packages` by default), so a completed job's download never depends on the engine. The engine deletes its copy after 30 days, so a job nobody reads for that long is lost. Will switch to object storage later.
+- **Jobs update in the background.** The engine never notifies and lists no jobs, so each job row keeps the engine's id for it, and `JobsWatcher` asks the engine about every unfinished job every `JOBS_REFRESH_INTERVAL_SECONDS` (10 by default). A refresh writes only what changed. Reads (`GET /api/jobs/:id` and the list) answer the stored state and never call the engine, so a job's state is at most one interval old. While the engine is down, the stored state stays as it was.
+- **A job is `completed` once its package is stored.** The refresh that sees the engine finish downloads the package into `PACKAGE_STORAGE_DIR` first (`.data/packages` by default), so a completed job's download never depends on the engine. The engine deletes its copy after 30 days, so a package that can't be downloaded for that long is lost. Will switch to object storage later.
 
 ## Tests
 
@@ -71,6 +71,7 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, a
   - `authHeader("admin")` signs a token for a user that doesn't exist. The guard never looks users up, so access tests need no rows. When the row matters, create the user through `UsersService` and pass its id: `authHeader("user", { userId })`.
   - `.env` is ignored; `JWT_SECRET` is random per run.
   - DTCC Engine is a stub (`test/helpers/stub-engine.ts`): a local HTTP server answering with the engine's shapes, set by each test. Config is read when `app.module.ts` is imported, so a file starts the stub and sets `ENGINE_URL` before importing `createTestApp` (`jobs.e2e-spec.ts`). Other files run with no engine configured.
+  - Background work is off (`test/setup-env.ts`), so no run lands between a test's steps; a test runs it by calling the service, such as `JobsService.refreshActive()`. `jobs-watcher.e2e-spec.ts` checks the timer itself.
   - APISIX's Admin API is a stub too (`test/helpers/stub-gateway.ts`), set up the same way (`keys.e2e-spec.ts`). Without it, the backend runs with no gateway, as other files do.
   - Vitest clears every mock's calls before each test, so a spy set in `beforeAll` has no calls left by the time a test reads it.
 

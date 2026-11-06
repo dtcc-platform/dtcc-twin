@@ -4,7 +4,7 @@ import { api } from "./client/api-client.ts";
 
 const all = ["jobs"] as const;
 
-/** A job still waiting or running, whose state the backend refreshes from the engine on every read. */
+/** A job still waiting or running, whose state the backend refreshes from the engine in the background. */
 export function isActiveJob(job: Job): boolean {
   return job.state === "queued" || job.state === "running";
 }

@@ -10,6 +10,9 @@ import { JobsRepository, type JobChanges, type StoredJob } from "./jobs.reposito
 
 export type JobPackage = { content: ReadStream; fileName: string };
 
+// Engine calls in flight at once during a background refresh.
+const refreshConcurrency = 8;
+
 @Injectable()
 export class JobsService {
   private readonly logger = new Logger(JobsService.name);
@@ -30,14 +33,24 @@ export class JobsService {
 
   async list(userId: string, { limit, offset }: OffsetPaginationQuery): Promise<JobPage> {
     const { jobs, total } = await this.repository.findPage(userId, limit, offset);
-    const items = await Promise.all(jobs.map((job) => this.refresh(job)));
-    return { items, limit, offset, total };
+    return { items: jobs, limit, offset, total };
   }
 
-  async get(userId: string, id: string): Promise<Job> {
-    const job = await this.repository.findById(userId, id);
-    if (!job) throw new NotFoundException(`Job ${id} not found`);
-    return this.refresh(job);
+  get(userId: string, id: string): Promise<Job> {
+    return this.find(userId, id);
+  }
+
+  /** Asks the engine about one of the user's jobs now, instead of waiting for the next background refresh. */
+  async refresh(userId: string, id: string): Promise<Job> {
+    return this.refreshStored(await this.find(userId, id));
+  }
+
+  /** Brings every user's unfinished jobs up to date with the engine: one run of the background refresh. */
+  async refreshActive(): Promise<void> {
+    const active = await this.repository.findActive();
+    for (let start = 0; start < active.length; start += refreshConcurrency) {
+      await Promise.all(active.slice(start, start + refreshConcurrency).map((job) => this.refreshStored(job)));
+    }
   }
 
   /** The completed job's package, from storage: the engine deletes its own copy after 30 days. */
@@ -50,8 +63,14 @@ export class JobsService {
     return { content, fileName: `${job.dataset}-${job.id}.dtccpkg` };
   }
 
-  /** check the job status, will probably change to cron later */
-  private async refresh(job: StoredJob): Promise<StoredJob> {
+  private async find(userId: string, id: string): Promise<StoredJob> {
+    const job = await this.repository.findById(userId, id);
+    if (!job) throw new NotFoundException(`Job ${id} not found`);
+    return job;
+  }
+
+  /** Writes only what the engine reports as changed, so a refresh that finds nothing new costs no write. */
+  private async refreshStored(job: StoredJob): Promise<StoredJob> {
     if (job.state === "completed" || job.state === "failed" || job.state === "cancelled") return job;
 
     let engineJob: EngineJob | null;

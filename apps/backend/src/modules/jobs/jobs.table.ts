@@ -25,5 +25,11 @@ export const jobs = snakeCase.table(
     completedAt: timestamp({ withTimezone: true }),
     ...timestamps,
   },
-  (table) => [index("jobs_user_id_index").on(table.userId)],
+  (table) => [
+    index("jobs_user_id_index").on(table.userId),
+    // The background refresh reads every unfinished job, oldest first.
+    index("jobs_active_index")
+      .on(table.createdAt)
+      .where(sql`${table.state} in ('queued', 'running')`),
+  ],
 );

@@ -26,6 +26,7 @@ describe("envSchema", () => {
       DATABASE_URL,
       JWT_SECRET,
       PACKAGE_STORAGE_DIR: ".data/packages",
+      JOBS_REFRESH_INTERVAL_SECONDS: 10,
     });
     expect(ENGINE_URL).toBeUndefined();
     expect(ENGINE_API_TOKEN).toBeUndefined();
@@ -121,6 +122,13 @@ describe("envSchema", () => {
       "http://127.0.0.1:9180",
     );
     expect(() => envSchema.parse({ APISIX_ADMIN_URL: "127.0.0.1:9180", ...required })).toThrow(/APISIX_ADMIN_URL/);
+  });
+
+  it("accepts 0 for JOBS_REFRESH_INTERVAL_SECONDS, which turns the background refresh off, and nothing below", () => {
+    expect(envSchema.parse({ JOBS_REFRESH_INTERVAL_SECONDS: "0", ...required }).JOBS_REFRESH_INTERVAL_SECONDS).toBe(0);
+    expect(() => envSchema.parse({ JOBS_REFRESH_INTERVAL_SECONDS: "-1", ...required })).toThrow(
+      /JOBS_REFRESH_INTERVAL_SECONDS/,
+    );
   });
 
   it("drops the unrelated variables that process.env always carries", () => {

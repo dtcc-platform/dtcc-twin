@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ const { createTestApp } = await import("../helpers/create-test-app.js");
 const { authHeader } = await import("../helpers/auth.js");
 const { truncateAllTables } = await import("../helpers/database.js");
 const { UsersService } = await import("../../src/modules/users/users.service.js");
+const { JobsService } = await import("../../src/modules/jobs/jobs.service.js");
 
 const bounds = [319891, 6399790, 320091, 6399990];
 const missingId = "0199a6b4-7c1e-7d2a-9f3b-2c4d5e6f7a8b";
@@ -68,6 +69,11 @@ describe("Jobs (e2e)", () => {
     const id = engine.submissions.at(-1)?.jobId;
     if (!id) throw new Error("The stub engine created no job");
     return id;
+  }
+
+  // What the background refresh does on each run; the tests run it themselves.
+  async function refreshJobs(): Promise<void> {
+    await app.get(JobsService).refreshActive();
   }
 
   async function total(agent: Agent): Promise<number> {
@@ -190,17 +196,19 @@ describe("Jobs (e2e)", () => {
       expect(job.state).toBe("queued");
 
       engine.setJob(lastEngineJobId(), "running");
+      await refreshJobs();
       expect((await read(ada, job.id)).state).toBe("running");
       expect(engine.submissions).toHaveLength(1);
     });
   });
 
-  describe("GET /api/jobs/:id", () => {
+  describe("Background refresh", () => {
     it("follows the engine's state and progress", async () => {
       const job = await submit(ada);
       const engineJobId = lastEngineJobId();
 
       engine.setJob(engineJobId, "unconfirmed");
+      await refreshJobs();
       expect(await read(ada, job.id)).toMatchObject({ state: "queued", progress: null });
 
       engine.setJob(engineJobId, "running", {
@@ -210,22 +218,50 @@ describe("Jobs (e2e)", () => {
         phases: ["download", "meshing"],
         eta_seconds: 12,
       });
+      await refreshJobs();
       const running = await read(ada, job.id);
       expect(running).toMatchObject({ state: "running", error: null, completedAt: null });
       expect(running.progress).toEqual({ percent: 50, message: "halfway", phase: "meshing" });
 
       engine.setJob(engineJobId, "running", null);
+      await refreshJobs();
       expect(await read(ada, job.id)).toMatchObject({ state: "running", progress: null });
+    });
+
+    it("brings every user's unfinished jobs up to date", async () => {
+      const adas = await submit(ada);
+      engine.setJob(lastEngineJobId(), "running");
+      const graces = await submit(grace);
+      engine.setJob(lastEngineJobId(), "running");
+
+      await refreshJobs();
+
+      expect((await read(ada, adas.id)).state).toBe("running");
+      expect((await read(grace, graces.id)).state).toBe("running");
+    });
+
+    it("writes nothing when the engine reports no change", async () => {
+      const job = await submit(ada);
+      engine.setJob(lastEngineJobId(), "running", { percent: 30, message: "meshing", phase: null });
+      await refreshJobs();
+      const first = await read(ada, job.id);
+
+      await refreshJobs();
+
+      // updatedAt moves on every write.
+      expect(await read(ada, job.id)).toEqual(first);
     });
 
     it("marks a job the engine failed as failed, naming the error, and stops asking the engine", async () => {
       const job = await submit(ada);
       engine.failJob(lastEngineJobId(), "RuntimeError");
 
+      await refreshJobs();
       const failed = await read(ada, job.id);
       expect(failed).toMatchObject({ state: "failed", progress: null, error: "The job failed (RuntimeError)" });
 
       engine.forgetJob(lastEngineJobId());
+      await refreshJobs();
       expect(await read(ada, job.id)).toEqual(failed);
     });
 
@@ -233,10 +269,12 @@ describe("Jobs (e2e)", () => {
       const job = await submit(ada);
       engine.cancelJob(lastEngineJobId());
 
+      await refreshJobs();
       const cancelled = await read(ada, job.id);
       expect(cancelled).toMatchObject({ state: "cancelled", progress: null, error: null, completedAt: null });
 
       engine.forgetJob(lastEngineJobId());
+      await refreshJobs();
       expect(await read(ada, job.id)).toEqual(cancelled);
     });
 
@@ -244,17 +282,39 @@ describe("Jobs (e2e)", () => {
       const job = await submit(ada);
       engine.forgetJob(lastEngineJobId());
 
+      await refreshJobs();
+
       expect(await read(ada, job.id)).toMatchObject({ state: "failed", error: "The engine no longer has this job" });
     });
 
-    it("answers the last known state while the engine is unreachable", async () => {
+    it("keeps the stored state while the engine is unreachable", async () => {
       const job = await submit(ada);
       engine.setJob(lastEngineJobId(), "running", { percent: 30, message: "meshing", phase: null });
+      await refreshJobs();
       const running = await read(ada, job.id);
 
       engine.setReachable(false);
+      await refreshJobs();
 
       expect(await read(ada, job.id)).toEqual(running);
+    });
+
+    // The chat's tools wait on the job they just started without waiting for the next run.
+    it("refreshes one job on demand, only for its owner", async () => {
+      const job = await submit(ada);
+      engine.setJob(lastEngineJobId(), "running");
+
+      expect((await app.get(JobsService).refresh(adaId, job.id)).state).toBe("running");
+      await expect(app.get(JobsService).refresh(randomUUID(), job.id)).rejects.toThrow(/not found/);
+    });
+  });
+
+  describe("GET /api/jobs/:id", () => {
+    it("answers the stored state without asking the engine", async () => {
+      const job = await submit(ada);
+      engine.setJob(lastEngineJobId(), "running");
+
+      expect((await read(ada, job.id)).state).toBe("queued");
     });
 
     it("answers NOT_FOUND for another user's job, as for one that does not exist", async () => {
@@ -289,13 +349,13 @@ describe("Jobs (e2e)", () => {
       expect(page.items.map((job) => job.id)).toEqual([first.id]);
     });
 
-    it("brings the listed unfinished jobs up to date", async () => {
+    it("answers the stored states without asking the engine", async () => {
       const job = await submit(ada);
       engine.setJob(lastEngineJobId(), "running", { percent: 10, message: "starting", phase: null });
 
       const list = jobPageSchema.parse((await ada.get("/api/jobs").expect(200)).body);
 
-      expect(list.items).toEqual([expect.objectContaining({ id: job.id, state: "running" })]);
+      expect(list.items).toEqual([expect.objectContaining({ id: job.id, state: "queued" })]);
     });
   });
 
@@ -306,6 +366,7 @@ describe("Jobs (e2e)", () => {
       const job = await submit(ada);
       engine.completeJob(lastEngineJobId(), packageBytes);
 
+      await refreshJobs();
       const completed = await read(ada, job.id);
       expect(completed).toMatchObject({ state: "completed", progress: null, error: null });
       expect(completed.completedAt).not.toBeNull();
@@ -319,6 +380,7 @@ describe("Jobs (e2e)", () => {
     it("serves a completed job's package from its own storage, without the engine", async () => {
       const job = await submit(ada);
       engine.completeJob(lastEngineJobId(), packageBytes);
+      await refreshJobs();
       const completed = await read(ada, job.id);
 
       engine.setReachable(false);
@@ -332,10 +394,12 @@ describe("Jobs (e2e)", () => {
       const job = await submit(ada);
       engine.completeJob(lastEngineJobId(), packageBytes, { served: false });
 
+      await refreshJobs();
       expect(await read(ada, job.id)).toMatchObject({ state: "queued", completedAt: null });
       await ada.get(`/api/jobs/${job.id}/package`).expect(409);
 
       engine.completeJob(lastEngineJobId(), packageBytes);
+      await refreshJobs();
       expect((await read(ada, job.id)).state).toBe("completed");
     });
 
@@ -343,6 +407,7 @@ describe("Jobs (e2e)", () => {
       const job = await submit(ada);
       engine.completeJob(lastEngineJobId(), packageBytes, { available: false });
 
+      await refreshJobs();
       expect(await read(ada, job.id)).toMatchObject({
         state: "failed",
         error: "The engine has no package for this job",
@@ -358,6 +423,7 @@ describe("Jobs (e2e)", () => {
       engine.failJob(lastEngineJobId(), "RuntimeError");
       const cancelled = await submit(ada);
       engine.cancelJob(lastEngineJobId());
+      await refreshJobs();
 
       for (const job of [queued, running, failed, cancelled]) {
         const response = await ada.get(`/api/jobs/${job.id}/package`).expect(409);
@@ -368,6 +434,7 @@ describe("Jobs (e2e)", () => {
     it("answers NOT_FOUND for another user's job, as for one that does not exist", async () => {
       const graces = await submit(grace);
       engine.completeJob(lastEngineJobId(), packageBytes);
+      await refreshJobs();
 
       const other = await ada.get(`/api/jobs/${graces.id}/package`).expect(404);
       const missing = await ada.get(`/api/jobs/${missingId}/package`).expect(404);

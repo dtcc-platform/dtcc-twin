@@ -16,6 +16,8 @@ const databaseUrl = new URL(serverUrl);
 databaseUrl.pathname = `/${database}`;
 process.env["DATABASE_URL"] = databaseUrl.toString();
 process.env["JWT_SECRET"] = randomBytes(32).toString("base64url");
+// Background work runs only when a test calls it, so no run lands between a test's steps.
+process.env["JOBS_REFRESH_INTERVAL_SECONDS"] = "0";
 
 async function maintenance(statement: string): Promise<void> {
   const client = new pg.Client({ connectionString: serverUrl });

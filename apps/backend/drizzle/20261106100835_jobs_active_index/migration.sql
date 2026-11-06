@@ -1,0 +1,1 @@
+CREATE INDEX "jobs_active_index" ON "jobs" ("created_at") WHERE "state" in ('queued', 'running');

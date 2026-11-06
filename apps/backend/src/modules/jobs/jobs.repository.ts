@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { InjectDrizzle } from "@nestjs/drizzle";
 import type { CreateJobBody, Job } from "@repo/contracts";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "../../infra/database/database.js";
 import { jobs } from "./jobs.table.js";
 
@@ -28,6 +28,17 @@ export class JobsRepository {
       .from(jobs)
       .where(and(eq(jobs.userId, userId), eq(jobs.id, id)));
     return row && toStoredJob(row);
+  }
+
+  /** Every user's queued and running jobs, oldest first: the one query across owners, for the background refresh. */
+  async findActive(): Promise<StoredJob[]> {
+    const rows = await this.db
+      .select()
+      .from(jobs)
+      // Literal, as in jobs_active_index: Postgres matches a partial index only to a condition it can prove.
+      .where(sql`${jobs.state} in ('queued', 'running')`)
+      .orderBy(asc(jobs.createdAt), asc(jobs.id));
+    return rows.map(toStoredJob);
   }
 
   async insert(userId: string, values: CreateJobBody & { engineJobId: string }): Promise<StoredJob> {
