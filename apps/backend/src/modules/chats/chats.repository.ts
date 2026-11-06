@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { InjectDrizzle } from "@nestjs/drizzle";
 import type { ChatSummary } from "@repo/contracts";
-import { and, asc, desc, eq, inArray, isNull, lt, max, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, max, or, sql } from "drizzle-orm";
 import type { Database } from "../../infra/database/database.js";
 import type { ChatMessage, NewChatMessage } from "./chat-messages.js";
 import { chatJobs } from "./chat-jobs.table.js";
@@ -169,6 +169,18 @@ export class ChatsRepository {
       .where(and(eq(chatJobs.chatId, chatId), isNull(chatJobs.reportedAt)))
       .orderBy(asc(chatJobs.createdAt), asc(chatJobs.id));
     return rows.map((row) => row.jobId);
+  }
+
+  /** Turns the user's own messages started in the last 24 hours, in any chat, deleted ones included. */
+  async countMessageTurnsOfLastDay(userId: string): Promise<number> {
+    return this.db.$count(
+      chatTurns,
+      and(
+        eq(chatTurns.userId, userId),
+        eq(chatTurns.trigger, "message"),
+        gt(chatTurns.createdAt, sql`now() - interval '24 hours'`),
+      ),
+    );
   }
 
   async insertTurn(record: ChatTurnRecord): Promise<void> {

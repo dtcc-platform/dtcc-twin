@@ -80,7 +80,7 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, a
 - **A failed tool call is a result**, not an error: a rejected parameter, an engine that can't take the job, or no selected area each comes back for the model to explain, and the turn goes on.
 - **A failed turn keeps the message.** When the model fails or refuses, the turn stores a notice instead of an answer. Notices are shown, never sent to the model, and the next message carries on.
 - **Every turn is recorded** in `chat_turns`, with its outcome and tokens. The records stay when their chat is deleted.
-- **Only active accounts chat**, since every turn costs model tokens.
+- **Only active accounts chat, and only so much.** Every turn costs model tokens, so a user may send `CHAT_TURNS_PER_DAY` messages (100 by default) in any 24 hours, counted from `chat_turns` across all their chats, deleted ones included. Past that, a message answers 429 `TOO_MANY_REQUESTS` and is not stored. A turn that reports finished jobs is not counted: it answers a question already asked. There is no spend cap for the whole deployment yet; `chat_turns` has the tokens it would count.
 - **The model** is `ModelClient` (`infra/model/`), one Messages API request per call in the Anthropic SDK's types. `ScriptedModel` stands in until the Bedrock adapter exists: it answers from a fixed script after `SCRIPTED_MODEL_DELAY_MS` (800 by default), and `[fail]` or `[refuse]` in a message makes it fail or refuse. The system prompt is in `modules/chats/system-prompt.ts`.
 
 ## Tests

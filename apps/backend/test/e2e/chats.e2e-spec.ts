@@ -27,6 +27,8 @@ vi.stubEnv("SCRIPTED_MODEL_DELAY_MS", "0");
 // Long enough for a job the stub finishes on submit, short enough that a running job doesn't slow the tests.
 vi.stubEnv("CHAT_JOB_WAIT_MS", "300");
 vi.stubEnv("CHAT_DATASETS", "trees,footprints");
+// Above what any other test here sends.
+vi.stubEnv("CHAT_TURNS_PER_DAY", "4");
 const { createTestApp } = await import("../helpers/create-test-app.js");
 const { authHeader } = await import("../helpers/auth.js");
 const { query, truncateAllTables } = await import("../helpers/database.js");
@@ -541,6 +543,49 @@ describe("Chats (e2e)", () => {
       const jobs = jobPageSchema.parse((await ada.get("/api/jobs").expect(200)).body);
       expect(jobs.items.map((job) => job.state)).toEqual(["completed"]);
       expect(await query("select id from chat_turns where trigger = 'job_update'")).toEqual([]);
+    });
+  });
+
+  describe("turn limit", () => {
+    async function sendUpTo(limit: number): Promise<Chat> {
+      let chat = await start(ada, "First");
+      for (let turn = 2; turn <= limit; turn += 1) chat = await send(ada, chat.id, `Message ${String(turn)}`);
+      return chat;
+    }
+
+    it("refuses a message past CHAT_TURNS_PER_DAY with TOO_MANY_REQUESTS, keeping nothing of it", async () => {
+      const chat = await sendUpTo(4);
+
+      const response = await ada.post(`/api/chats/${chat.id}/messages`).send({ text: "One more", bounds }).expect(429);
+      const another = await ada.post("/api/chats").send({ text: "A new chat", bounds }).expect(429);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("TOO_MANY_REQUESTS");
+      expect(errorResponseSchema.parse(another.body).error.code).toBe("TOO_MANY_REQUESTS");
+      const stored = chatSchema.parse((await ada.get(`/api/chats/${chat.id}`).expect(200)).body);
+      expect(stored.entries.filter((entry) => entry.type === "user")).toHaveLength(4);
+      expect(chatPageSchema.parse((await ada.get("/api/chats").expect(200)).body).total).toBe(1);
+    });
+
+    it("counts each user's turns of the last 24 hours only", async () => {
+      await sendUpTo(4);
+      await query("update chat_turns set created_at = now() - interval '25 hours'");
+
+      expect(types((await start(ada, "A new day")).entries)).toEqual(["user", "assistant"]);
+      expect(types((await start(grace, "Grace is not limited by Ada")).entries)).toEqual(["user", "assistant"]);
+    });
+
+    // A job's result answers a question the user has already asked, so it never waits for the next day.
+    it("doesn't count or limit the turns that report finished jobs", async () => {
+      const chat = await sendUpTo(3);
+      await send(ada, chat.id, "How many trees are in this area?");
+      engine.completeJob(engine.submissions.at(-1)?.jobId ?? "", await dtccPackage(manifestOf("trees")));
+
+      await app.get(JobsService).refreshActive();
+      await app.get(ChatsService).resumeFinished();
+
+      const reported = chatSchema.parse((await ada.get(`/api/chats/${chat.id}`).expect(200)).body);
+      expect(reported.entries.at(-1)).toMatchObject({ type: "assistant" });
+      expect(reported.entries.at(-2)).toMatchObject({ type: "job_update" });
     });
   });
 });

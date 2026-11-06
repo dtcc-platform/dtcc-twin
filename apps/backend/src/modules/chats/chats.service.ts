@@ -1,5 +1,15 @@
-import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { Chat, ChatMessageBody, ChatPage, Job, OffsetPaginationQuery } from "@repo/contracts";
+import type { Env } from "../../config/env.schema.js";
 import { JobsService } from "../jobs/jobs.service.js";
 import { UsersService } from "../users/users.service.js";
 import { jobUpdate, toEntries, userMessage } from "./chat-messages.js";
@@ -16,6 +26,7 @@ const resumeConcurrency = 4;
 @Injectable()
 export class ChatsService {
   private readonly logger = new Logger(ChatsService.name);
+  private readonly turnsPerDay: number;
 
   constructor(
     private readonly repository: ChatsRepository,
@@ -23,7 +34,10 @@ export class ChatsService {
     private readonly tools: ChatTools,
     private readonly users: UsersService,
     private readonly jobs: JobsService,
-  ) {}
+    config: ConfigService<Env, true>,
+  ) {
+    this.turnsPerDay = config.get("CHAT_TURNS_PER_DAY", { infer: true });
+  }
 
   async list(userId: string, { limit, offset }: OffsetPaginationQuery): Promise<ChatPage> {
     const { chats, total } = await this.repository.findPage(userId, limit, offset);
@@ -40,7 +54,7 @@ export class ChatsService {
 
   /** Starts a chat with its first message, and answers it. */
   async create(userId: string, body: ChatMessageBody): Promise<Chat> {
-    await this.ensureActive(userId);
+    await this.ensureCanChat(userId);
     const chat = await this.repository.insertClaimed(userId, titleOf(body.text));
     await this.answer(chat, body);
     return this.get(userId, chat.id);
@@ -48,7 +62,7 @@ export class ChatsService {
 
   /** Adds the user's message to the chat and answers it; refused while another turn holds the chat. */
   async post(userId: string, id: string, body: ChatMessageBody): Promise<Chat> {
-    await this.ensureActive(userId);
+    await this.ensureCanChat(userId);
     const claim = await this.repository.claimTurn(userId, id);
     if (claim === "missing") throw new NotFoundException(`Chat ${id} not found`);
     if (claim === "busy") throw new ConflictException("The assistant is still answering in this chat");
@@ -124,10 +138,16 @@ export class ChatsService {
     return jobs.filter(isFinishedJob);
   }
 
-  // Every turn costs model tokens, so only accounts an admin has approved may chat, as for jobs.
-  private async ensureActive(userId: string): Promise<void> {
+  // Every turn costs model tokens: only accounts an admin has approved may chat, as for jobs, and only so much a day.
+  private async ensureCanChat(userId: string): Promise<void> {
     const user = await this.users.get(userId);
     if (user.status !== "active") throw new ForbiddenException("Only active accounts can chat");
+    if ((await this.repository.countMessageTurnsOfLastDay(userId)) >= this.turnsPerDay) {
+      throw new HttpException(
+        `You have sent ${String(this.turnsPerDay)} messages in the last 24 hours, the most allowed. Try again later.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
   }
 }
 

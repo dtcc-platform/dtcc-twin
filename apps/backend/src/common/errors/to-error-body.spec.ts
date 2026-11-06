@@ -1,6 +1,8 @@
 import {
   BadGatewayException,
   BadRequestException,
+  HttpException,
+  HttpStatus,
   NotFoundException,
   PayloadTooLargeException,
   ServiceUnavailableException,
@@ -29,6 +31,12 @@ describe("toErrorBody", () => {
         { path: "", message: 'Unrecognized key: "nmae"' },
       ],
     });
+  });
+
+  it("answers a 429 with TOO_MANY_REQUESTS, for a limit the caller has reached", () => {
+    const exception = new HttpException("Limit reached", HttpStatus.TOO_MANY_REQUESTS);
+
+    expect(toErrorBody(exception, requestId)).toMatchObject({ status: 429, code: "TOO_MANY_REQUESTS" });
   });
 
   it("derives the code from the status of an HttpException", () => {
