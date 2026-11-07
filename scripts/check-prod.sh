@@ -25,12 +25,7 @@ compose up --detach --wait --wait-timeout 180
 [ "$(compose ps --all --format '{{.ExitCode}}' migrate)" = 0 ] || fail "the migration did not exit 0"
 [ "$(compose exec -T backend id -u)" = 10001 ] || fail "the backend does not run as uid 10001"
 [ "$(compose exec -T web id -u)" = 101 ] || fail "the web server does not run as uid 101"
-compose exec -T backend node -e '
-const socket = require("node:net").connect(6379, "valkey", () => socket.write("PING\r\n"));
-socket.setTimeout(3000, () => socket.destroy());
-socket.on("data", (data) => process.exit(String(data).startsWith("+PONG") ? 0 : 1)).on("close", () => process.exit(1));
-' || fail "the backend cannot reach Valkey"
-echo "stack: migrated, healthy, not root, the backend reaches Valkey"
+echo "stack: migrated, healthy, not root"
 
 curl -fsS "$base/healthz" > /dev/null || fail "/healthz"
 curl -fsS "$base/" | grep -q '<div id="root">' || fail "/ does not serve index.html"

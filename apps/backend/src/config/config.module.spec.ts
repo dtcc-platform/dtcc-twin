@@ -8,6 +8,7 @@ describe("configModuleOptions", () => {
   beforeEach(() => {
     vi.stubEnv("DATABASE_URL", "postgres://app:app@localhost:5432/app");
     vi.stubEnv("JWT_SECRET", "a-test-secret-that-is-32-chars-long");
+    vi.stubEnv("VALKEY_URL", "redis://localhost:6379");
   });
 
   afterEach(() => {

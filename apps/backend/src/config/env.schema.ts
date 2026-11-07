@@ -24,6 +24,7 @@ export const envSchema = z.object({
     )
     .pipe(z.array(z.string().refine(isOrigin, "must be a bare origin such as https://app.example.com"))),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, error: "must be a postgres:// URL" }),
+  VALKEY_URL: z.url({ protocol: /^rediss?$/, error: "must be a redis:// or rediss:// URL" }),
   JWT_SECRET: z.string().min(32),
   ENGINE_URL: z.preprocess(emptyAsUnset, z.url({ protocol: /^https?$/, error: "must be an http(s) URL" }).optional()),
   ENGINE_API_TOKEN: z.preprocess(

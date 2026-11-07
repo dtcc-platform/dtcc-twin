@@ -27,7 +27,7 @@ describe("Health (e2e)", () => {
     expect(healthStatusSchema.parse(response.body)).toEqual({ status: "ok" });
   });
 
-  it("GET /api/health/ready answers while the database is reachable", async () => {
+  it("GET /api/health/ready answers while the database and Valkey are reachable", async () => {
     const response = await request(app.getHttpServer()).get("/api/health/ready").expect(200);
 
     expect(healthStatusSchema.parse(response.body)).toEqual({ status: "ok" });

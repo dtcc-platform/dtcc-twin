@@ -15,13 +15,13 @@ Built from the repository root. Base images are pinned by digest, for `linux/amd
 
 ## Services
 
-| Service  | Image                 | Role                                        | Health                  |
-| -------- | --------------------- | ------------------------------------------- | ----------------------- |
-| postgres | `postgres:18.6`       | Database, internal network only             | `pg_isready`            |
-| valkey   | `valkey/valkey:9.1.3` | Short-lived counters, internal network only | `valkey-cli ping`       |
-| migrate  | backend               | `node dist/migrate.js`, then exits          | exit code 0             |
-| backend  | backend               | The API                                     | `GET /api/health/ready` |
-| web      | web                   | Public HTTP entry point, read-only root     | `GET /healthz`          |
+| Service  | Image                 | Role                                        | Health                                       |
+| -------- | --------------------- | ------------------------------------------- | -------------------------------------------- |
+| postgres | `postgres:18.6`       | Database, internal network only             | `pg_isready`                                 |
+| valkey   | `valkey/valkey:9.1.3` | Short-lived counters, internal network only | `valkey-cli ping`                            |
+| migrate  | backend               | `node dist/migrate.js`, then exits          | exit code 0                                  |
+| backend  | backend               | The API                                     | `GET /api/health/ready`: Postgres and Valkey |
+| web      | web                   | Public HTTP entry point, read-only root     | `GET /healthz`                               |
 
 They start in that order, except that Postgres and Valkey start together: the backend waits for `migrate` to exit
 and for Valkey to be healthy.
