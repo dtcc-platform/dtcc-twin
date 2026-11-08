@@ -1,8 +1,9 @@
 import { Injectable, Logger, ServiceUnavailableException, type BeforeApplicationShutdown } from "@nestjs/common";
 import { InjectDrizzle } from "@nestjs/drizzle";
 import { sql } from "drizzle-orm";
-import { Valkey } from "iovalkey";
+import type { Valkey } from "iovalkey";
 import type { Database } from "../../infra/database/database.js";
+import { InjectValkey } from "../../infra/valkey/valkey.module.js";
 
 @Injectable()
 export class HealthService implements BeforeApplicationShutdown {
@@ -11,7 +12,7 @@ export class HealthService implements BeforeApplicationShutdown {
 
   constructor(
     @InjectDrizzle() private readonly db: Database,
-    private readonly valkey: Valkey,
+    @InjectValkey() private readonly valkey: Valkey,
   ) {}
 
   /** Throws 503 while this instance should not receive traffic. */

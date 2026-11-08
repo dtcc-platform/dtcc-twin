@@ -1,6 +1,6 @@
 import { Logger, type INestApplication } from "@nestjs/common";
 import { errorResponseSchema, healthStatusSchema } from "@repo/contracts";
-import { Valkey } from "iovalkey";
+import type { Valkey } from "iovalkey";
 import request from "supertest";
 import type { App } from "supertest/types.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ vi.hoisted(() => {
   vi.stubEnv("VALKEY_URL", "redis://127.0.0.1:1");
 });
 const { createTestApp } = await import("../helpers/create-test-app.js");
+const { VALKEY } = await import("../../src/infra/valkey/valkey.module.js");
 
 describe("Without a reachable Valkey (e2e)", () => {
   let app: INestApplication<App>;
@@ -42,7 +43,7 @@ describe("Without a reachable Valkey (e2e)", () => {
   it("fails a command at once instead of queuing it until Valkey is back", async () => {
     const started = performance.now();
 
-    await expect(app.get(Valkey).ping()).rejects.toThrow();
+    await expect(app.get<Valkey>(VALKEY).ping()).rejects.toThrow();
 
     expect(performance.now() - started).toBeLessThan(1_000);
   });
@@ -50,7 +51,7 @@ describe("Without a reachable Valkey (e2e)", () => {
   // A client left reconnecting keeps the process alive after shutdown.
   it("ends the client on shutdown, though it never connected", async () => {
     const closing = await createTestApp();
-    const valkey = closing.get(Valkey);
+    const valkey = closing.get<Valkey>(VALKEY);
 
     await closing.close();
 

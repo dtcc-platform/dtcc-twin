@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { Valkey } from "iovalkey";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { EnvConfigService } from "../../src/config/env.schema.js";
+import { VALKEY } from "../../src/infra/valkey/valkey.module.js";
 import { createTestApp } from "../helpers/create-test-app.js";
 import { waitForValkey } from "../helpers/valkey.js";
 
@@ -21,7 +22,7 @@ describe("Valkey client (e2e)", () => {
 
   // A resent INCR whose first reply was lost would count twice.
   it("fails a command in flight when the connection drops, instead of resending it once reconnected", async () => {
-    const valkey = app.get(Valkey);
+    const valkey = app.get<Valkey>(VALKEY);
     const config: EnvConfigService = app.get(ConfigService);
     const other = new Valkey(config.get("VALKEY_URL", { infer: true }));
     onTestFinished(() => {
@@ -42,7 +43,7 @@ describe("Valkey client (e2e)", () => {
   it("ends the client on shutdown", async () => {
     const closing = await createTestApp();
     await waitForValkey(closing);
-    const valkey = closing.get(Valkey);
+    const valkey = closing.get<Valkey>(VALKEY);
 
     await closing.close();
 

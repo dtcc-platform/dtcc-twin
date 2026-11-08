@@ -1,15 +1,19 @@
-import { Logger, Module, type OnApplicationShutdown } from "@nestjs/common";
+import { Inject, Logger, Module, type OnApplicationShutdown } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Valkey } from "iovalkey";
 import type { EnvConfigService } from "../../config/env.schema.js";
 
+export const VALKEY = Symbol("VALKEY");
+
+/** Inject with `@InjectValkey() valkey: Valkey`. */
+export const InjectValkey = (): ParameterDecorator => Inject(VALKEY);
+
 const logger = new Logger("Valkey");
 
-/** Provides the Valkey client: inject it as `Valkey`. */
 @Module({
   providers: [
     {
-      provide: Valkey,
+      provide: VALKEY,
       inject: [ConfigService],
       useFactory: (config: EnvConfigService) => {
         // Connects in the background and reconnects on its own, so the app boots without Valkey.
@@ -27,10 +31,10 @@ const logger = new Logger("Valkey");
       },
     },
   ],
-  exports: [Valkey],
+  exports: [VALKEY],
 })
 export class ValkeyModule implements OnApplicationShutdown {
-  constructor(private readonly valkey: Valkey) {}
+  constructor(@InjectValkey() private readonly valkey: Valkey) {}
 
   // quit() needs a connection: without one it fails, and the client keeps reconnecting.
   async onApplicationShutdown(): Promise<void> {

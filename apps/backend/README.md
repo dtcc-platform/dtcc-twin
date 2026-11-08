@@ -57,7 +57,7 @@ test/                     e2e specs and their helpers
 
 ## Valkey
 
-- `compose.yaml` runs Valkey 9, which `VALKEY_URL` in `.env.example` points at. `ValkeyModule` provides the client, `Valkey` from `iovalkey`: import the module and inject the client by its class.
+- `compose.yaml` runs Valkey 9, which `VALKEY_URL` in `.env.example` points at. `ValkeyModule` provides the client, `Valkey` from `iovalkey`: import the module and inject it with `@InjectValkey() valkey: Valkey`.
 - It holds short-lived state that may be lost: there is no volume, so a new container starts empty.
 - Without it, the app still boots and reconnects on its own, but isn't ready (503 `Valkey unavailable`). A command fails at once while Valkey is unreachable, and one in flight when the connection drops fails too, rather than be resent after the reconnect.
 
