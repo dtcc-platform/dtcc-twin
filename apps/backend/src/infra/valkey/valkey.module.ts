@@ -32,8 +32,9 @@ const logger = new Logger("Valkey");
 export class ValkeyModule implements OnApplicationShutdown {
   constructor(private readonly valkey: Valkey) {}
 
-  // Not quit(): while disconnected it fails without stopping the reconnect timer, which keeps the process alive.
-  onApplicationShutdown(): void {
-    this.valkey.disconnect();
+  // quit() needs a connection: without one it fails, and the client keeps reconnecting.
+  async onApplicationShutdown(): Promise<void> {
+    if (this.valkey.status === "ready") await this.valkey.quit();
+    else this.valkey.disconnect();
   }
 }

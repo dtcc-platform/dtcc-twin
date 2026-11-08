@@ -74,7 +74,7 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, a
 
 - **Unit** (`src/**/*.spec.ts`): next to the code, no database.
 - **E2E** (`test/e2e/*.e2e-spec.ts`): Supertest against the real app, built by `createTestApp()` exactly as `main.ts` builds it. Needs Docker.
-  - One Valkey container per run, shared by every file, so keys must carry something unique to the test, such as a user id. `createTestApp()` waits for the client's first connection attempt, so a test's first command doesn't race it.
+  - One Valkey container per run, shared by every file, so keys must carry something unique to the test, such as a user id. The client connects in the background and fails commands until it has, so a file whose first command needs Valkey calls `waitForValkey(app)` after `createTestApp()`.
   - One Postgres container per run. The schema is pushed once into a template database, and each file clones its own copy, so files run in parallel. Tests inside a file share it: call `truncateAllTables()` in `beforeEach`.
   - `authHeader("admin")` signs a token for a user that doesn't exist. The guard never looks users up, so access tests need no rows. When the row matters, create the user through `UsersService` and pass its id: `authHeader("user", { userId })`.
   - `.env` is ignored; `JWT_SECRET` is random per run.

@@ -46,4 +46,16 @@ describe("Without a reachable Valkey (e2e)", () => {
 
     expect(performance.now() - started).toBeLessThan(1_000);
   });
+
+  // A client left reconnecting keeps the process alive after shutdown.
+  it("ends the client on shutdown, though it never connected", async () => {
+    const closing = await createTestApp();
+    const valkey = closing.get(Valkey);
+
+    await closing.close();
+
+    await vi.waitFor(() => {
+      expect(valkey.status).toBe("end");
+    });
+  });
 });
