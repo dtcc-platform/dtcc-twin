@@ -3,10 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Logger, type INestApplication } from "@nestjs/common";
-import { errorResponseSchema, jobPageSchema, jobSchema, type Job } from "@repo/contracts";
+import { errorResponseSchema, jobPageSchema, jobSchema, type Job, type Role } from "@repo/contracts";
 import request, { type Agent, type Response } from "supertest";
 import type { App } from "supertest/types.js";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startStubEngine } from "../helpers/stub-engine.js";
 
 // ConfigModule reads the environment when app.module.ts is imported, so the stub must be listening before that.
@@ -18,6 +18,7 @@ vi.stubEnv("PACKAGE_STORAGE_DIR", packageDir);
 const { createTestApp } = await import("../helpers/create-test-app.js");
 const { authHeader } = await import("../helpers/auth.js");
 const { truncateAllTables } = await import("../helpers/database.js");
+const { waitForValkey } = await import("../helpers/valkey.js");
 const { UsersService } = await import("../../src/modules/users/users.service.js");
 
 const bounds = [319891, 6399790, 320091, 6399990];
@@ -29,9 +30,11 @@ describe("Jobs (e2e)", () => {
   let ada: Agent;
   let adaId: string;
   let grace: Agent;
+  let graceId: string;
 
   beforeAll(async () => {
     app = await createTestApp();
+    await waitForValkey(app);
   });
 
   afterAll(async () => {
@@ -45,7 +48,7 @@ describe("Jobs (e2e)", () => {
     await truncateAllTables();
     engine.reset();
     ({ agent: ada, userId: adaId } = await loggedIn("ada@example.com"));
-    ({ agent: grace } = await loggedIn("grace@example.com"));
+    ({ agent: grace, userId: graceId } = await loggedIn("grace@example.com"));
   });
 
   async function loggedIn(email: string): Promise<{ agent: Agent; userId: string }> {
@@ -192,6 +195,129 @@ describe("Jobs (e2e)", () => {
       engine.setJob(lastEngineJobId(), "running");
       expect((await read(ada, job.id)).state).toBe("running");
       expect(engine.submissions).toHaveLength(1);
+    });
+  });
+
+  describe("POST /api/jobs, the hourly limit", () => {
+    const limit = 10;
+
+    // Only Date is faked, fixed mid-hour, so a run that crosses the hour can't start a new count halfway. Tokens
+    // last 15 minutes by that clock, so each move of it signs them again.
+    async function at(time: string): Promise<void> {
+      vi.setSystemTime(Date.parse(`2026-11-08T${time}Z`));
+      ada = await signedIn(adaId);
+      grace = await signedIn(graceId);
+    }
+
+    async function signedIn(userId: string, role: Role = "user"): Promise<Agent> {
+      return request.agent(app.getHttpServer()).set(await authHeader(role, { userId }));
+    }
+
+    function post(agent: Agent) {
+      return agent.post("/api/jobs").send({ dataset: "smoke", parameters: { bounds } });
+    }
+
+    async function statusOf(agent: Agent): Promise<number> {
+      return (await post(agent)).status;
+    }
+
+    async function fill(agent: Agent, count = limit): Promise<void> {
+      for (let submitted = 0; submitted < count; submitted++) await submit(agent);
+    }
+
+    beforeEach(async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      await at("14:30:00");
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("refuses a submission past the limit with TOO_MANY_REQUESTS, sending nothing to the engine", async () => {
+      await fill(ada);
+
+      const response = await post(ada).expect(429);
+
+      expect(errorResponseSchema.parse(response.body).error).toMatchObject({
+        status: 429,
+        code: "TOO_MANY_REQUESTS",
+        message: "You can run up to 10 jobs an hour. Try again in 30 minutes.",
+      });
+      expect(engine.submissions).toHaveLength(limit);
+      expect(await total(ada)).toBe(limit);
+    });
+
+    it("starts a new count at the next clock hour", async () => {
+      await fill(ada);
+      await at("14:59:59.999");
+      expect(await statusOf(ada)).toBe(429);
+
+      await at("15:00:00");
+      expect(await statusOf(ada)).toBe(201);
+    });
+
+    it("doesn't count submissions the engine refused or never received", async () => {
+      vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      await fill(ada, limit - 1);
+      engine.rejectNextSubmit(422, "Dataset 'smoke' is not registered");
+      expect(await statusOf(ada)).toBe(400);
+      engine.setReachable(false);
+      expect(await statusOf(ada)).toBe(503);
+      engine.setReachable(true);
+
+      expect(await statusOf(ada)).toBe(201);
+      expect(await statusOf(ada)).toBe(429);
+    });
+
+    it("counts a submission whose queuing the engine didn't confirm, since it may still run", async () => {
+      await fill(ada, limit - 1);
+      engine.unconfirmNextSubmit();
+      expect(await statusOf(ada)).toBe(201);
+
+      expect(await statusOf(ada)).toBe(429);
+    });
+
+    it("frees the slot of a submission that fails at the engine, though another was refused while it was there", async () => {
+      vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      await fill(ada, limit - 1);
+      engine.rejectNextSubmit(503, "The queue is unavailable");
+      const held = engine.holdNextSubmit();
+      const last = statusOf(ada);
+      await held.arrived;
+
+      expect(await statusOf(ada)).toBe(429);
+      held.release();
+      expect(await last).toBe(503);
+
+      expect(await statusOf(ada)).toBe(201);
+      expect(await statusOf(ada)).toBe(429);
+    });
+
+    it("counts each user's submissions separately", async () => {
+      await fill(grace);
+      expect(await statusOf(grace)).toBe(429);
+
+      expect(await statusOf(ada)).toBe(201);
+    });
+
+    it("holds admins to the same limit", async () => {
+      const admin = await app
+        .get(UsersService)
+        .create({ email: "root@example.com", name: "Root", password: "correct horse", role: "admin" });
+      const agent = await signedIn(admin.id, "admin");
+      await fill(agent);
+
+      expect(await statusOf(agent)).toBe(429);
+    });
+
+    it("accepts exactly one of several parallel submissions for the last slot", async () => {
+      await fill(ada, limit - 1);
+
+      const responses = await Promise.all(Array.from({ length: 5 }, () => post(ada)));
+
+      expect(responses.map((response) => response.status).toSorted()).toEqual([201, 429, 429, 429, 429]);
+      expect(await total(ada)).toBe(limit);
     });
   });
 

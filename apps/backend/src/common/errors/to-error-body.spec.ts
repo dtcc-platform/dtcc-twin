@@ -1,6 +1,8 @@
 import {
   BadGatewayException,
   BadRequestException,
+  HttpException,
+  HttpStatus,
   NotFoundException,
   PayloadTooLargeException,
   ServiceUnavailableException,
@@ -51,6 +53,14 @@ describe("toErrorBody", () => {
     expect(toErrorBody(new PayloadTooLargeException(), requestId)).toMatchObject({
       status: 413,
       code: "PAYLOAD_TOO_LARGE",
+    });
+  });
+
+  it("maps a 429 to TOO_MANY_REQUESTS", () => {
+    expect(toErrorBody(new HttpException("Slow down", HttpStatus.TOO_MANY_REQUESTS), requestId)).toMatchObject({
+      status: 429,
+      code: "TOO_MANY_REQUESTS",
+      message: "Slow down",
     });
   });
 

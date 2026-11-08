@@ -33,6 +33,7 @@ export const envSchema = z.object({
   ),
   ENGINE_GATEWAY_KEY: z.preprocess(emptyAsUnset, z.string().optional()),
   PACKAGE_STORAGE_DIR: z.string().min(1).default(".data/packages"),
+  JOB_LIMIT_PER_HOUR: z.coerce.number().int().min(1).default(10),
   APISIX_ADMIN_URL: z.preprocess(
     emptyAsUnset,
     z.url({ protocol: /^https?$/, error: "must be an http(s) URL" }).optional(),

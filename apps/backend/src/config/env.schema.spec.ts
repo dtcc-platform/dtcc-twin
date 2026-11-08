@@ -28,6 +28,7 @@ describe("envSchema", () => {
       JWT_SECRET,
       VALKEY_URL,
       PACKAGE_STORAGE_DIR: ".data/packages",
+      JOB_LIMIT_PER_HOUR: 10,
     });
     expect(ENGINE_URL).toBeUndefined();
     expect(ENGINE_API_TOKEN).toBeUndefined();
@@ -93,6 +94,13 @@ describe("envSchema", () => {
   it("rejects a CORS origin that is not a bare origin, naming the variable", () => {
     expect(() => envSchema.parse({ CORS_ORIGINS: "http://localhost:3000/", ...required })).toThrow(/CORS_ORIGINS/);
     expect(() => envSchema.parse({ CORS_ORIGINS: "localhost:3000", ...required })).toThrow(/CORS_ORIGINS/);
+  });
+
+  it("accepts only a whole JOB_LIMIT_PER_HOUR of at least 1", () => {
+    expect(envSchema.parse({ JOB_LIMIT_PER_HOUR: "25", ...required }).JOB_LIMIT_PER_HOUR).toBe(25);
+    for (const value of ["0", "-1", "1.5", "many"]) {
+      expect(() => envSchema.parse({ JOB_LIMIT_PER_HOUR: value, ...required })).toThrow(/JOB_LIMIT_PER_HOUR/);
+    }
   });
 
   it("coerces PORT to a number", () => {

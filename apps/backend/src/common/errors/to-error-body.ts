@@ -10,6 +10,7 @@ const codeByStatus: Partial<Record<number, ErrorCode>> = {
   404: "NOT_FOUND",
   409: "CONFLICT",
   413: "PAYLOAD_TOO_LARGE",
+  429: "TOO_MANY_REQUESTS",
   503: "SERVICE_UNAVAILABLE",
 };
 

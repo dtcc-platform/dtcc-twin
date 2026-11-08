@@ -6,6 +6,7 @@ import { EngineClient, type EngineJob } from "../../infra/engine/engine.client.j
 import { EngineUnavailableError } from "../../infra/engine/engine.errors.js";
 import { PackageStorage } from "../../infra/storage/package-storage.js";
 import { UsersService } from "../users/users.service.js";
+import { JobLimit } from "./job-limit.js";
 import { JobsRepository, type JobChanges, type StoredJob } from "./jobs.repository.js";
 
 export type JobPackage = { content: ReadStream; fileName: string };
@@ -19,12 +20,21 @@ export class JobsService {
     private readonly engine: EngineClient,
     private readonly storage: PackageStorage,
     private readonly users: UsersService,
+    private readonly limit: JobLimit,
   ) {}
 
   async create(userId: string, body: CreateJobBody): Promise<Job> {
     const user = await this.users.get(userId);
     if (user.status !== "active") throw new ForbiddenException("Only active accounts can submit jobs");
-    const engineJobId = await this.engine.submitJob(body.dataset, body.parameters);
+    const slot = await this.limit.take(userId);
+    let engineJobId: string;
+    try {
+      engineJobId = await this.engine.submitJob(body.dataset, body.parameters);
+    } catch (error) {
+      await this.limit.giveBack(slot);
+      throw error;
+    }
+    // Outside the try: a job the engine accepted counts, even when its row fails to insert.
     return this.repository.insert(userId, { ...body, engineJobId });
   }
 

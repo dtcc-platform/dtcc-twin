@@ -24,6 +24,7 @@ export type StubSubmission = { body: unknown; jobId: string | null };
 
 type StubJob = { status: StubJobStatus; packageBytes: Uint8Array | null };
 type SubmitResponse = { status: number; detail: unknown };
+type SubmitHold = { arrived: () => void; released: Promise<void> };
 
 const retentionMs = 30 * 24 * 60 * 60 * 1000;
 
@@ -64,6 +65,7 @@ export async function startStubEngine(token = "stub-engine-token", { gatewayKey 
   let jobs = new Map<string, StubJob>();
   let nextSubmit: SubmitResponse | "unconfirmed" | null = null;
   let reachable = true;
+  let hold: SubmitHold | null = null;
   const submissions: StubSubmission[] = [];
 
   const server = createServer((request, response) => {
@@ -101,7 +103,14 @@ export async function startStubEngine(token = "stub-engine-token", { gatewayKey 
       if (dataset) send(response, 200, dataset);
       else send(response, 404, { detail: `Dataset '${name}' is not registered` });
     } else if (request.method === "POST" && path === "/api/v1/jobs") {
-      submit(await readJson(request), response);
+      const body = await readJson(request);
+      if (hold) {
+        const { arrived, released } = hold;
+        hold = null;
+        arrived();
+        await released;
+      }
+      submit(body, response);
     } else if (request.method === "GET" && jobMatch) {
       const job = jobs.get(jobMatch[1] ?? "");
       if (job) send(response, 200, job.status);
@@ -189,6 +198,21 @@ export async function startStubEngine(token = "stub-engine-token", { gatewayKey 
       nextSubmit = { status, detail };
     },
 
+    /**
+     * The next submit waits for `release()` before it answers as planned, so a test can act while it is in flight;
+     * `arrived` resolves once it has reached the engine.
+     */
+    holdNextSubmit(): { arrived: Promise<void>; release: () => void } {
+      let release = (): void => undefined;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const arrived = new Promise<void>((resolve) => {
+        hold = { arrived: resolve, released };
+      });
+      return { arrived, release };
+    },
+
     /** The next submit creates an `unconfirmed` job and answers 503 with its id: the job may still run. */
     unconfirmNextSubmit(): void {
       nextSubmit = "unconfirmed";
@@ -262,6 +286,7 @@ export async function startStubEngine(token = "stub-engine-token", { gatewayKey 
       jobs = new Map();
       nextSubmit = null;
       reachable = true;
+      hold = null;
       submissions.length = 0;
     },
 
