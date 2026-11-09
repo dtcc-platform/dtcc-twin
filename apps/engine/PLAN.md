@@ -11108,6 +11108,25 @@ Expected: all pass.
 
 Set Increment 7's status to executed with the date and the results of Steps 2, 4, and 6, leave changes uncommitted, and report passed, failed, skipped, and not-run checks.
 
+## Increment 8: The Agent's tool server (deferred to phase 3)
+
+**Status:** deferred to phase 3 on 2026-11-07: phase 1 of the Agent runs without a tool server ([phase 1 design](../../docs/agent-migration/phase-1-design.md)). Proposed 2026-11-02, revised 2026-11-03, not started. Decisions: [ADR-0002](../../docs/adr/0002-agent-tools-run-in-a-tool-server-from-the-engine-image.md), [ADR-0003](../../docs/adr/0003-artifacts-are-made-in-the-tool-server.md), [ADR-0004](../../docs/adr/0004-chats-outlive-sessions.md), and the [tool map](../../docs/agent-migration/tools.md).
+
+**Scope:** port `dtcc-agent`'s tool server, without its simulation and GeoJSON tools, into `apps/engine`, and run it as a third container from the Engine image. It serves the Agent's tools over stateless MCP to the backend only, holds each Chat's Session in memory, and loads a finished job's package by job id. **The Engine API, the workers and the v1 design do not change**; the tool server uses Engine only as any client does, through `GET /api/v1/jobs/{id}` and its package.
+
+**Tasks, one pull request each, tests first:**
+
+- **E0: Core pin.** Engine's `DTCC_CORE_COMMIT` moves from `17c6efe` to `a78df16`, 11 commits forward: the revision the tool server's suite is green against, with the `source_bounds` its crop relies on. Engine's suite passes there.
+- **E1: The tool server.** `dtcc-agent`'s server, catalogue, dispatch, disk cache, render and export code, and their tests, ported into `apps/engine` as their own package beside `dtcc_engine`; the simulation and GeoJSON tools removed. Same image, its own command. Served as MCP over streamable HTTP, stateless, with SSE responses; `allowed_hosts` names the gateway's host; Engine's token as the bearer. Its ported tests pass at the shared pin.
+- **E2: Load by job id and comparison.** `load_job_package(job_id)` fetches a completed job's package through Engine's package endpoint, verifies it with Core's `load_model_package` under a size cap, and stores it as an Object of the calling Session. It trusts the job id as checked by the backend. `compare_objects(a, b)` compares two Objects' fields as `compare_scenarios` does today. Both are called only by the backend.
+- **E3: Artifacts.** A read-only route serving a Session's artifacts by name to the backend, behind the same token, with `dtcc-agent`'s path rules.
+- **E4: Limits and records.** Concurrent calls, the Object memory budget with least-recently-used eviction, Sessions dropped after an hour idle, a container memory limit above the budget, and a health check. Each tool result carries its operation record for the backend's provenance; no log files, no tokens in logs.
+- **E5: Deployment (dtcc-infra).** The third service in the Engine deployment, and a gateway route that admits only the backend.
+
+**Checks:** each task's own tests; the ported `dtcc-agent` tests pass at Engine's Core pin; a 75 s tool call through the gateway completes; a restart of the tool server needs no reconnect from the backend; the Agent acceptance in [the backend plan](../../docs/agent-migration/backend-plan.md#acceptance).
+
+**Blockers:** none in Core for the first version. dtcc-core#160 only if downloads later move to Engine jobs (buildings).
+
 ## Explicitly deferred beyond v1
 
 - Guaranteed persistence, restart recovery, job resumption, and high availability (spec, "Deferred or excluded from v1"). They are not added through this release's retention requirement.
