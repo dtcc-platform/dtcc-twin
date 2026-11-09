@@ -124,7 +124,8 @@ the chat's latest user message.
 | `list_available_data` | none                                                                               | `DatasetsService.list()`                                                                                                                                                                                                                                                        | Name, title and description of every Dataset, each marked "can run now" (enabled) or "not yet" |
 
 `run_<dataset>` tools exist for the Datasets in `AGENT_DATASETS` (default `city`), sorted by name so
-the cached prefix is stable. A Dataset whose name is too long for a tool name is left out.
+the cached prefix is stable. A Dataset whose name is too long for a tool name is left out. A chat's jobs count toward the user's hourly job limit (`JOB_LIMIT_PER_HOUR`, added to
+`develop` on 2026-11-09); past it, the tool's error gives the model the limit and when it resets.
 
 **A job's report** is a small JSON object: `job_id`, `dataset`, `state`; while running, its progress
 and a note that the result will be posted in the chat; when failed, the error; when completed, the

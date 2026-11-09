@@ -1,4 +1,4 @@
-import type { Readable } from "node:stream";
+import type { ReadStream } from "node:fs";
 import protobuf from "protobufjs";
 import yauzl from "yauzl";
 import { z } from "zod";
@@ -21,11 +21,17 @@ type DecodedObject = { kind: number; children: DecodedObject[] };
 type DecodedModel = { format: string; version: number; object: DecodedObject | null };
 let pending: Promise<unknown> = Promise.resolve();
 
-/** Reads a package's manifest and, when asked, its model; one package at a time per process, to bound memory. */
-export function readPackage(source: Readable, maxModelBytes: number, withModel: boolean): Promise<PackageContents> {
+/**
+ * Reads a stored package's manifest and, when asked, its model; one package at a time per process, to bound memory.
+ * Only those members are inflated, from the file itself: the archive is never read into memory.
+ */
+export function readPackage(source: ReadStream, maxModelBytes: number, withModel: boolean): Promise<PackageContents> {
+  // Only the file's path is needed; the stream JobsService opened is closed unread.
+  const file = String(source.path);
+  source.destroy();
   const result = pending.then(async () => {
     const members = await extract(
-      source,
+      file,
       withModel ? { [MANIFEST]: MAX_MANIFEST_BYTES, [MODEL]: maxModelBytes } : { [MANIFEST]: MAX_MANIFEST_BYTES },
     );
     const presentation = readPresentation(members.get(MANIFEST));
@@ -43,17 +49,9 @@ export function isKind(object: DtccObject | undefined, name: "CITY" | "BUILDING"
   return kinds.values[name] !== undefined && object?.kind === name;
 }
 
-async function extract(source: Readable, limits: Record<string, number>): Promise<Map<string, Buffer>> {
-  let archive: Buffer;
-  try {
-    const chunks: Buffer[] = [];
-    for await (const chunk of source) chunks.push(chunk as Buffer);
-    archive = Buffer.concat(chunks);
-  } catch (error) {
-    throw new PackageReadError("The package could not be read", { cause: error });
-  }
+async function extract(file: string, limits: Record<string, number>): Promise<Map<string, Buffer>> {
   return new Promise((resolve, reject) => {
-    yauzl.fromBuffer(archive, { lazyEntries: true }, (error, zip) => {
+    yauzl.open(file, { lazyEntries: true }, (error, zip) => {
       if (error) {
         reject(new PackageReadError("The package is not a valid archive", { cause: error }));
         return;

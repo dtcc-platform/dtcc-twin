@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createReadStream } from "node:fs";
 import { ConfigService } from "@nestjs/config";
-import { Logger, NotFoundException } from "@nestjs/common";
+import { HttpException, HttpStatus, Logger, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import type { Job, Dataset } from "@repo/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../../config/env.schema.js";
@@ -142,6 +142,20 @@ describe("Agent tools", () => {
     repository.findReusableJob.mockResolvedValue(id);
     await tools.run(ctx, use);
     expect(ctx.status).toHaveBeenCalledWith("Using an earlier City result…");
+  });
+  it("passes on the hourly job limit and Valkey being down without starting a job", async () => {
+    jobs.create.mockRejectedValue(
+      new HttpException("You can run up to 10 jobs an hour. Try again in 12 minutes.", HttpStatus.TOO_MANY_REQUESTS),
+    );
+    expect((await tools.run(ctx, use)).block).toMatchObject({
+      is_error: true,
+      content: JSON.stringify("You can run up to 10 jobs an hour. Try again in 12 minutes."),
+    });
+    jobs.create.mockRejectedValue(new ServiceUnavailableException("Valkey unavailable"));
+    expect((await tools.run(ctx, use)).block).toMatchObject({
+      is_error: true,
+      content: JSON.stringify("Jobs cannot be started right now. Try again in a few minutes."),
+    });
   });
   it("gives the model a fixed sentence for a failure and logs the detail", async () => {
     const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);

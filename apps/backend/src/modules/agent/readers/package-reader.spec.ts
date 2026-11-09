@@ -1,10 +1,19 @@
-import { createReadStream } from "node:fs";
-import { Readable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { createReadStream, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import yauzl from "yauzl";
 import { readPackage, PackageReadError } from "./package-reader.js";
 import { cityReader } from "./city.reader.js";
 
 const fixture = new URL("../../../../test/fixtures/city-small.dtccpkg", import.meta.url);
+const scratch = mkdtempSync(join(tmpdir(), "package-reader-"));
+// A stored package as JobsService hands it over: a read stream of a file.
+function stored(name: string, bytes: Buffer) {
+  const path = join(scratch, name);
+  writeFileSync(path, bytes);
+  return createReadStream(path);
+}
 describe("package reader", () => {
   it("reads the manifest's presentation and counts the 21 direct buildings in one pass", async () => {
     const { presentation, model } = await readPackage(createReadStream(fixture), 512 * 1024 * 1024, true);
@@ -21,13 +30,13 @@ describe("package reader", () => {
   });
   it("rejects a corrupt archive", async () => {
     await expect(
-      readPackage(Readable.from([Buffer.from("not a zip")]), 512 * 1024 * 1024, true),
+      readPackage(stored("corrupt.dtccpkg", Buffer.from("not a zip")), 512 * 1024 * 1024, true),
     ).rejects.toBeInstanceOf(PackageReadError);
   });
   it("rejects an archive without the model member", async () => {
     const emptyZip = Buffer.alloc(22);
     emptyZip.writeUInt32LE(0x06054b50);
-    await expect(readPackage(Readable.from([emptyZip]), 512 * 1024 * 1024, true)).rejects.toBeInstanceOf(
+    await expect(readPackage(stored("empty.dtccpkg", emptyZip), 512 * 1024 * 1024, true)).rejects.toBeInstanceOf(
       PackageReadError,
     );
   });
@@ -39,29 +48,22 @@ describe("package reader", () => {
       PackageReadError,
     );
   });
-  it("consumes at most one archive at a time", async () => {
-    let consumed = false;
-    let finish: (chunk: Buffer) => void = () => undefined;
-    const first = Readable.from(
-      (async function* () {
-        yield await new Promise<Buffer>((resolve) => {
-          finish = resolve;
-        });
-      })(),
-    );
-    const second = Readable.from(
-      (function* () {
-        consumed = true;
-        yield Buffer.from("invalid");
-      })(),
-    );
-    const a = readPackage(first, 1_000_000, true).catch((error: unknown) => error);
-    const b = readPackage(second, 1_000_000, true).catch((error: unknown) => error);
+  it("reads the stored file in place, never streaming the whole archive into memory", async () => {
+    const source = createReadStream(fixture);
+    const { model } = await readPackage(source, 512 * 1024 * 1024, true);
+    if (!model) throw new Error("Missing model");
+    expect(cityReader(model)).toEqual({ buildings: 21 });
+    expect(source.bytesRead).toBe(0);
+  });
+  it("opens at most one archive at a time", async () => {
+    const open = vi.spyOn(yauzl, "open");
+    const a = readPackage(createReadStream(fixture), 512 * 1024 * 1024, true);
+    const b = readPackage(createReadStream(fixture), 512 * 1024 * 1024, true);
     await new Promise((resolve) => setImmediate(resolve));
-    expect(consumed).toBe(false);
-    finish(Buffer.from("invalid"));
-    expect(await a).toBeInstanceOf(PackageReadError);
-    expect(await b).toBeInstanceOf(PackageReadError);
-    expect(consumed).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    await a;
+    await b;
+    expect(open).toHaveBeenCalledTimes(2);
+    open.mockRestore();
   });
 });

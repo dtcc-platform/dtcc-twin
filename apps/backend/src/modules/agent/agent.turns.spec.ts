@@ -53,6 +53,7 @@ describe("agent turn runner", () => {
         records.push(record);
         return Promise.resolve(randomUUID());
       }),
+      countModelCall: vi.fn(() => Promise.resolve()),
       updateTurn: vi.fn((_id: string, record: TurnRecord) => {
         records[0] = record;
         return Promise.resolve();
@@ -142,6 +143,47 @@ describe("agent turn runner", () => {
     );
     expect((await runner.run(chat, "message", opts())).outcome).toBe("failed");
     expect(messages.at(-1)?.kind).toBe("notice");
+  });
+  it("counts each model call on the turn before making it", async () => {
+    const order: string[] = [];
+    vi.mocked(repository.countModelCall).mockImplementation(() => {
+      order.push("counted");
+      return Promise.resolve();
+    });
+    const runner = new AgentTurnRunner(
+      repository,
+      new ScriptedModelClient([
+        () => {
+          order.push("called");
+          return toolReply();
+        },
+        () => {
+          order.push("called");
+          throw new ModelUnavailableError("offline");
+        },
+      ]),
+      tools,
+    );
+    await runner.run(chat, "message", opts());
+    expect(order).toEqual(["counted", "called", "counted", "called"]);
+  });
+  it("records the turn even when storing its failure notice fails", async () => {
+    vi.mocked(repository.appendMessages).mockImplementation((_id: string, additions: NewAgentMessage[]) =>
+      additions.some((m) => m.kind === "notice")
+        ? Promise.reject(new Error("Chat no longer exists"))
+        : Promise.resolve(),
+    );
+    const runner = new AgentTurnRunner(
+      repository,
+      new ScriptedModelClient([
+        () => {
+          throw new ModelUnavailableError("offline");
+        },
+      ]),
+      tools,
+    );
+    await runner.run(chat, "message", opts()).catch(() => undefined);
+    expect(records[0]).toMatchObject({ outcome: "failed", modelCalls: 1 });
   });
   it.each(["AbortError", "TimeoutError"])("closes an open tool round on %s", async (name) => {
     const controller = new AbortController();

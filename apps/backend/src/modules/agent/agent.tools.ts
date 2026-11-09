@@ -4,7 +4,15 @@ import { EngineUnavailableError } from "../../infra/engine/engine.errors.js";
 import { readPackage } from "./readers/package-reader.js";
 import { READERS } from "./readers/readers.js";
 import type Anthropic from "@anthropic-ai/sdk";
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Job } from "@repo/contracts";
 import type { Env } from "../../config/env.schema.js";
@@ -200,5 +208,9 @@ function failureSentence(error: unknown): string {
   if (error instanceof NotFoundException) return "No such job was found.";
   if (error instanceof BadRequestException) return "Engine did not accept the job's parameters.";
   if (error instanceof ForbiddenException) return "This account cannot run jobs.";
+  // JobLimit's message is the app's own: the hourly limit and the minutes until it resets.
+  if (error instanceof HttpException && error.getStatus() === 429) return error.message;
+  if (error instanceof ServiceUnavailableException)
+    return "Jobs cannot be started right now. Try again in a few minutes.";
   return "The tool could not complete.";
 }

@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import type { AgentEvent } from "@repo/contracts";
 import { ModelClient, ModelUnavailableError, type ModelUsage } from "../../infra/model/model.client.js";
 import { modelCost } from "../../infra/model/model.cost.js";
@@ -11,6 +11,7 @@ import type { SwerefBounds } from "./area.js";
 
 @Injectable()
 export class AgentTurnRunner {
+  private readonly logger = new Logger(AgentTurnRunner.name);
   constructor(
     private readonly repository: AgentRepository,
     private readonly model: ModelClient,
@@ -77,6 +78,8 @@ export class AgentTurnRunner {
       for (; calls < 6;) {
         signal.throwIfAborted();
         const messages = cachedHistory(toModelMessages(await this.repository.listMessages(chat.id)));
+        // Counted before the call, so a turn that reached the model counts toward the daily limit however it ends.
+        await this.repository.countModelCall(turnId, chat.userId);
         calls++;
         const reply = await this.model.reply(
           { system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }], tools, messages },
@@ -160,40 +163,45 @@ export class AgentTurnRunner {
         : error instanceof ModelUnavailableError
           ? error.errorCode
           : "agent_unavailable";
-      if (open.length) {
-        const closing = open.map(
-          (use) =>
-            results.find((result) => result.block.tool_use_id === use.id) ?? {
-              block: {
-                type: "tool_result" as const,
-                tool_use_id: use.id,
-                content: "The turn stopped before this tool finished. Any started job will be reported later.",
-                is_error: true,
+      // Best effort: the turn's record below must be written even if the chat is gone.
+      try {
+        if (open.length) {
+          const closing = open.map(
+            (use) =>
+              results.find((result) => result.block.tool_use_id === use.id) ?? {
+                block: {
+                  type: "tool_result" as const,
+                  tool_use_id: use.id,
+                  content: "The turn stopped before this tool finished. Any started job will be reported later.",
+                  is_error: true,
+                },
+                call: {
+                  toolUseId: use.id,
+                  tool: use.name,
+                  dataset: startedJobs.get(use.id)?.dataset ?? null,
+                  jobId: startedJobs.get(use.id)?.jobId ?? null,
+                },
+                reportedJobId: null,
               },
-              call: {
-                toolUseId: use.id,
-                tool: use.name,
-                dataset: startedJobs.get(use.id)?.dataset ?? null,
-                jobId: startedJobs.get(use.id)?.jobId ?? null,
-              },
-              reportedJobId: null,
-            },
-        );
-        await this.repository.appendMessages(
-          chat.id,
-          [toolResults(closing)],
-          closing.flatMap((result) => result.reportedJobId ?? []),
-        );
+          );
+          await this.repository.appendMessages(
+            chat.id,
+            [toolResults(closing)],
+            closing.flatMap((result) => result.reportedJobId ?? []),
+          );
+        }
+        await this.repository.appendMessages(chat.id, [
+          notice(
+            errorCode === "client_disconnected"
+              ? "The connection closed. Started jobs will continue."
+              : errorCode === "timed_out"
+                ? "The answer timed out. Started jobs will continue."
+                : "The assistant could not answer just now. Try again.",
+          ),
+        ]);
+      } catch (cleanupError) {
+        this.logger.warn(`Closing failed turn ${turnId} left its chat unchanged: ${String(cleanupError)}`);
       }
-      await this.repository.appendMessages(chat.id, [
-        notice(
-          errorCode === "client_disconnected"
-            ? "The connection closed. Started jobs will continue."
-            : errorCode === "timed_out"
-              ? "The answer timed out. Started jobs will continue."
-              : "The assistant could not answer just now. Try again.",
-        ),
-      ]);
     }
     await this.repository.updateTurn(turnId, {
       chatId: chat.id,

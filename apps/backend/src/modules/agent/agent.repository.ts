@@ -249,6 +249,12 @@ export class AgentRepository {
       .set(changes)
       .where(and(eq(agentTurns.id, id), eq(agentTurns.userId, userId)));
   }
+  async countModelCall(id: string, userId: string): Promise<void> {
+    await this.db
+      .update(agentTurns)
+      .set({ modelCalls: sql`${agentTurns.modelCalls} + 1` })
+      .where(and(eq(agentTurns.id, id), eq(agentTurns.userId, userId)));
+  }
   async failTurn(id: string, userId: string, errorCode: string): Promise<void> {
     await this.db
       .update(agentTurns)

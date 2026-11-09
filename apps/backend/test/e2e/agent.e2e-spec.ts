@@ -305,7 +305,10 @@ describe("Agent routes", () => {
     const response = await asking;
     expect(response.status).toBe(200);
     expect(events(response.text).at(-1)).toMatchObject({ type: "error", code: "AGENT_UNAVAILABLE" });
-    expect(await query("select outcome, chat_id from agent_turns")).toEqual([{ outcome: "failed", chat_id: null }]);
+    // The model call before the deletion is counted, so deleting mid-turn cannot dodge the daily limit.
+    expect(await query("select outcome, chat_id, model_calls from agent_turns")).toEqual([
+      { outcome: "failed", chat_id: null, model_calls: 1 },
+    ]);
   });
   it("stores a question without NUL characters", async () => {
     const chat = await create();
