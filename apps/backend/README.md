@@ -95,3 +95,13 @@ From the repo root:
 | `pnpm test:e2e`                                         | All e2e tests                                  |
 | `pnpm --filter backend test:e2e users`                  | E2E files whose name matches `users`           |
 | `pnpm --filter backend exec vitest --project e2e users` | The same, in watch mode                        |
+
+## Area chat
+
+The `agent` module serves user-owned chats under `/api/agent/chats`. Asking a question streams validated SSE events; the `city` tool submits jobs through `JobsService`, reads canonical packages and reports their building counts. Jobs still running after `AGENT_JOB_WAIT_MS` (45 s by default) are reported by the module's watcher, without another question. A package is read once per report, one at a time per process, and only the model's object kinds are kept after decoding. The frontend polls chats while they wait for a job or an answer.
+
+`AGENT_MODEL_PROVIDER` selects `scripted` (the default), `bedrock`, or `anthropic`. Bedrock uses `AWS_BEARER_TOKEN_BEDROCK`, `AGENT_BEDROCK_REGION` (default `eu-north-1`) and the EU profile `eu.anthropic.claude-sonnet-5-5`. Anthropic requires `ANTHROPIC_API_KEY`; its processing does not stay in the EU. `AGENT_MODEL` overrides the provider's model id; a model without rates in `model.cost.ts` has its turns stored without a cost, with one warning per model. Keep credentials in `.env` or deployment secrets.
+
+`AGENT_DATASETS` is a comma-separated allowlist, initially `city`. Defaults are 5 km² per area, 512 MiB per decoded model and 100 message turns per user in 24 hours. Admission reserves a running turn and claims the chat in one transaction under a per-user advisory lock. Failed turns with no model calls do not count. A chat lock expires after ten minutes; taking an expired lock marks the turns that held it `failed` with `interrupted`, and a tool call left without its result is closed with an error result before the chat's next turn. Once admitted, a failure ends the stream with an `error` event. Deleting a chat preserves its jobs in Downloads and its turn accounting.
+
+The watcher runs every `AGENT_RESUME_INTERVAL_SECONDS` (default 5); 0 disables it. It skips the chats of users who are not active, whose jobs keep waiting. E2E tests disable it and call `AgentService.resumeFinished()` directly. Model turns stop after six calls or 110 seconds. Disconnecting cancels the model request; started Engine jobs continue.

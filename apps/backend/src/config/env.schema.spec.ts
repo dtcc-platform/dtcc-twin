@@ -1,13 +1,23 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { envSchema } from "./env.schema.js";
+import { envSchema, envFieldsSchema } from "./env.schema.js";
 
 const DATABASE_URL = "postgres://app:app@localhost:5432/app";
 const JWT_SECRET = "a-test-secret-that-is-32-chars-long";
 const VALKEY_URL = "redis://localhost:6379";
 const required = { DATABASE_URL, JWT_SECRET, VALKEY_URL };
 
+it("keeps individual environment fields pickable without provider credentials", () => {
+  expect(envFieldsSchema.pick({ DATABASE_URL: true }).parse({ DATABASE_URL, AGENT_MODEL_PROVIDER: "bedrock" })).toEqual(
+    { DATABASE_URL },
+  );
+});
+
 describe("envSchema", () => {
+  it("requires the chosen model provider's key", () => {
+    expect(() => envSchema.parse({ ...required, AGENT_MODEL_PROVIDER: "anthropic" })).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => envSchema.parse({ ...required, AGENT_MODEL_PROVIDER: "bedrock" })).toThrow(/AWS_BEARER_TOKEN_BEDROCK/);
+  });
   it("fills in the defaults for everything but the secrets, and leaves the engine and the gateway unconfigured", () => {
     const {
       ENGINE_URL,
@@ -21,6 +31,14 @@ describe("envSchema", () => {
     } = envSchema.parse(required);
 
     expect(rest).toStrictEqual({
+      AGENT_RESUME_INTERVAL_SECONDS: 5,
+      AGENT_MAX_AREA_KM2: 5,
+      AGENT_QUESTIONS_PER_DAY: 100,
+      AGENT_DATASETS: "city",
+      AGENT_JOB_WAIT_MS: 45000,
+      AGENT_MAX_MODEL_MB: 512,
+      AGENT_MODEL_PROVIDER: "scripted",
+      AGENT_BEDROCK_REGION: "eu-north-1",
       NODE_ENV: "development",
       PORT: 3030,
       CORS_ORIGINS: [],

@@ -1,3 +1,4 @@
+import { AgentModule } from "./modules/agent/agent.module.js";
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { DrizzleModule } from "@nestjs/drizzle";
@@ -28,6 +29,7 @@ import { UsersModule } from "./modules/users/users.module.js";
     DatasetsModule,
     JobsModule,
     SavedAreasModule,
+    AgentModule,
   ],
 })
 export class AppModule {}

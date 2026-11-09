@@ -7,6 +7,7 @@ import { AreaSizeLabel } from "@/features/area/box/area-size-label";
 import { AreaStoreContext, createAreaStore } from "@/features/area/area-store";
 import { BoundsInspector } from "@/features/area/bounds-inspector/bounds-inspector";
 import { DatasetsPanel } from "@/features/datasets/datasets-panel";
+import { AgentPanel } from "@/features/agent/agent-panel";
 import { DownloadsPanel } from "@/features/jobs/downloads-panel";
 import { SavedAreasPanel } from "@/features/saved-areas/saved-areas-panel";
 import { HintBar } from "@/features/workspace/hint-bar/hint-bar";
@@ -70,6 +71,7 @@ export function Workspace() {
                 "absolute top-17 right-3 bottom-3 z-10 animate-in duration-200 fade-in slide-in-from-right-2",
               )}
             >
+              {right === "agent" && <AgentPanel onClose={closeRight} />}
               {right === "bookmarks" && <SavedAreasPanel onClose={closeRight} />}
               {right === "datasets" && <DatasetsPanel kind="datasets" onClose={closeRight} />}
               {right === "simulations" && <DatasetsPanel kind="simulations" onClose={closeRight} />}

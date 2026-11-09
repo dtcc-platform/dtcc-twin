@@ -2,6 +2,10 @@ import { z } from "zod";
 
 export const errorCodeSchema = z.enum([
   "ACCOUNT_DISABLED",
+  "AGENT_AREA_TOO_LARGE",
+  "AGENT_CHAT_BUSY",
+  "AGENT_DAILY_LIMIT",
+  "AGENT_UNAVAILABLE",
   "BAD_REQUEST",
   "CONFLICT",
   "FORBIDDEN",

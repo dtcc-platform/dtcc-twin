@@ -27,3 +27,5 @@ async function maintenance(statement: string): Promise<void> {
     await client.end();
   }
 }
+
+process.env["AGENT_RESUME_INTERVAL_SECONDS"] = "0";

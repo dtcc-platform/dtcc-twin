@@ -12,5 +12,6 @@ import { JobsService } from "./jobs.service.js";
   imports: [EngineModule, StorageModule, UsersModule, ValkeyModule],
   controllers: [JobsController],
   providers: [JobsService, JobsRepository, JobLimit],
+  exports: [JobsService],
 })
 export class JobsModule {}

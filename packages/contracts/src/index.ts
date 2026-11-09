@@ -106,3 +106,20 @@ export {
   type Theme,
   type UpdateSettingsBody,
 } from "./settings/settings.js";
+export {
+  defaultAgentMaxAreaKm2,
+  chatSchema,
+  chatPageSchema,
+  chatEntrySchema,
+  chatDetailSchema,
+  askBodySchema,
+  updateChatBodySchema,
+  agentEventSchema,
+  type Chat,
+  type ChatPage,
+  type ChatEntry,
+  type ChatDetail,
+  type AskBody,
+  type UpdateChatBody,
+  type AgentEvent,
+} from "./agent/agent.js";

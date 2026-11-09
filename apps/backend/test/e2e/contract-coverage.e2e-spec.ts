@@ -13,6 +13,8 @@ import {
 } from "@nestjs/common";
 import { DiscoveryModule, DiscoveryService } from "@nestjs/core";
 import { describe, expect, it } from "vitest";
+import { agentEventSchema } from "@repo/contracts";
+import { StreamResponse } from "../../src/common/decorators/stream-response.decorator.js";
 import { FileResponse } from "../../src/common/decorators/file-response.decorator.js";
 import { createTestApp } from "../helpers/create-test-app.js";
 import { findContractViolations } from "../helpers/route-contract.js";
@@ -49,7 +51,19 @@ class BrokenController {
   }
 }
 
+@Controller("events")
+class EventsController {
+  @Get()
+  @StreamResponse(agentEventSchema)
+  events(): void {
+    return;
+  }
+}
+
 describe("Contract coverage", () => {
+  it("accepts a declared event stream", () => {
+    expect(findContractViolations([EventsController])).toEqual([]);
+  });
   it("names each route that skips a response or request schema", () => {
     expect(findContractViolations([BrokenController])).toEqual([
       "GET /api/broken declares no response schema (@Serialize)",
