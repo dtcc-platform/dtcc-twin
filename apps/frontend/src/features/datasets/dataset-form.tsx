@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { authQueries } from "@/api/auth";
+import { ApiError } from "@/api/client/api-error";
 import { jobMutations } from "@/api/jobs";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { FieldError, FieldGroup } from "@/components/ui/field";
@@ -42,6 +43,10 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
             action: { label: "View in Downloads", onClick: () => setRight("downloads") },
           }),
         onError: (error) => {
+          if (error instanceof ApiError && error.body?.code === "TOO_MANY_REQUESTS") {
+            toast.error("Hourly job limit reached", { description: error.message });
+            return;
+          }
           const errors = submitErrors(fields, error);
           for (const [name, message] of Object.entries(errors.fields)) form.setError(name, { message });
           if (errors.form.length > 0) form.setError("root", { message: errors.form.join("\n") });

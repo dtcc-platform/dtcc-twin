@@ -31,7 +31,7 @@ Requires Node ^24.20.0, pnpm 10 or newer, and Docker.
 ```sh
 pnpm install --frozen-lockfile
 cp apps/backend/.env.example apps/backend/.env # first run only
-docker compose up -d --wait                    # Postgres
+docker compose up -d --wait                    # Postgres and Valkey
 pnpm db:push && pnpm db:seed                   # tables and sample users
 pnpm dev
 ```

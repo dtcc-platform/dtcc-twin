@@ -15,6 +15,7 @@ await maintenance(`create database "${database}" template "${inject("templateDat
 const databaseUrl = new URL(serverUrl);
 databaseUrl.pathname = `/${database}`;
 process.env["DATABASE_URL"] = databaseUrl.toString();
+process.env["VALKEY_URL"] = inject("valkeyUrl");
 process.env["JWT_SECRET"] = randomBytes(32).toString("base64url");
 
 async function maintenance(statement: string): Promise<void> {

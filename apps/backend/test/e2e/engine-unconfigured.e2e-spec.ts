@@ -13,12 +13,14 @@ vi.hoisted(() => {
 const { createTestApp } = await import("../helpers/create-test-app.js");
 const { authHeader } = await import("../helpers/auth.js");
 const { UsersService } = await import("../../src/modules/users/users.service.js");
+const { waitForValkey } = await import("../helpers/valkey.js");
 
 describe("Without a configured engine (e2e)", () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
     app = await createTestApp();
+    await waitForValkey(app);
   });
 
   afterAll(async () => {

@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
+import { GenericContainer, type StartedTestContainer } from "testcontainers";
 import type { TestProject } from "vitest/node";
 
 declare module "vitest" {
@@ -9,27 +10,30 @@ declare module "vitest" {
     /** The container's `app` database: the maintenance connection, never used by an app. */
     databaseUrl: string;
     templateDatabase: string;
+    /** Shared by every file: keys carry user ids, which are unique per test database. */
+    valkeyUrl: string;
   }
 }
 
 // A fresh container per run, not `withReuse()`: a reused one is shared by every checkout on the
 // machine, so concurrent runs dropped each other's databases.
-let container: StartedPostgreSqlContainer;
+let postgres: StartedPostgreSqlContainer;
+let valkey: StartedTestContainer;
 
 const execFileAsync = promisify(execFile);
 const templateDatabase = "app_template";
 
 export async function setup(project: TestProject): Promise<void> {
-  // Same image and credentials as compose.yaml; only the host port differs, and it is random.
-  container = await new PostgreSqlContainer("postgres:18")
-    .withDatabase("app")
-    .withUsername("app")
-    .withPassword("app")
-    .start();
-  const databaseUrl = container.getConnectionUri();
+  // Same images and credentials as compose.yaml; only the host ports differ, and they are random.
+  [postgres, valkey] = await Promise.all([
+    new PostgreSqlContainer("postgres:18").withDatabase("app").withUsername("app").withPassword("app").start(),
+    new GenericContainer("valkey/valkey:9").withExposedPorts(6379).start(),
+  ]);
+  const databaseUrl = postgres.getConnectionUri();
   await prepareTemplate(databaseUrl);
   project.provide("databaseUrl", databaseUrl);
   project.provide("templateDatabase", templateDatabase);
+  project.provide("valkeyUrl", `redis://${valkey.getHost()}:${String(valkey.getMappedPort(6379))}`);
 }
 
 /** Builds the database every e2e file clones (test/setup-env.ts), pushed the way `pnpm db:push` does. */
@@ -60,7 +64,7 @@ async function prepareTemplate(databaseUrl: string): Promise<void> {
   }
 }
 
-// A crashed run never gets here; Testcontainers' reaper removes its container once the process exits.
+// A crashed run never gets here; Testcontainers' reaper removes its containers once the process exits.
 export async function teardown(): Promise<void> {
-  await container.stop();
+  await Promise.all([postgres.stop(), valkey.stop()]);
 }

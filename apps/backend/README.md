@@ -17,6 +17,7 @@ src/
   infra/engine/           EngineClient: the only code that calls DTCC Engine
   infra/gateway/          GatewayClient: the only code that calls APISIX's Admin API
   infra/storage/          PackageStorage: the packages of completed jobs
+  infra/valkey/           ValkeyModule: the Valkey client
   docs/                   OpenAPI document and Swagger UI
   modules/<name>/         controller → service → repository, plus table and module
 drizzle/                  migrations, from `pnpm db:generate`
@@ -52,7 +53,13 @@ test/                     e2e specs and their helpers
 - `compose.yaml` runs Postgres 18. `pnpm db:push` syncs the `*.table.ts` files into it.
 - Deploys apply the migrations in `drizzle/` with `node dist/migrate.js`, before the backend starts. `pnpm db:generate` writes the migration for a table change; `test/e2e/migrations.e2e-spec.ts` fails while one is missing, since it migrates an empty database and expects push to find nothing left to do. A generated migration is reviewed like code: a rename can come out as a drop and an add.
 - `pnpm db:seed` adds the active `admin@example.com`, `ada@example.com` (elevated tier) and `alan@example.com`, the pending `katherine@example.com` and the disabled `charles@example.com`, all with the password `password`.
-- The app boots without a reachable database; `/api/health/ready` answers 503 until it is up.
+- The app boots without a reachable database or Valkey; `/api/health/ready` answers 503 until both are up.
+
+## Valkey
+
+- `compose.yaml` runs Valkey 9, which `VALKEY_URL` in `.env.example` points at. `ValkeyModule` provides the client, `Valkey` from `iovalkey`: import the module and inject it with `@InjectValkey() valkey: Valkey`.
+- It holds short-lived state that may be lost, such as the hourly job counts: there is no volume, so a new container starts empty.
+- Without it, the app still boots and reconnects on its own, but isn't ready (503 `Valkey unavailable`). A command fails at once while Valkey is unreachable, and one in flight when the connection drops fails too, rather than be resent after the reconnect.
 
 ## DTCC Engine
 
@@ -60,6 +67,7 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, a
 
 - **Configuration:** `ENGINE_URL` and `ENGINE_API_TOKEN`. Left empty, the backend still boots, warns once, and answers the engine routes with 503; health is unaffected. To run both locally, start `pnpm dev:engine` and set `ENGINE_URL=http://127.0.0.1:8000` and `ENGINE_API_TOKEN=local-dev-engine-token` in `.env`.
 - **Failures:** `EngineClient` logs why a call failed and throws `EngineUnavailableError`, a 503 unless the caller catches it. The engine's rejections of a job's parameters become a 400.
+- **Hourly limit:** each user can submit `JOB_LIMIT_PER_HOUR` jobs (10 by default) per clock hour of the backend's clock, admins included. Past it, `POST /api/jobs` answers 429 `TOO_MANY_REQUESTS` with the minutes until the next hour, and nothing reaches the engine. Every job the engine accepted counts, including one whose queuing it couldn't confirm; a submission refused before or by the engine, or that never reached it, doesn't. `JobLimit` keeps the counts in Valkey (`job-limit:<userId>:<hour>`), so without Valkey submissions answer 503.
 - **Jobs update when they are read.** The engine never notifies and lists no jobs, so each job row keeps the engine's id for it, and reading an unfinished job (`GET /api/jobs/:id` or the list) asks the engine first. While the engine is down, a read answers the last stored state.
 - **A job is `completed` once its package is stored.** The read that sees the engine finish downloads the package into `PACKAGE_STORAGE_DIR` first (`.data/packages` by default), so a completed job's download never depends on the engine. The engine deletes its copy after 30 days, so a job nobody reads for that long is lost. Will switch to object storage later.
 
@@ -67,6 +75,7 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, a
 
 - **Unit** (`src/**/*.spec.ts`): next to the code, no database.
 - **E2E** (`test/e2e/*.e2e-spec.ts`): Supertest against the real app, built by `createTestApp()` exactly as `main.ts` builds it. Needs Docker.
+  - One Valkey container per run, shared by every file, so keys must carry something unique to the test, such as a user id. The client connects in the background and fails commands until it has, so a file whose first command needs Valkey calls `waitForValkey(app)` after `createTestApp()`.
   - One Postgres container per run. The schema is pushed once into a template database, and each file clones its own copy, so files run in parallel. Tests inside a file share it: call `truncateAllTables()` in `beforeEach`.
   - `authHeader("admin")` signs a token for a user that doesn't exist. The guard never looks users up, so access tests need no rows. When the row matters, create the user through `UsersService` and pass its id: `authHeader("user", { userId })`.
   - `.env` is ignored; `JWT_SECRET` is random per run.

@@ -16,7 +16,7 @@ mkdir -p "$TWIN_SETTINGS_DIR"
 password=$(secret)
 printf 'POSTGRES_PASSWORD=%s\n' "$password" > "$TWIN_SETTINGS_DIR/postgres.env"
 admin_password=$(secret)
-printf 'DATABASE_URL=postgres://twin:%s@postgres:5432/twin\nJWT_SECRET=%s\nADMIN_EMAIL=admin@example.com\nADMIN_PASSWORD=%s\n' \
+printf 'DATABASE_URL=postgres://twin:%s@postgres:5432/twin\nVALKEY_URL=redis://valkey:6379\nJWT_SECRET=%s\nADMIN_EMAIL=admin@example.com\nADMIN_PASSWORD=%s\n' \
     "$password" "$(secret)" "$admin_password" > "$TWIN_SETTINGS_DIR/backend.env"
 
 compose build

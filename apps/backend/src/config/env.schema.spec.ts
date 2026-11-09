@@ -4,7 +4,8 @@ import { envSchema } from "./env.schema.js";
 
 const DATABASE_URL = "postgres://app:app@localhost:5432/app";
 const JWT_SECRET = "a-test-secret-that-is-32-chars-long";
-const required = { DATABASE_URL, JWT_SECRET };
+const VALKEY_URL = "redis://localhost:6379";
+const required = { DATABASE_URL, JWT_SECRET, VALKEY_URL };
 
 describe("envSchema", () => {
   it("fills in the defaults for everything but the secrets, and leaves the engine and the gateway unconfigured", () => {
@@ -25,7 +26,9 @@ describe("envSchema", () => {
       CORS_ORIGINS: [],
       DATABASE_URL,
       JWT_SECRET,
+      VALKEY_URL,
       PACKAGE_STORAGE_DIR: ".data/packages",
+      JOB_LIMIT_PER_HOUR: 10,
     });
     expect(ENGINE_URL).toBeUndefined();
     expect(ENGINE_API_TOKEN).toBeUndefined();
@@ -48,20 +51,38 @@ describe("envSchema", () => {
   });
 
   it("requires DATABASE_URL, since a default would carry credentials", () => {
-    expect(() => envSchema.parse({ JWT_SECRET })).toThrow(/DATABASE_URL/);
+    expect(() => envSchema.parse({ JWT_SECRET, VALKEY_URL })).toThrow(/DATABASE_URL/);
   });
 
   it("requires a JWT_SECRET of at least 32 characters, since a default would be public", () => {
-    expect(() => envSchema.parse({ DATABASE_URL })).toThrow(/JWT_SECRET/);
-    expect(() => envSchema.parse({ DATABASE_URL, JWT_SECRET: "a".repeat(31) })).toThrow(/JWT_SECRET/);
+    expect(() => envSchema.parse({ DATABASE_URL, VALKEY_URL })).toThrow(/JWT_SECRET/);
+    expect(() => envSchema.parse({ DATABASE_URL, VALKEY_URL, JWT_SECRET: "a".repeat(31) })).toThrow(/JWT_SECRET/);
   });
 
   it("accepts only a Postgres DATABASE_URL", () => {
     expect(
-      envSchema.parse({ JWT_SECRET, DATABASE_URL: "postgresql://app:app@db:5432/app?sslmode=require" }).DATABASE_URL,
+      envSchema.parse({ JWT_SECRET, VALKEY_URL, DATABASE_URL: "postgresql://app:app@db:5432/app?sslmode=require" })
+        .DATABASE_URL,
     ).toBe("postgresql://app:app@db:5432/app?sslmode=require");
-    expect(() => envSchema.parse({ JWT_SECRET, DATABASE_URL: "mysql://app:app@db:3306/app" })).toThrow(/DATABASE_URL/);
-    expect(() => envSchema.parse({ JWT_SECRET, DATABASE_URL: "localhost:5432/app" })).toThrow(/DATABASE_URL/);
+    expect(() => envSchema.parse({ JWT_SECRET, VALKEY_URL, DATABASE_URL: "mysql://app:app@db:3306/app" })).toThrow(
+      /DATABASE_URL/,
+    );
+    expect(() => envSchema.parse({ JWT_SECRET, VALKEY_URL, DATABASE_URL: "localhost:5432/app" })).toThrow(
+      /DATABASE_URL/,
+    );
+  });
+
+  it("requires VALKEY_URL, so a deployment without one fails at boot instead of never becoming ready", () => {
+    expect(() => envSchema.parse({ DATABASE_URL, JWT_SECRET })).toThrow(/VALKEY_URL/);
+  });
+
+  it("accepts only a redis:// or rediss:// VALKEY_URL", () => {
+    expect(envSchema.parse({ ...required, VALKEY_URL: "redis://valkey:6379" }).VALKEY_URL).toBe("redis://valkey:6379");
+    expect(envSchema.parse({ ...required, VALKEY_URL: "rediss://valkey.example.com:6380" }).VALKEY_URL).toBe(
+      "rediss://valkey.example.com:6380",
+    );
+    expect(() => envSchema.parse({ ...required, VALKEY_URL: "http://valkey:6379" })).toThrow(/VALKEY_URL/);
+    expect(() => envSchema.parse({ ...required, VALKEY_URL: "valkey:6379" })).toThrow(/VALKEY_URL/);
   });
 
   it("splits CORS_ORIGINS on commas and trims each origin", () => {
@@ -73,6 +94,13 @@ describe("envSchema", () => {
   it("rejects a CORS origin that is not a bare origin, naming the variable", () => {
     expect(() => envSchema.parse({ CORS_ORIGINS: "http://localhost:3000/", ...required })).toThrow(/CORS_ORIGINS/);
     expect(() => envSchema.parse({ CORS_ORIGINS: "localhost:3000", ...required })).toThrow(/CORS_ORIGINS/);
+  });
+
+  it("accepts only a whole JOB_LIMIT_PER_HOUR of at least 1", () => {
+    expect(envSchema.parse({ JOB_LIMIT_PER_HOUR: "25", ...required }).JOB_LIMIT_PER_HOUR).toBe(25);
+    for (const value of ["0", "-1", "1.5", "many"]) {
+      expect(() => envSchema.parse({ JOB_LIMIT_PER_HOUR: value, ...required })).toThrow(/JOB_LIMIT_PER_HOUR/);
+    }
   });
 
   it("coerces PORT to a number", () => {

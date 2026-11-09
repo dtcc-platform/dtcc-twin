@@ -24,6 +24,7 @@ export const envSchema = z.object({
     )
     .pipe(z.array(z.string().refine(isOrigin, "must be a bare origin such as https://app.example.com"))),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, error: "must be a postgres:// URL" }),
+  VALKEY_URL: z.url({ protocol: /^rediss?$/, error: "must be a redis:// or rediss:// URL" }),
   JWT_SECRET: z.string().min(32),
   ENGINE_URL: z.preprocess(emptyAsUnset, z.url({ protocol: /^https?$/, error: "must be an http(s) URL" }).optional()),
   ENGINE_API_TOKEN: z.preprocess(
@@ -32,6 +33,7 @@ export const envSchema = z.object({
   ),
   ENGINE_GATEWAY_KEY: z.preprocess(emptyAsUnset, z.string().optional()),
   PACKAGE_STORAGE_DIR: z.string().min(1).default(".data/packages"),
+  JOB_LIMIT_PER_HOUR: z.coerce.number().int().min(1).default(10),
   APISIX_ADMIN_URL: z.preprocess(
     emptyAsUnset,
     z.url({ protocol: /^https?$/, error: "must be an http(s) URL" }).optional(),

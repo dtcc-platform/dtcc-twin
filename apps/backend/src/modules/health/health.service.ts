@@ -1,14 +1,19 @@
 import { Injectable, Logger, ServiceUnavailableException, type BeforeApplicationShutdown } from "@nestjs/common";
 import { InjectDrizzle } from "@nestjs/drizzle";
 import { sql } from "drizzle-orm";
+import type { Valkey } from "iovalkey";
 import type { Database } from "../../infra/database/database.js";
+import { InjectValkey } from "../../infra/valkey/valkey.module.js";
 
 @Injectable()
 export class HealthService implements BeforeApplicationShutdown {
   private readonly logger = new Logger(HealthService.name);
   private shuttingDown = false;
 
-  constructor(@InjectDrizzle() private readonly db: Database) {}
+  constructor(
+    @InjectDrizzle() private readonly db: Database,
+    @InjectValkey() private readonly valkey: Valkey,
+  ) {}
 
   /** Throws 503 while this instance should not receive traffic. */
   async assertReady(): Promise<void> {
@@ -19,6 +24,12 @@ export class HealthService implements BeforeApplicationShutdown {
       // Message only: a pg error carries its client's password.
       this.logger.error(`Database check failed: ${error instanceof Error ? error.message : String(error)}`);
       throw new ServiceUnavailableException("Database unavailable");
+    }
+    try {
+      await this.valkey.ping();
+    } catch (error) {
+      this.logger.error(`Valkey check failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new ServiceUnavailableException("Valkey unavailable");
     }
   }
 

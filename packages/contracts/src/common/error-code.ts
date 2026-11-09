@@ -9,6 +9,7 @@ export const errorCodeSchema = z.enum([
   "NOT_FOUND",
   "PAYLOAD_TOO_LARGE",
   "SERVICE_UNAVAILABLE",
+  "TOO_MANY_REQUESTS",
   "UNAUTHORIZED",
   "VALIDATION_FAILED",
 ]);

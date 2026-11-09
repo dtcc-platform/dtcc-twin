@@ -5,12 +5,14 @@ import type { App } from "supertest/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { HealthService } from "../../src/modules/health/health.service.js";
 import { createTestApp } from "../helpers/create-test-app.js";
+import { waitForValkey } from "../helpers/valkey.js";
 
 describe("Health (e2e)", () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
     app = await createTestApp();
+    await waitForValkey(app);
   });
 
   afterEach(() => {
@@ -27,7 +29,7 @@ describe("Health (e2e)", () => {
     expect(healthStatusSchema.parse(response.body)).toEqual({ status: "ok" });
   });
 
-  it("GET /api/health/ready answers while the database is reachable", async () => {
+  it("GET /api/health/ready answers while the database and Valkey are reachable", async () => {
     const response = await request(app.getHttpServer()).get("/api/health/ready").expect(200);
 
     expect(healthStatusSchema.parse(response.body)).toEqual({ status: "ok" });

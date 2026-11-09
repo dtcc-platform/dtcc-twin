@@ -18,6 +18,18 @@ services:
       timeout: 3s
       retries: 10
 
+  valkey:
+    # Pinned to the major; minors arrive on pull.
+    image: valkey/valkey:9
+    ports:
+      # Loopback only: Valkey has no password.
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   engine:
     # Optional: a large Core, Sim and FEniCSx image.
     profiles: [engine]
