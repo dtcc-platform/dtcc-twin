@@ -244,5 +244,5 @@ Already known (2026-11-07, with curl): `eu.anthropic.claude-sonnet-5-5` in `eu-n
 
 - [x] **Step 1:** Run Engine and the backend with `AGENT_MODEL_PROVIDER=bedrock` and the Bedrock key in `apps/backend/.env`. Engine: `pnpm dev:engine`, or the develop Engine already running on `127.0.0.1:8000` (token `phase1-token`, from the clone in `~/.gstack/tmp/twin-develop`).
 - [x] **Step 2:** Walk the design's acceptance list (items 1–9). Item 1: draw `{west: 11.97, south: 57.686, east: 11.98, north: 57.692}` (bounds `[319370, 6397763, 319996, 6398458]`); the answer's number equals the count of `BUILDING` children in that job's package. Item 2: draw about 2 km² around Chalmers (the 2026-11-07 run of `[319000, 6397500, 320414, 6398914]` gave 1,208 buildings in 78 s). Record each item's result, the job times and the turn costs in a short note for Spiros and Napo.
-- [ ] **Step 3:** If `ANTHROPIC_API_KEY` is set, repeat item 1 with `AGENT_MODEL_PROVIDER=anthropic`.
+- [x] **Step 3:** If `ANTHROPIC_API_KEY` is set, repeat item 1 with `AGENT_MODEL_PROVIDER=anthropic`.
 - [ ] **Step 4:** Run `pnpm check`. Expected: PASS. List all changed files for the commit.

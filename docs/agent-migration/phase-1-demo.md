@@ -57,6 +57,20 @@ Peak RSS of the package reader on the sizing packages, measured as before (`/usr
 script that reads one stored package the way a report does): 2 km², 1,208 buildings: **0.41 GB**
 (0.87 GB before); 5 km², 3,296 buildings: **0.40 GB** (1.47 GB before), in 4.2 s.
 
+## Anthropic API
+
+Run on 2026-11-10 with `AGENT_MODEL_PROVIDER=anthropic` (`claude-sonnet-5-5`) against the same Engine,
+after the rebase onto `develop` `1f26e23`.
+
+- **Smoke check:** a streamed request answered `OK` with text events; the same request on
+  `client.beta.messages.stream` with `fallbacks: "default"` and `server-side-fallback-2026-07-01` was
+  accepted and served by `claude-sonnet-5-5`.
+- **Item 1, fresh job:** "How many buildings are there here?" over a new 0.39 km² box
+  (`{west: 11.96, south: 57.70, east: 11.97, north: 57.706}`). The `city` job took 43 s, inside the
+  45 s wait, and the answer came in the same turn: **193** buildings. An independent decode of the
+  stored package also gives 193. The turn: 2 model calls, 54 s, 1,593 tokens read from the cache and
+  1,741 written, **$0.0052**, outcome `answered`, prompt version `2cf59bf42328`.
+
 ## Findings
 
 1. **Item 1 with a fresh job needed a longer wait.** On this Engine a fresh `city` job for 0.44 km²
@@ -72,4 +86,4 @@ script that reads one stored package the way a report does): 2 km², 1,208 build
    and costs are stored rounded to 8 decimals. Answers still name "Phase 1", the only number in
    out-of-scope replies.
 
-`ANTHROPIC_API_KEY` is not set in this worktree, so Task 13 Step 3 (the Anthropic API) was not run.
+Task 13 Step 3 (the Anthropic API) was run on 2026-11-10; see "Anthropic API" below.
