@@ -1,4 +1,5 @@
 import {
+  MessageSquareIcon,
   BookmarkIcon,
   BoxIcon,
   DownloadIcon,
@@ -87,6 +88,17 @@ export function Toolbar() {
       <Button variant="ghost" className={item} disabled={!hasArea && !drawing} onClick={clearArea}>
         <XIcon />
         Clear area
+      </Button>
+      <Button
+        variant="ghost"
+        className={item}
+        aria-expanded={right === "agent"}
+        onClick={() => {
+          openOrCloseRight("agent");
+        }}
+      >
+        <MessageSquareIcon />
+        Agent
       </Button>
       <Button
         variant="ghost"
