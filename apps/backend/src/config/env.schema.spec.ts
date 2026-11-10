@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { defaultAgentMaxAreaKm2 } from "@repo/contracts";
 import { describe, expect, it } from "vitest";
 import { envSchema, envFieldsSchema } from "./env.schema.js";
 
@@ -11,6 +12,11 @@ it("keeps individual environment fields pickable without provider credentials", 
   expect(envFieldsSchema.pick({ DATABASE_URL: true }).parse({ DATABASE_URL, AGENT_MODEL_PROVIDER: "bedrock" })).toEqual(
     { DATABASE_URL },
   );
+});
+
+// drizzle-kit loads this schema before the contracts are built, so it keeps its own copy of the panel's limit.
+it("defaults the area limit to the one the agent panel warns about", () => {
+  expect(envSchema.parse(required).AGENT_MAX_AREA_KM2).toBe(defaultAgentMaxAreaKm2);
 });
 
 describe("envSchema", () => {

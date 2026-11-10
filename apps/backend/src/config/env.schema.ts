@@ -1,5 +1,4 @@
 import type { ConfigService } from "@nestjs/config";
-import { defaultAgentMaxAreaKm2 } from "@repo/contracts";
 import { z } from "zod";
 
 // DTCC Engine's own rule: it refuses to start with any other token, which could never match a Bearer header.
@@ -13,7 +12,8 @@ function emptyAsUnset(value: unknown): unknown {
 // Each variable also goes in .env.example; env.schema.spec.ts fails if the two drift.
 export const envFieldsSchema = z.object({
   AGENT_RESUME_INTERVAL_SECONDS: z.coerce.number().int().nonnegative().default(5),
-  AGENT_MAX_AREA_KM2: z.coerce.number().positive().default(defaultAgentMaxAreaKm2),
+  // Equal to the contracts' defaultAgentMaxAreaKm2, which drizzle-kit can't load before the contracts are built.
+  AGENT_MAX_AREA_KM2: z.coerce.number().positive().default(5),
   AGENT_QUESTIONS_PER_DAY: z.coerce.number().int().positive().default(100),
   AGENT_DATASETS: z.string().default("city"),
   AGENT_JOB_WAIT_MS: z.coerce.number().int().nonnegative().default(45000),
