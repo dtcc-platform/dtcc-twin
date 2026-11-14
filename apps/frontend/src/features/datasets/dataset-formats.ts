@@ -14,10 +14,7 @@ const argsSchemaSchema = z.object({
     .optional(),
 });
 
-/**
- * The formats the product in the job's parameters offers, those the map draws first. The parameters leave out values
- * at their default, as `jobParameters` builds them.
- */
+/** The formats the job's product offers, those the map draws first; `parameters` leave out values at their default. */
 export function formatChoices(
   dataset: Pick<Dataset, "argsSchema" | "artifactFormats">,
   parameters: Record<string, unknown>,
@@ -44,7 +41,6 @@ export function jobFormat(choices: FormatChoice[], chosen: string | null): strin
   return available[0] ?? null;
 }
 
-/** Whether the map can draw a file of this format. */
 export function drawsOnMap(format: string | null): boolean {
   return format !== null && mapFormats.includes(format);
 }

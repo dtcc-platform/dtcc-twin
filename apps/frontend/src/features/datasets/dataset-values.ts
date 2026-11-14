@@ -81,10 +81,7 @@ function textProblem(field: Extract<DatasetField, { control: "text" }>, value: s
   return null;
 }
 
-/**
- * The job's parameters: the area's bounds, and each field whose value differs from its default, as its schema's type.
- * Empty fields are left out, so the Dataset's own default applies.
- */
+/** The job's parameters: the area's bounds and the `changedParameters`. */
 export function jobParameters(
   fields: DatasetField[],
   values: DatasetFormValues,
@@ -93,7 +90,10 @@ export function jobParameters(
   return { bounds, ...changedParameters(fields, values) };
 }
 
-/** The job's parameters without the area's bounds, as `jobParameters` builds them. */
+/**
+ * Each field whose value differs from its default, as its schema's type. Empty fields are left out, so the Dataset's
+ * own default applies.
+ */
 export function changedParameters(fields: DatasetField[], values: Partial<DatasetFormValues>): Record<string, unknown> {
   const initial = initialValues(fields);
   const parameters: Record<string, unknown> = {};

@@ -7,10 +7,7 @@ export const datasetSchema = z.object({
   dataCategory: z.string(),
   resultKind: z.string(),
   argsSchema: z.record(z.string(), z.unknown()),
-  /**
-   * Per product, the formats of the extra file a job can add to its package. A Dataset with one product lists it as
-   * `null`.
-   */
+  /** Per product, the formats of an extra file a job can add to its package; `null` is a Dataset's only product. */
   artifactFormats: z.array(
     z.object({
       product: z.string().nullable(),

@@ -36,7 +36,6 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
   const me = useQuery(authQueries.me());
   const area = useAreaStore((state) => state.area);
   const watched = useWatch({ control: form.control });
-  // The user's pick; the job sends it only while the parameters allow it, and the default otherwise.
   const [chosenFormat, setChosenFormat] = useState<string | null>(null);
   const choices = formatChoices(dataset, changedParameters(fields, watched));
   const format = jobFormat(choices, chosenFormat);
@@ -89,7 +88,7 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
           </Link>
         ) : (
           <>
-            {/* Both only submit the job for now: drawing the result and downloading it come later. */}
+            {/* Both only submit the job for now. */}
             <div className="flex gap-2">
               <Button type="submit" className="flex-1" disabled={!runnable || !drawsOnMap(format)}>
                 Add to area

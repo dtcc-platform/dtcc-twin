@@ -10,7 +10,7 @@ export const engineDescriptorSchema = z.object({
   data_category: z.string(),
   result_kind: z.string(),
   args_schema: z.record(z.string(), z.unknown()),
-  // Missing from an engine on a Core older than its export capabilities.
+  // Absent from an engine on an older Core.
   export: z
     .array(
       z.object({

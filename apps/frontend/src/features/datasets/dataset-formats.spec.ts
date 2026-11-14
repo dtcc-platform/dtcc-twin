@@ -2,7 +2,7 @@ import type { Dataset } from "@repo/contracts";
 import { describe, expect, it } from "vitest";
 import { formatChoices, jobFormat, type FormatChoice } from "./dataset-formats.ts";
 
-// smoke's products and formats, as the catalog lists them.
+// smoke's products and formats, abridged from the catalog.
 const smoke: Pick<Dataset, "argsSchema" | "artifactFormats"> = {
   argsSchema: {
     properties: {

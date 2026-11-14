@@ -38,7 +38,6 @@ describe("createJobBodySchema", () => {
     expect(createJobBodySchema.safeParse({ ...body, dataset: "../smoke" }).success).toBe(false);
   });
 
-  // Which formats a Dataset offers is the catalog's business; the body only checks it's a format name.
   it("accepts an artifact format", () => {
     expect(createJobBodySchema.parse({ ...body, artifactFormat: "geojson" })).toEqual({
       ...body,
