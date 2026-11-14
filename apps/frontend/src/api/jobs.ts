@@ -31,14 +31,14 @@ export const jobMutations = {
       mutationFn: async (body: CreateJobBody) => (await api.post<Job>("/jobs", body)).data,
       onSuccess: (_job, _body, _onMutateResult, { client }) => client.invalidateQueries({ queryKey: all }),
     }),
-  /** Hands a completed job's package to the browser's own download, so it never sits in memory. */
+  /** Hands a completed job's package, or its artifact, to the browser's own download, so it never sits in memory. */
   download: () =>
     mutationOptions({
-      mutationFn: async (id: string) => {
+      mutationFn: async ({ id, file }: { id: string; file: "package" | "artifact" }) => {
         // The link carries only the cookies: asking for the job first refreshes an expired access token.
         await api.get<Job>(`/jobs/${id}`);
         const link = document.createElement("a");
-        link.href = `${api.defaults.baseURL ?? ""}/jobs/${id}/package`;
+        link.href = `${api.defaults.baseURL ?? ""}/jobs/${id}/${file}`;
         link.click();
       },
     }),

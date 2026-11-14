@@ -6,6 +6,7 @@ import { jobMutations } from "@/api/jobs";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
+import { formatLabel } from "@/lib/artifact-formats";
 import { formatRelativeTime } from "@/lib/relative-time";
 
 const stateLabels: Record<JobState, string> = {
@@ -31,10 +32,28 @@ function StateIcon({ state }: { state: JobState }) {
   }
 }
 
-/** One job in the Downloads panel: its state and progress, and its package once it has one. */
-export function JobItem({ job, title }: { job: Job; title: string }) {
+type DownloadButtonProps = { jobId: string; file: "package" | "artifact"; label: string };
+
+function DownloadButton({ jobId, file, label }: DownloadButtonProps) {
   const download = useMutation(jobMutations.download());
 
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={download.isPending}
+      onClick={() => {
+        download.mutate({ id: jobId, file }, { onError: (error) => toast.error(error.message) });
+      }}
+    >
+      <DownloadIcon />
+      {label}
+    </Button>
+  );
+}
+
+/** One job in the Downloads panel: its state and progress, and its package and artifact once it has them. */
+export function JobItem({ job, title }: { job: Job; title: string }) {
   return (
     <li className="flex flex-col gap-2 rounded-xl border p-3">
       <div className="flex items-start gap-2">
@@ -47,20 +66,15 @@ export function JobItem({ job, title }: { job: Job; title: string }) {
             {stateLabels[job.state]} · {formatRelativeTime(job.createdAt)}
           </p>
         </div>
-        {job.state === "completed" && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={download.isPending}
-            onClick={() => {
-              download.mutate(job.id, { onError: (error) => toast.error(error.message) });
-            }}
-          >
-            <DownloadIcon />
-            Download
-          </Button>
-        )}
       </div>
+      {job.state === "completed" && (
+        <div className="flex flex-wrap gap-2">
+          <DownloadButton jobId={job.id} file="package" label="Package" />
+          {job.artifactFormat && (
+            <DownloadButton jobId={job.id} file="artifact" label={formatLabel(job.artifactFormat)} />
+          )}
+        </div>
+      )}
       {job.state === "running" && (
         <div className="flex flex-col gap-1">
           {/* Null is indeterminate: the engine hasn't reported any progress yet. */}
