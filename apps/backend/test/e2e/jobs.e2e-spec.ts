@@ -576,6 +576,21 @@ describe("Jobs (e2e)", () => {
       expect(errorResponseSchema.parse(response.body).error.code).toBe("NOT_FOUND");
     });
 
+    // Each from the real package: one isn't a ZIP, one lists a PNG it doesn't hold, one has its PNG's bytes flipped.
+    it("answers INTERNAL_ERROR for a package it can't read the extra file from", async () => {
+      vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const missing = await readFile(new URL("../fixtures/smoke-slice-png-missing.dtccpkg", import.meta.url));
+      const corrupt = await readFile(new URL("../fixtures/smoke-slice-png-corrupt.dtccpkg", import.meta.url));
+
+      const statuses: number[] = [];
+      for (const packageBytes of [randomBytes(4096), missing, corrupt]) {
+        const job = await completed(ada, packageBytes);
+        statuses.push((await ada.get(`/api/jobs/${job.id}/artifact`)).status);
+      }
+
+      expect(statuses).toEqual([500, 500, 500]);
+    });
+
     it("answers CONFLICT for a job that hasn't completed", async () => {
       const job = await submit(ada);
 
