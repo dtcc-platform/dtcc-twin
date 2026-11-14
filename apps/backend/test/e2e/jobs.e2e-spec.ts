@@ -132,6 +132,42 @@ describe("Jobs (e2e)", () => {
       ]);
     });
 
+    it("sends the artifact format to the engine, and records it on the job", async () => {
+      const response = await ada
+        .post("/api/jobs")
+        .send({ dataset: "smoke", parameters: { bounds }, artifactFormat: "geojson" })
+        .expect(201);
+
+      const job = jobSchema.parse(response.body);
+      expect(job.artifactFormat).toBe("geojson");
+      expect((await read(ada, job.id)).artifactFormat).toBe("geojson");
+      expect(engine.submissions.map((submission) => submission.body)).toEqual([
+        { dataset: "smoke", parameters: { bounds }, artifact_format: "geojson" },
+      ]);
+    });
+
+    // An engine on an older Core forbids the field, so a job without a format must not send it.
+    it("records no artifact format for a job without one, and sends the engine none", async () => {
+      const job = await submit(ada);
+
+      expect(job.artifactFormat).toBeNull();
+      expect(engine.submissions.map((submission) => submission.body)).toEqual([
+        { dataset: "smoke", parameters: { bounds } },
+      ]);
+    });
+
+    it("rejects an artifact format that isn't a format name, without asking the engine", async () => {
+      const response = await ada
+        .post("/api/jobs")
+        .send({ dataset: "smoke", parameters: { bounds }, artifactFormat: "../png" })
+        .expect(400);
+
+      const error = errorResponseSchema.parse(response.body).error;
+      expect(error.code).toBe("VALIDATION_FAILED");
+      expect(error.errors?.map((issue) => issue.path)).toEqual(["artifactFormat"]);
+      expect(engine.submissions).toEqual([]);
+    });
+
     it("rejects an invalid body without asking the engine", async () => {
       const response = await ada
         .post("/api/jobs")

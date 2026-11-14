@@ -64,6 +64,7 @@ function toStoredJob(row: typeof jobs.$inferSelect): StoredJob {
     userId: row.userId,
     dataset: row.dataset,
     parameters: row.parameters,
+    artifactFormat: row.artifactFormat,
     engineJobId: row.engineJobId,
     state: row.state,
     progress: row.progress,

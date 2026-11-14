@@ -17,6 +17,7 @@ export const jobSchema = z.object({
   userId: z.uuid(),
   dataset: z.string(),
   parameters: z.record(z.string(), z.unknown()),
+  artifactFormat: z.string().nullable(),
   state: jobStateSchema,
   progress: jobProgressSchema.nullable(),
   error: z.string().nullable(),
@@ -36,5 +37,10 @@ export const createJobBodySchema = z.strictObject({
     path: ["format"],
     error: "isn't supported: every job is delivered as a .dtccpkg package",
   }),
+  /** The format of an extra file in the package, one of the Dataset's `artifactFormats` for the job's product. */
+  artifactFormat: z
+    .string()
+    .regex(/^[a-z0-9_]{1,20}$/)
+    .optional(),
 });
 export type CreateJobBody = z.infer<typeof createJobBodySchema>;

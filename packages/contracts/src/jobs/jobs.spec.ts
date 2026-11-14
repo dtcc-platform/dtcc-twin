@@ -6,6 +6,7 @@ const job = {
   userId: "0199a6b4-7c1e-7d2a-9f3b-2c4d5e6f7a8b",
   dataset: "smoke",
   parameters: { bounds: [319891, 6399790, 320091, 6399990] },
+  artifactFormat: "geojson",
   state: "running",
   progress: { percent: 50, message: "halfway", phase: null },
   error: null,
@@ -35,6 +36,20 @@ describe("createJobBodySchema", () => {
 
   it("rejects a Dataset name that isn't one", () => {
     expect(createJobBodySchema.safeParse({ ...body, dataset: "../smoke" }).success).toBe(false);
+  });
+
+  // Which formats a Dataset offers is the catalog's business; the body only checks it's a format name.
+  it("accepts an artifact format", () => {
+    expect(createJobBodySchema.parse({ ...body, artifactFormat: "geojson" })).toEqual({
+      ...body,
+      artifactFormat: "geojson",
+    });
+  });
+
+  it("rejects an artifact format that isn't a format name", () => {
+    for (const artifactFormat of ["", "GeoJSON", "../png", "x".repeat(21), null]) {
+      expect(createJobBodySchema.safeParse({ ...body, artifactFormat }).success).toBe(false);
+    }
   });
 
   // The engine always delivers a canonical .dtccpkg package.

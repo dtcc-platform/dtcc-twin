@@ -24,6 +24,8 @@ const downloadTimeoutMs = 60_000;
 
 type SendOptions = { body?: unknown; timeoutMs?: number };
 
+type JobRequest = { dataset: string; parameters: Record<string, unknown>; artifact_format?: string };
+
 /**
  * DTCC Engine's HTTP API, the only code that knows its routes, token and response shapes. Every failure to get an
  * expected answer throws `EngineUnavailableError`; callers decide what that means for their route.
@@ -69,8 +71,11 @@ export class EngineClient {
    * Submits a job and returns the engine's id for it. Parameters the engine rejects throw a 400: a
    * `ValidationException` naming them, or a `BadRequestException` with the engine's message.
    */
-  async submitJob(dataset: string, parameters: Record<string, unknown>): Promise<string> {
-    const response = await this.send("/jobs", { body: { dataset, parameters } });
+  async submitJob(dataset: string, parameters: Record<string, unknown>, artifactFormat?: string): Promise<string> {
+    const request: JobRequest = { dataset, parameters };
+    // An engine on an older Core forbids artifact_format, so a job without one leaves it out.
+    if (artifactFormat !== undefined) request.artifact_format = artifactFormat;
+    const response = await this.send("/jobs", { body: request });
     const body: unknown = await response.json().catch(() => undefined);
 
     if (response.status === 202) {

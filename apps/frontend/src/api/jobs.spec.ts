@@ -8,6 +8,7 @@ function job(state: JobState): Job {
     userId: "0199a6b4-7c1e-7d2a-9f3b-2c4d5e6f7a8b",
     dataset: "smoke",
     parameters: {},
+    artifactFormat: null,
     state,
     progress: null,
     error: null,

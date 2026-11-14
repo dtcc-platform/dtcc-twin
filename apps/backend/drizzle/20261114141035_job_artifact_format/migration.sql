@@ -1,0 +1,1 @@
+ALTER TABLE "jobs" ADD COLUMN "artifact_format" varchar(20);

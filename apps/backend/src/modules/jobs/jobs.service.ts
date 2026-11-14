@@ -29,7 +29,7 @@ export class JobsService {
     const slot = await this.limit.take(userId);
     let engineJobId: string;
     try {
-      engineJobId = await this.engine.submitJob(body.dataset, body.parameters);
+      engineJobId = await this.engine.submitJob(body.dataset, body.parameters, body.artifactFormat);
     } catch (error) {
       await this.limit.giveBack(slot);
       throw error;
