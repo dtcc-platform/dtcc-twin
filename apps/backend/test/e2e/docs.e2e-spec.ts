@@ -86,6 +86,21 @@ describe("API docs (e2e)", () => {
     expect(doc.paths["/api/auth/login"]).toMatchObject({ post: { responses: { "200": userBody } } });
   });
 
+  it("documents a file route as binary in each of its media types", async () => {
+    const response = await request(app.getHttpServer()).get("/api/docs/openapi.json").expect(200);
+    const doc = response.body as OpenAPIObject;
+    const binary = { schema: { type: "string", format: "binary" } };
+
+    expect(doc.paths["/api/jobs/{id}/artifact"]?.get?.responses["200"]).toMatchObject({
+      content: {
+        "application/geo+json": binary,
+        "image/png": binary,
+        "image/tiff": binary,
+        "application/octet-stream": binary,
+      },
+    });
+  });
+
   it("serves the docs UI and its scripts through helmet", async () => {
     await request(app.getHttpServer()).get("/api/docs").expect(200).expect("content-type", /html/);
     await request(app.getHttpServer()).get("/api/docs/swagger-ui-init.js").expect(200);
