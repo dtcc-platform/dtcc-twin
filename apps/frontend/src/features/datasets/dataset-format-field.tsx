@@ -1,6 +1,6 @@
 import { Field, FieldDescription, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { formatLabel } from "@/lib/artifact-formats";
+import { artifactFormatLabel } from "@/lib/artifact-formats";
 import type { FormatChoice } from "./dataset-formats.ts";
 
 type DatasetFormatFieldProps = {
@@ -35,7 +35,7 @@ export function DatasetFormatField({ choices, value, onChange }: DatasetFormatFi
         {value === null && <NativeSelectOption value="">None available with these settings</NativeSelectOption>}
         {choices.map(({ format, unavailable }) => (
           <NativeSelectOption key={format} value={format} disabled={unavailable !== null}>
-            {formatLabel(format) + (unavailable ? ` (${unavailable})` : "")}
+            {artifactFormatLabel(format) + (unavailable ? ` (${unavailable})` : "")}
           </NativeSelectOption>
         ))}
       </NativeSelect>

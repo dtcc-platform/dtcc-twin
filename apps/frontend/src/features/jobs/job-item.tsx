@@ -2,11 +2,11 @@ import type { Job, JobState } from "@repo/contracts";
 import { useMutation } from "@tanstack/react-query";
 import { BanIcon, CircleCheckIcon, CircleXIcon, ClockIcon, DownloadIcon } from "lucide-react";
 import { toast } from "sonner";
-import { jobMutations } from "@/api/jobs";
+import { jobMutations, type JobFile } from "@/api/jobs";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
-import { formatLabel } from "@/lib/artifact-formats";
+import { artifactFormatLabel } from "@/lib/artifact-formats";
 import { formatRelativeTime } from "@/lib/relative-time";
 
 const stateLabels: Record<JobState, string> = {
@@ -32,7 +32,7 @@ function StateIcon({ state }: { state: JobState }) {
   }
 }
 
-type DownloadButtonProps = { jobId: string; file: "package" | "artifact"; label: string };
+type DownloadButtonProps = { jobId: string; file: JobFile; label: string };
 
 function DownloadButton({ jobId, file, label }: DownloadButtonProps) {
   const download = useMutation(jobMutations.download());
@@ -71,7 +71,7 @@ export function JobItem({ job, title }: { job: Job; title: string }) {
         <div className="flex flex-wrap gap-2">
           <DownloadButton jobId={job.id} file="package" label="Package" />
           {job.artifactFormat && (
-            <DownloadButton jobId={job.id} file="artifact" label={formatLabel(job.artifactFormat)} />
+            <DownloadButton jobId={job.id} file="artifact" label={artifactFormatLabel(job.artifactFormat)} />
           )}
         </div>
       )}

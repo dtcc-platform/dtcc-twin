@@ -4,6 +4,9 @@ import { api } from "./client/api-client.ts";
 
 const all = ["jobs"] as const;
 
+/** A completed job's files: its whole package, or the extra file in it. */
+export type JobFile = "package" | "artifact";
+
 /** A job still waiting or running, whose state the backend refreshes from the engine on every read. */
 export function isActiveJob(job: Job): boolean {
   return job.state === "queued" || job.state === "running";
@@ -34,7 +37,7 @@ export const jobMutations = {
   /** Hands a completed job's package, or its artifact, to the browser's own download, so it never sits in memory. */
   download: () =>
     mutationOptions({
-      mutationFn: async ({ id, file }: { id: string; file: "package" | "artifact" }) => {
+      mutationFn: async ({ id, file }: { id: string; file: JobFile }) => {
         // The link carries only the cookies: asking for the job first refreshes an expired access token.
         await api.get<Job>(`/jobs/${id}`);
         const link = document.createElement("a");
