@@ -91,12 +91,11 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
           <>
             {/* Both only submit the job for now: drawing the result and downloading it come later. */}
             <div className="flex gap-2">
-              {/* Download goes first: Enter submits through the first button, and Add to area is often disabled. */}
-              <Button type="submit" variant="outline" className="flex-1" disabled={!runnable}>
-                Download
-              </Button>
               <Button type="submit" className="flex-1" disabled={!runnable || !drawsOnMap(format)}>
                 Add to area
+              </Button>
+              <Button type="submit" variant="outline" className="flex-1" disabled={!runnable}>
+                Download
               </Button>
             </div>
             {runnable && !drawsOnMap(format) && (
