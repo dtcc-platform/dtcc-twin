@@ -13,11 +13,11 @@ import type { Env } from "../../config/env.schema.js";
 
 // The part of a package's manifest.json, Core's dtcc-dataset-manifest-v3, that the backend reads.
 const manifestSchema = z.object({
-  artifacts: z.array(z.object({ path: z.string(), role: z.string(), media_type: z.string() })),
+  artifacts: z.array(z.object({ path: z.string(), role: z.string(), format: z.string().regex(/^[a-z0-9]+$/) })),
 });
 
-/** The extra file Core added to a package: its path in the package, its media type, and its content. */
-export type PackageArtifact = { path: string; mediaType: string; content: Readable };
+/** The extra file Core added to a package: its format, such as `geojson`, and its content. */
+export type PackageArtifact = { format: string; content: Readable };
 
 /** Stores DTCC Engine packages under PACKAGE_STORAGE_DIR, one file per key. will be replaced with object storage in the future */
 @Injectable()
@@ -68,7 +68,7 @@ export class PackageStorage {
       if (!artifact) return null;
       const entry = entries.get(artifact.path);
       if (!entry) throw new Error(`Package ${key} lists ${artifact.path} but doesn't hold it`);
-      return { path: artifact.path, mediaType: artifact.media_type, content: await zip.openReadStreamPromise(entry) };
+      return { format: artifact.format, content: await zip.openReadStreamPromise(entry) };
     } finally {
       // The file stays open until the artifact's stream has ended.
       zip.close();

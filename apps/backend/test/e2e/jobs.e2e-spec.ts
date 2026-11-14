@@ -568,6 +568,17 @@ describe("Jobs (e2e)", () => {
       expect(sha256.digest("hex")).toBe(pngSha256);
     });
 
+    // The real package with its PNG relabelled: the manifest's media type isn't trusted for formats the API doesn't know.
+    it("serves an extra file of a format it doesn't know as plain bytes, named after the format", async () => {
+      const unknown = await readFile(new URL("../fixtures/smoke-slice-unknown-format.dtccpkg", import.meta.url));
+      const job = await completed(ada, unknown);
+
+      const response = await ada.get(`/api/jobs/${job.id}/artifact`).buffer(true).parse(binary).expect(200);
+
+      expect(response.headers["content-type"]).toBe("application/octet-stream");
+      expect(response.headers["content-disposition"]).toBe(`attachment; filename="smoke-${job.id}.xyz"`);
+    });
+
     it("answers NOT_FOUND for a completed job whose package has no extra file", async () => {
       const job = await completed(ada, withoutArtifact);
 

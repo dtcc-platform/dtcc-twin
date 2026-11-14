@@ -50,7 +50,7 @@ export class JobsController {
   }
 
   @Get(":id/artifact")
-  @FileResponse("application/geo+json", "image/png", "image/tiff")
+  @FileResponse("application/geo+json", "image/png", "image/tiff", "application/octet-stream")
   async artifact(
     @CurrentUser() user: AuthUser,
     @Param({ schema: idParamsSchema }) { id }: IdParams,

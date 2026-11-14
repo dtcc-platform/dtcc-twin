@@ -1,4 +1,3 @@
-import { extname } from "node:path";
 import type { Readable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
@@ -11,6 +10,14 @@ import { JobLimit } from "./job-limit.js";
 import { JobsRepository, type JobChanges, type StoredJob } from "./jobs.repository.js";
 
 export type JobFile = { content: Readable; fileName: string; mediaType: string };
+
+// Not the manifest's media type, which comes from the package: a format not listed here is served as plain bytes.
+const artifactMediaTypes = new Map([
+  ["geojson", "application/geo+json"],
+  ["png", "image/png"],
+  ["tif", "image/tiff"],
+]);
+const octetStream = "application/octet-stream";
 
 @Injectable()
 export class JobsService {
@@ -64,8 +71,8 @@ export class JobsService {
     const job = await this.completed(userId, id);
     const artifact = await this.storage.openArtifact(job.id);
     if (!artifact) throw new NotFoundException(`Job ${id} has no artifact`);
-    const fileName = `${job.dataset}-${job.id}${extname(artifact.path)}`;
-    return { content: artifact.content, fileName, mediaType: artifact.mediaType };
+    const fileName = `${job.dataset}-${job.id}.${artifact.format}`;
+    return { content: artifact.content, fileName, mediaType: artifactMediaTypes.get(artifact.format) ?? octetStream };
   }
 
   private async completed(userId: string, id: string): Promise<Job> {
