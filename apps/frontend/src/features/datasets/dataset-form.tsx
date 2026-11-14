@@ -1,9 +1,9 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { Dataset } from "@repo/contracts";
+import type { CreateJobBody, Dataset } from "@repo/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { useMemo, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { authQueries } from "@/api/auth";
 import { ApiError } from "@/api/client/api-error";
@@ -15,7 +15,15 @@ import { useAreaStore } from "@/features/area/area-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { DatasetFieldControl } from "./dataset-field-control.tsx";
 import { datasetFields } from "./dataset-fields.ts";
-import { initialValues, jobParameters, valuesSchema, type DatasetFormValues } from "./dataset-values.ts";
+import { DatasetFormatField } from "./dataset-format-field.tsx";
+import { formatChoices, jobFormat } from "./dataset-formats.ts";
+import {
+  changedParameters,
+  initialValues,
+  jobParameters,
+  valuesSchema,
+  type DatasetFormValues,
+} from "./dataset-values.ts";
 import { submitErrors } from "./submit-errors.ts";
 
 /** A Dataset's parameters, generated from its argsSchema, to run it on the area. */
@@ -27,32 +35,35 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
   });
   const me = useQuery(authQueries.me());
   const area = useAreaStore((state) => state.area);
+  const watched = useWatch({ control: form.control });
+  // The user's pick; the job sends it only while the parameters allow it, and the default otherwise.
+  const [chosenFormat, setChosenFormat] = useState<string | null>(null);
+  const choices = formatChoices(dataset, changedParameters(fields, watched));
+  const format = jobFormat(choices, chosenFormat);
 
   const create = useMutation(jobMutations.create());
   const { setRight } = useWorkspaceStore((state) => state.actions);
 
   function submit(values: DatasetFormValues) {
     if (!area) return;
-    const parameters = jobParameters(fields, values, areaBounds(area));
-    create.mutate(
-      { dataset: dataset.name, parameters },
-      {
-        onSuccess: () =>
-          toast.success("Job submitted", {
-            description: dataset.title,
-            action: { label: "View in Downloads", onClick: () => setRight("downloads") },
-          }),
-        onError: (error) => {
-          if (error instanceof ApiError && error.body?.code === "TOO_MANY_REQUESTS") {
-            toast.error("Hourly job limit reached", { description: error.message });
-            return;
-          }
-          const errors = submitErrors(fields, error);
-          for (const [name, message] of Object.entries(errors.fields)) form.setError(name, { message });
-          if (errors.form.length > 0) form.setError("root", { message: errors.form.join("\n") });
-        },
+    const body: CreateJobBody = { dataset: dataset.name, parameters: jobParameters(fields, values, areaBounds(area)) };
+    if (format !== null) body.artifactFormat = format;
+    create.mutate(body, {
+      onSuccess: () =>
+        toast.success("Job submitted", {
+          description: dataset.title,
+          action: { label: "View in Downloads", onClick: () => setRight("downloads") },
+        }),
+      onError: (error) => {
+        if (error instanceof ApiError && error.body?.code === "TOO_MANY_REQUESTS") {
+          toast.error("Hourly job limit reached", { description: error.message });
+          return;
+        }
+        const errors = submitErrors(fields, error);
+        for (const [name, message] of Object.entries(errors.fields)) form.setError(name, { message });
+        if (errors.form.length > 0) form.setError("root", { message: errors.form.join("\n") });
       },
-    );
+    });
   }
 
   return (
@@ -62,6 +73,7 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
           <DatasetFieldControl key={field.name} control={form.control} field={field} />
         ))}
         {omitted.length > 0 && <p className="text-xs text-muted-foreground">Uses the default: {omitted.join(", ")}</p>}
+        <DatasetFormatField choices={choices} value={format} onChange={setChosenFormat} />
         <FieldError errors={[form.formState.errors.root]} className="whitespace-pre-line" />
         {!area && <p className="text-sm text-muted-foreground">Draw an area on the map first</p>}
         {me.data?.status === "pending" && (

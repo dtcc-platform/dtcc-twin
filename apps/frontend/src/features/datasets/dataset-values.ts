@@ -90,8 +90,13 @@ export function jobParameters(
   values: DatasetFormValues,
   bounds: SwerefBounds,
 ): Record<string, unknown> {
+  return { bounds, ...changedParameters(fields, values) };
+}
+
+/** The job's parameters without the area's bounds, as `jobParameters` builds them. */
+export function changedParameters(fields: DatasetField[], values: Partial<DatasetFormValues>): Record<string, unknown> {
   const initial = initialValues(fields);
-  const parameters: Record<string, unknown> = { bounds };
+  const parameters: Record<string, unknown> = {};
   for (const field of fields) {
     const value = toParameter(field, values[field.name]);
     // Compared as parameters, so "1.0" for a default of 1 is no change.
