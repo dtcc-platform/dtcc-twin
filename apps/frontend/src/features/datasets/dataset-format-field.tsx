@@ -1,8 +1,7 @@
 import { Field, FieldDescription, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { formatLabel } from "@/lib/artifact-formats";
 import type { FormatChoice } from "./dataset-formats.ts";
-
-const labels: Record<string, string> = { png: "PNG image", geojson: "GeoJSON", tif: "GeoTIFF" };
 
 type DatasetFormatFieldProps = {
   choices: FormatChoice[];
@@ -36,7 +35,7 @@ export function DatasetFormatField({ choices, value, onChange }: DatasetFormatFi
         {value === null && <NativeSelectOption value="">None available with these settings</NativeSelectOption>}
         {choices.map(({ format, unavailable }) => (
           <NativeSelectOption key={format} value={format} disabled={unavailable !== null}>
-            {(labels[format] ?? format.toUpperCase()) + (unavailable ? ` (${unavailable})` : "")}
+            {formatLabel(format) + (unavailable ? ` (${unavailable})` : "")}
           </NativeSelectOption>
         ))}
       </NativeSelect>
