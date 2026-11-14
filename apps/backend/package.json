@@ -36,6 +36,7 @@
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "yauzl": "^3.4.0",
     "zod": "catalog:"
   },
   "devDependencies": {
@@ -49,6 +50,7 @@
     "@types/node": "catalog:",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.0.0",
+    "@types/yauzl": "^3.4.0",
     "@vitest/coverage-v8": "catalog:",
     "drizzle-kit": "1.0.0-rc.4",
     "eslint": "catalog:",

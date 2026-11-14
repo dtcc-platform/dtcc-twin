@@ -14,7 +14,7 @@ import {
 import { CurrentUser, Roles, type AuthUser } from "../../common/decorators/auth.decorators.js";
 import { FileResponse } from "../../common/decorators/file-response.decorator.js";
 import { Serialize } from "../../common/decorators/serialize.decorator.js";
-import { JobsService } from "./jobs.service.js";
+import { JobsService, type JobFile } from "./jobs.service.js";
 
 @Controller("jobs")
 @Roles("user")
@@ -42,8 +42,16 @@ export class JobsController {
     @CurrentUser() user: AuthUser,
     @Param({ schema: idParamsSchema }) { id }: IdParams,
   ): Promise<StreamableFile> {
-    const { content, fileName } = await this.jobs.package(user.userId, id);
-    return new StreamableFile(content, { type: "application/zip", disposition: `attachment; filename="${fileName}"` });
+    return toStreamableFile(await this.jobs.package(user.userId, id));
+  }
+
+  @Get(":id/artifact")
+  @FileResponse("application/geo+json", "image/png", "image/tiff")
+  async artifact(
+    @CurrentUser() user: AuthUser,
+    @Param({ schema: idParamsSchema }) { id }: IdParams,
+  ): Promise<StreamableFile> {
+    return toStreamableFile(await this.jobs.artifact(user.userId, id));
   }
 
   @Post()
@@ -51,4 +59,8 @@ export class JobsController {
   create(@CurrentUser() user: AuthUser, @Body({ schema: createJobBodySchema }) body: CreateJobBody): Promise<Job> {
     return this.jobs.create(user.userId, body);
   }
+}
+
+function toStreamableFile({ content, fileName, mediaType }: JobFile): StreamableFile {
+  return new StreamableFile(content, { type: mediaType, disposition: `attachment; filename="${fileName}"` });
 }

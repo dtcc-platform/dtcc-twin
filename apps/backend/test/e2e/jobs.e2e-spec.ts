@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Logger, type INestApplication } from "@nestjs/common";
@@ -536,6 +536,69 @@ describe("Jobs (e2e)", () => {
 
       expect(errorResponseSchema.parse(other.body).error.code).toBe("NOT_FOUND");
       expect(errorResponseSchema.parse(missing.body).error.code).toBe("NOT_FOUND");
+    });
+  });
+
+  describe("GET /api/jobs/:id/artifact", () => {
+    // Real packages from DTCC Engine: a smoke slice with a PNG, and one without an extra file.
+    let withPng: Buffer;
+    let withoutArtifact: Buffer;
+    // The PNG's SHA-256, from that package's manifest.
+    const pngSha256 = "2f6a7fde84db9b1c2451b65bdccb57f4395a06927e8d061152e0f34bf994edd1";
+
+    beforeAll(async () => {
+      withPng = await readFile(new URL("../fixtures/smoke-slice-png.dtccpkg", import.meta.url));
+      withoutArtifact = await readFile(new URL("../fixtures/smoke-slice.dtccpkg", import.meta.url));
+    });
+
+    async function completed(agent: Agent, packageBytes: Buffer): Promise<Job> {
+      const job = await submit(agent);
+      engine.completeJob(lastEngineJobId(), packageBytes);
+      return read(agent, job.id);
+    }
+
+    it("serves the extra file in a completed job's package, with its media type", async () => {
+      const job = await completed(ada, withPng);
+
+      const response = await ada.get(`/api/jobs/${job.id}/artifact`).buffer(true).parse(binary).expect(200);
+
+      expect(response.headers["content-type"]).toBe("image/png");
+      expect(response.headers["content-disposition"]).toBe(`attachment; filename="smoke-${job.id}.png"`);
+      const sha256 = createHash("sha256").update(response.body as Buffer);
+      expect(sha256.digest("hex")).toBe(pngSha256);
+    });
+
+    it("answers NOT_FOUND for a completed job whose package has no extra file", async () => {
+      const job = await completed(ada, withoutArtifact);
+
+      const response = await ada.get(`/api/jobs/${job.id}/artifact`).expect(404);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("NOT_FOUND");
+    });
+
+    it("answers CONFLICT for a job that hasn't completed", async () => {
+      const job = await submit(ada);
+
+      const response = await ada.get(`/api/jobs/${job.id}/artifact`).expect(409);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("CONFLICT");
+    });
+
+    it("answers NOT_FOUND for another user's job, as for one that does not exist", async () => {
+      const graces = await completed(grace, withPng);
+
+      const other = await ada.get(`/api/jobs/${graces.id}/artifact`).expect(404);
+      const missing = await ada.get(`/api/jobs/${missingId}/artifact`).expect(404);
+
+      expect(errorResponseSchema.parse(other.body).error.code).toBe("NOT_FOUND");
+      expect(errorResponseSchema.parse(missing.body).error.code).toBe("NOT_FOUND");
+    });
+
+    it("needs a logged-in user and a job id", async () => {
+      await request(app.getHttpServer()).get(`/api/jobs/${missingId}/artifact`).expect(401);
+      const response = await ada.get("/api/jobs/not-a-uuid/artifact").expect(400);
+
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("VALIDATION_FAILED");
     });
   });
 });

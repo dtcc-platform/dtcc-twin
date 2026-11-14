@@ -1,5 +1,6 @@
+import { extname } from "node:path";
+import type { Readable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
-import type { ReadStream } from "node:fs";
 import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { CreateJobBody, Job, JobPage, OffsetPaginationQuery } from "@repo/contracts";
 import { EngineClient, type EngineJob } from "../../infra/engine/engine.client.js";
@@ -9,7 +10,7 @@ import { UsersService } from "../users/users.service.js";
 import { JobLimit } from "./job-limit.js";
 import { JobsRepository, type JobChanges, type StoredJob } from "./jobs.repository.js";
 
-export type JobPackage = { content: ReadStream; fileName: string };
+export type JobFile = { content: Readable; fileName: string; mediaType: string };
 
 @Injectable()
 export class JobsService {
@@ -51,13 +52,26 @@ export class JobsService {
   }
 
   /** The completed job's package, from storage: the engine deletes its own copy after 30 days. */
-  async package(userId: string, id: string): Promise<JobPackage> {
-    const job = await this.get(userId, id);
-    if (job.state !== "completed") throw new ConflictException(`Job ${id} has not completed`);
-
+  async package(userId: string, id: string): Promise<JobFile> {
+    const job = await this.completed(userId, id);
     const content = await this.storage.open(job.id);
     if (!content) throw new Error(`The package of completed job ${id} is missing from storage`);
-    return { content, fileName: `${job.dataset}-${job.id}.dtccpkg` };
+    return { content, fileName: `${job.dataset}-${job.id}.dtccpkg`, mediaType: "application/zip" };
+  }
+
+  /** The extra file in the completed job's package, such as its GeoJSON, from storage. */
+  async artifact(userId: string, id: string): Promise<JobFile> {
+    const job = await this.completed(userId, id);
+    const artifact = await this.storage.openArtifact(job.id);
+    if (!artifact) throw new NotFoundException(`Job ${id} has no artifact`);
+    const fileName = `${job.dataset}-${job.id}${extname(artifact.path)}`;
+    return { content: artifact.content, fileName, mediaType: artifact.mediaType };
+  }
+
+  private async completed(userId: string, id: string): Promise<Job> {
+    const job = await this.get(userId, id);
+    if (job.state !== "completed") throw new ConflictException(`Job ${id} has not completed`);
+    return job;
   }
 
   /** check the job status, will probably change to cron later */

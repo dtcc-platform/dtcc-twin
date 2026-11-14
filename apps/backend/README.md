@@ -71,6 +71,7 @@ DTCC Engine runs Datasets as jobs. `/api/datasets` lists them without a login, a
 - **Artifact formats:** each Dataset lists, per product, the formats of an extra file a job can add to its package (`artifactFormats`, from Core's export capabilities in the engine's catalog; empty from an engine on an older Core). A job's optional `artifactFormat` is stored with it and sent to the engine as `artifact_format` only when set, since an older engine rejects the field. The backend checks only that it's a format name, not that the Dataset offers it.
 - **Jobs update when they are read.** The engine never notifies and lists no jobs, so each job row keeps the engine's id for it, and reading an unfinished job (`GET /api/jobs/:id` or the list) asks the engine first. While the engine is down, a read answers the last stored state.
 - **A job is `completed` once its package is stored.** The read that sees the engine finish downloads the package into `PACKAGE_STORAGE_DIR` first (`.data/packages` by default), so a completed job's download never depends on the engine. The engine deletes its copy after 30 days, so a job nobody reads for that long is lost. Will switch to object storage later.
+- **A job's artifact:** `GET /api/jobs/:id/artifact` serves the extra file in a completed job's package, the manifest's `derived` artifact, with its media type. `PackageStorage` reads it out of the stored ZIP with yauzl, without unpacking the rest; a package without one answers 404.
 
 ## Tests
 
