@@ -10,6 +10,16 @@ export const engineDescriptorSchema = z.object({
   data_category: z.string(),
   result_kind: z.string(),
   args_schema: z.record(z.string(), z.unknown()),
+  // Missing from an engine on a Core older than its export capabilities.
+  export: z
+    .array(
+      z.object({
+        product: z.string().nullable(),
+        web_formats: z.array(z.string()),
+        constraints: z.record(z.string(), z.object({ arguments: z.record(z.string(), z.unknown()) })),
+      }),
+    )
+    .optional(),
   timeout_hint: z.number().nullable(),
 });
 export type EngineDescriptor = z.infer<typeof engineDescriptorSchema>;

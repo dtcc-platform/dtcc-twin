@@ -8,6 +8,7 @@ const dataset = {
   dataCategory: "simulation",
   resultKind: "field",
   argsSchema: { type: "object", properties: { bounds: { type: "array" } } },
+  artifactFormats: [{ product: "slice", formats: [{ format: "png", requires: { slice_axis: "z" } }] }],
   timeoutHint: null,
 };
 

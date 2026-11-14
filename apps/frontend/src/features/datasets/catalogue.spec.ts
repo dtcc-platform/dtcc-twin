@@ -3,7 +3,16 @@ import { describe, expect, it } from "vitest";
 import { catalogue } from "./catalogue.ts";
 
 function dataset(name: string, title: string, dataCategory: string): Dataset {
-  return { name, title, description: "", dataCategory, resultKind: "mesh", argsSchema: {}, timeoutHint: null };
+  return {
+    name,
+    title,
+    description: "",
+    dataCategory,
+    resultKind: "mesh",
+    argsSchema: {},
+    artifactFormats: [],
+    timeoutHint: null,
+  };
 }
 
 // The engine's list, sorted by name as the backend sends it.

@@ -72,6 +72,7 @@ describe("Datasets (e2e)", () => {
           dataCategory: "simulation",
           resultKind: "field",
           argsSchema: { type: "object", properties: { bounds: { type: "array" } }, required: ["bounds"] },
+          artifactFormats: [],
           timeoutHint: 600,
         },
       ]);
@@ -89,8 +90,61 @@ describe("Datasets (e2e)", () => {
         dataCategory: "derived",
         resultKind: "mesh",
         argsSchema: { type: "object", properties: { bounds: { type: "array" } }, required: ["bounds"] },
+        artifactFormats: [],
         timeoutHint: null,
       });
+    });
+
+    // From Core's `describe()["export"]`, which the engine passes on.
+    it("lists each product's artifact formats and the parameter values they need", async () => {
+      engine.setDatasets([
+        descriptor("smoke", {
+          export: [
+            {
+              product: "field",
+              canonical: true,
+              web_formats: [],
+              constraints: {},
+              options: {},
+              exclusions: [{ formats: ["geojson", "png", "tif"], reason: "3D-only product" }],
+            },
+            {
+              product: "slice",
+              canonical: true,
+              web_formats: ["geojson", "png"],
+              constraints: {
+                geojson: { arguments: {}, preconditions: ["crs_resolvable"] },
+                png: { arguments: { slice_axis: "z" }, preconditions: ["translation_only_root_transform"] },
+              },
+              options: { colormap: { formats: ["png"], default: "viridis" } },
+              exclusions: [],
+            },
+            // A format without a constraints entry needs nothing.
+            {
+              product: "streamlines",
+              canonical: true,
+              web_formats: ["geojson"],
+              constraints: {},
+              options: {},
+              exclusions: [],
+            },
+          ],
+        }),
+      ]);
+
+      const response = await user.get("/api/datasets/smoke").expect(200);
+
+      expect((response.body as { artifactFormats: unknown }).artifactFormats).toEqual([
+        { product: "field", formats: [] },
+        {
+          product: "slice",
+          formats: [
+            { format: "geojson", requires: {} },
+            { format: "png", requires: { slice_axis: "z" } },
+          ],
+        },
+        { product: "streamlines", formats: [{ format: "geojson", requires: {} }] },
+      ]);
     });
 
     it("answers NOT_FOUND for a Dataset the engine doesn't have", async () => {

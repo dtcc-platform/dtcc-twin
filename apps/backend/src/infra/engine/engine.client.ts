@@ -181,6 +181,13 @@ function toDataset(descriptor: EngineDescriptor): Dataset {
     dataCategory: descriptor.data_category,
     resultKind: descriptor.result_kind,
     argsSchema: descriptor.args_schema,
+    artifactFormats: (descriptor.export ?? []).map((entry) => ({
+      product: entry.product,
+      formats: entry.web_formats.map((format) => ({
+        format,
+        requires: entry.constraints[format]?.arguments ?? {},
+      })),
+    })),
     timeoutHint: descriptor.timeout_hint,
   };
 }
