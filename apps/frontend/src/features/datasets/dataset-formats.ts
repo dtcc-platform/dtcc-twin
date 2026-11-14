@@ -44,6 +44,11 @@ export function jobFormat(choices: FormatChoice[], chosen: string | null): strin
   return available[0] ?? null;
 }
 
+/** Whether the map can draw a file of this format. */
+export function drawsOnMap(format: string | null): boolean {
+  return format !== null && mapFormats.includes(format);
+}
+
 function rank(format: string): number {
   const index = mapFormats.indexOf(format);
   return index === -1 ? mapFormats.length : index;

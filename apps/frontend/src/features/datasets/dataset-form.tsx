@@ -16,7 +16,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { DatasetFieldControl } from "./dataset-field-control.tsx";
 import { datasetFields } from "./dataset-fields.ts";
 import { DatasetFormatField } from "./dataset-format-field.tsx";
-import { formatChoices, jobFormat } from "./dataset-formats.ts";
+import { drawsOnMap, formatChoices, jobFormat } from "./dataset-formats.ts";
 import {
   changedParameters,
   initialValues,
@@ -43,6 +43,7 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
 
   const create = useMutation(jobMutations.create());
   const { setRight } = useWorkspaceStore((state) => state.actions);
+  const runnable = area !== null && me.data?.status === "active" && !create.isPending;
 
   function submit(values: DatasetFormValues) {
     if (!area) return;
@@ -87,9 +88,21 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
             Log in to run
           </Link>
         ) : (
-          <Button type="submit" disabled={!area || me.data?.status !== "active" || create.isPending}>
-            Run
-          </Button>
+          <>
+            {/* Both only submit the job for now: drawing the result and downloading it come later. */}
+            <div className="flex gap-2">
+              {/* Download goes first: Enter submits through the first button, and Add to area is often disabled. */}
+              <Button type="submit" variant="outline" className="flex-1" disabled={!runnable}>
+                Download
+              </Button>
+              <Button type="submit" className="flex-1" disabled={!runnable || !drawsOnMap(format)}>
+                Add to area
+              </Button>
+            </div>
+            {runnable && !drawsOnMap(format) && (
+              <p className="text-xs text-muted-foreground">Not shown on the map: download only</p>
+            )}
+          </>
         )}
       </FieldGroup>
     </form>
