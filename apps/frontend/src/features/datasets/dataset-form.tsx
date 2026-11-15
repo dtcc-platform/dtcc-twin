@@ -51,8 +51,9 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
     if (!area) return;
     const body: CreateJobBody = { dataset: dataset.name, parameters: jobParameters(fields, values, areaBounds(area)) };
     if (format !== null) body.artifactFormat = format;
-    create.mutate(body, {
-      onSuccess: (job) => {
+    // The promise, not mutate's callbacks: those don't run once the form has closed, and the job must still reach the map.
+    create.mutateAsync(body).then(
+      (job) => {
         if (action === "download") {
           toast.success("Job submitted", {
             description: dataset.title,
@@ -66,16 +67,16 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
           action: { label: "View layers", onClick: () => setLeft("layers") },
         });
       },
-      onError: (error) => {
+      (error: unknown) => {
         if (error instanceof ApiError && error.body?.code === "TOO_MANY_REQUESTS") {
           toast.error("Hourly job limit reached", { description: error.message });
           return;
         }
-        const errors = submitErrors(fields, error);
+        const errors = submitErrors(fields, error instanceof Error ? error : new Error(String(error)));
         for (const [name, message] of Object.entries(errors.fields)) form.setError(name, { message });
         if (errors.form.length > 0) form.setError("root", { message: errors.form.join("\n") });
       },
-    });
+    );
   }
 
   return (
