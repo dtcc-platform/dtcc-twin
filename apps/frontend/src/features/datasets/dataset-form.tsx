@@ -12,6 +12,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { FieldError, FieldGroup } from "@/components/ui/field";
 import { areaBounds } from "@/features/area/area";
 import { useAreaStore } from "@/features/area/area-store";
+import { usePendingDownloadsStore } from "@/features/jobs/pending-downloads-store";
 import { useLayersStore } from "@/features/layers/layers-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { drawsOnMap } from "@/lib/artifact-formats";
@@ -45,18 +46,21 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
   const create = useMutation(jobMutations.create());
   const { setRight, setLeft } = useWorkspaceStore((state) => state.actions);
   const { add: addLayer } = useLayersStore((state) => state.actions);
+  const { add: addDownload } = usePendingDownloadsStore((state) => state.actions);
   const runnable = area !== null && me.data?.status === "active" && !create.isPending;
 
   function submit(values: DatasetFormValues, action: "add-to-area" | "download") {
     if (!area) return;
     const body: CreateJobBody = { dataset: dataset.name, parameters: jobParameters(fields, values, areaBounds(area)) };
     if (format !== null) body.artifactFormat = format;
-    // The promise, not mutate's callbacks: those don't run once the form has closed, and the job must still reach the map.
+    // The promise, not mutate's callbacks: those don't run once the form has closed, and the job must still reach the
+    // map or the downloads.
     create.mutateAsync(body).then(
       (job) => {
         if (action === "download") {
+          addDownload({ jobId: job.id, title: dataset.title });
           toast.success("Job submitted", {
-            description: dataset.title,
+            description: `${dataset.title} downloads when it's done`,
             action: { label: "View in Downloads", onClick: () => setRight("downloads") },
           });
           return;
