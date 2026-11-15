@@ -3,10 +3,10 @@ import { XIcon } from "lucide-react";
 import { jobQueries } from "@/api/jobs";
 import { FloatingCard } from "@/components/common/floating-card";
 import { Button } from "@/components/ui/button";
-import { layerStatus } from "../layer-status.ts";
+import { layerStatus } from "./layer-status.ts";
 import { useLayersStore, type ResultLayer } from "../layers-store.ts";
 
-/** The results on the map, top first, each with its job's status. */
+/** The results on the map, newest first, each with its job's status. */
 export function LayersPanel({ onClose }: { onClose: () => void }) {
   const layers = useLayersStore((state) => state.layers);
 

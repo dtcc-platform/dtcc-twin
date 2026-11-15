@@ -72,7 +72,7 @@ function ShowOnMapButton({ jobId, title }: { jobId: string; title: string }) {
   );
 }
 
-/** One job in the Downloads panel: its state and progress, and its package and artifact once it has them. */
+/** One job in the Downloads panel: its state and progress, then its files and a way to show it on the map. */
 export function JobItem({ job, title }: { job: Job; title: string }) {
   return (
     <li className="flex flex-col gap-2 rounded-xl border p-3">

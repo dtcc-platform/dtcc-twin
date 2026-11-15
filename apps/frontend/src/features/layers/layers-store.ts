@@ -8,7 +8,7 @@ export const layerColors = ["#e11d48", "#2563eb", "#16a34a", "#9333ea", "#ea580c
 export type ResultLayer = { jobId: string; title: string; color: string };
 
 type LayersState = {
-  /** Bottom to top. */
+  /** In the order they were added. */
   layers: ResultLayer[];
   actions: {
     add: (layer: Omit<ResultLayer, "color">) => void;

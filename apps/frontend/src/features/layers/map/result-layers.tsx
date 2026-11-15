@@ -3,7 +3,7 @@ import { Layer, Source } from "react-map-gl/maplibre";
 import { jobQueries } from "@/api/jobs";
 import { useLayersStore, type ResultLayer } from "../layers-store.ts";
 
-/** The results in the layers store, drawn on the map in their order, the last on top. */
+/** The results in the layers store, on the map. */
 export function ResultLayers() {
   const layers = useLayersStore((state) => state.layers);
   return layers.map((layer) => <JobResult key={layer.jobId} layer={layer} />);

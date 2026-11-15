@@ -6,7 +6,7 @@ describe("createLayersStore", () => {
     expect(createLayersStore().getState().layers).toEqual([]);
   });
 
-  it("adds a job's result on top, in the next color", () => {
+  it("adds a job's result after the others, in the next color", () => {
     const store = createLayersStore();
     const { add } = store.getState().actions;
 
