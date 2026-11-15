@@ -13,10 +13,11 @@ import { FieldError, FieldGroup } from "@/components/ui/field";
 import { areaBounds } from "@/features/area/area";
 import { useAreaStore } from "@/features/area/area-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
+import { drawsOnMap } from "@/lib/artifact-formats";
 import { DatasetFieldControl } from "./dataset-field-control.tsx";
 import { datasetFields } from "./dataset-fields.ts";
 import { DatasetFormatField } from "./dataset-format-field.tsx";
-import { drawsOnMap, formatChoices, jobFormat } from "./dataset-formats.ts";
+import { formatChoices, jobFormat } from "./dataset-formats.ts";
 import {
   changedParameters,
   initialValues,

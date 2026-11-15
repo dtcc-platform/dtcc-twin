@@ -1,12 +1,10 @@
 import type { Dataset } from "@repo/contracts";
 import { z } from "zod";
+import { mapFormats } from "@/lib/artifact-formats";
 import { humanize } from "./dataset-fields.ts";
 
 /** A format the job's product offers, with why the job's parameters rule it out, or null when they don't. */
 export type FormatChoice = { format: string; unavailable: string | null };
-
-// In the order the form prefers them.
-const mapFormats = ["png", "geojson"];
 
 const argsSchemaSchema = z.object({
   properties: z
@@ -39,10 +37,6 @@ export function jobFormat(choices: FormatChoice[], chosen: string | null): strin
   const available = choices.filter((choice) => choice.unavailable === null).map((choice) => choice.format);
   if (chosen !== null && available.includes(chosen)) return chosen;
   return available[0] ?? null;
-}
-
-export function drawsOnMap(format: string | null): boolean {
-  return format !== null && mapFormats.includes(format);
 }
 
 function rank(format: string): number {
