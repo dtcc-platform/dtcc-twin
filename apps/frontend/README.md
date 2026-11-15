@@ -21,6 +21,7 @@ src/
 ## Talking to the API
 
 - `api` in `src/api/client/api-client.ts` is the axios instance. Its base URL is `/api`, which the dev server proxies to the backend on port 3030; `VITE_API_URL` points it at another origin. Cookies go with every request.
+- The map fetches a result's image from the API itself, outside `api`. `MapView`'s `transformRequest` sends the cookies with those requests, and renews an expired login first with a call through `api`.
 - A 401 triggers one refresh, shared by every request that failed at the same time, and one retry. If the refresh fails too, the query cache marks the user logged out.
 - A failed response is an `ApiError` with the status and the parsed `ErrorBody`; `body` is undefined when the response didn't come from the API (a proxy's 502 page, say). A request that gets no response, such as on a network error, rejects with axios's own error.
 - Queries retry network and server errors up to three times, never 4xx.
