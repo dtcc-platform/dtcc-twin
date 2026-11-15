@@ -36,7 +36,7 @@ function LayerItem({ layer }: { layer: ResultLayer }) {
       <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: layer.color }} aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{layer.title}</p>
-        <p className="text-xs text-muted-foreground">{layerStatus(job.data)}</p>
+        <p className="text-xs text-muted-foreground">{job.isError ? job.error.message : layerStatus(job.data)}</p>
       </div>
       <Button
         variant="ghost"
