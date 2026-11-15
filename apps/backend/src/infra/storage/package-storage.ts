@@ -34,7 +34,7 @@ export type ManifestArtifact = z.infer<typeof manifestArtifactSchema>;
 /** The extra file Core added to a package: its format, such as `geojson`, and its content. */
 export type PackageArtifact = { format: string; content: Readable };
 
-type PackageContents = { zip: ZipFile; artifact: { manifest: ManifestArtifact; entry: Entry } | null };
+type PackageContents = { zip: ZipFile; artifact: { manifest: ManifestArtifact; zipEntry: Entry } | null };
 
 /** Stores DTCC Engine packages under PACKAGE_STORAGE_DIR, one file per key. will be replaced with object storage in the future */
 @Injectable()
@@ -74,7 +74,7 @@ export class PackageStorage {
   async openArtifact(key: string): Promise<PackageArtifact | null> {
     return this.withPackage(key, async ({ zip, artifact }) => {
       if (!artifact) return null;
-      return { format: artifact.manifest.format, content: await zip.openReadStreamPromise(artifact.entry) };
+      return { format: artifact.manifest.format, content: await zip.openReadStreamPromise(artifact.zipEntry) };
     });
   }
 
@@ -99,9 +99,9 @@ export class PackageStorage {
 
       const derived = manifest.artifacts.find((candidate) => candidate.role === "derived");
       if (!derived) return await use({ zip, artifact: null });
-      const entry = entries.get(derived.path);
-      if (!entry) throw new Error(`Package ${key} lists ${derived.path} but doesn't hold it`);
-      return await use({ zip, artifact: { manifest: derived, entry } });
+      const zipEntry = entries.get(derived.path);
+      if (!zipEntry) throw new Error(`Package ${key} lists ${derived.path} but doesn't hold it`);
+      return await use({ zip, artifact: { manifest: derived, zipEntry } });
     } finally {
       // The file stays open until any stream opened from it has ended.
       zip.close();
