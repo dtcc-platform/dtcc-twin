@@ -3,7 +3,7 @@ import { XIcon } from "lucide-react";
 import { jobQueries } from "@/api/jobs";
 import { FloatingCard } from "@/components/common/floating-card";
 import { Button } from "@/components/ui/button";
-import { ImageLegend } from "./image-legend.tsx";
+import { ImageLegend } from "./image-legend/image-legend.tsx";
 import { layerStatus } from "./layer-status.ts";
 import { useLayersStore, type ResultLayer } from "../layers-store.ts";
 
