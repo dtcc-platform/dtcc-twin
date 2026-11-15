@@ -34,7 +34,7 @@ export type ManifestArtifact = z.infer<typeof manifestArtifactSchema>;
 /** The extra file Core added to a package: its format, such as `geojson`, and its content. */
 export type PackageArtifact = { format: string; content: Readable };
 
-type PackageContents = { zip: ZipFile; entries: Map<string, Entry>; artifact: ManifestArtifact | null };
+type PackageContents = { zip: ZipFile; artifact: { manifest: ManifestArtifact; entry: Entry } | null };
 
 /** Stores DTCC Engine packages under PACKAGE_STORAGE_DIR, one file per key. will be replaced with object storage in the future */
 @Injectable()
@@ -72,20 +72,21 @@ export class PackageStorage {
 
   /** The derived artifact of the package under `key`, or null when it has none. Throws when there is no package. */
   async openArtifact(key: string): Promise<PackageArtifact | null> {
-    return this.withPackage(key, async ({ zip, entries, artifact }) => {
+    return this.withPackage(key, async ({ zip, artifact }) => {
       if (!artifact) return null;
-      const entry = entries.get(artifact.path);
-      if (!entry) throw new Error(`Package ${key} lists ${artifact.path} but doesn't hold it`);
-      return { format: artifact.format, content: await zip.openReadStreamPromise(entry) };
+      return { format: artifact.manifest.format, content: await zip.openReadStreamPromise(artifact.entry) };
     });
   }
 
   /** The derived artifact's manifest entry in the package under `key`, or null when it has none. */
   async readArtifact(key: string): Promise<ManifestArtifact | null> {
-    return this.withPackage(key, ({ artifact }) => artifact);
+    return this.withPackage(key, ({ artifact }) => artifact?.manifest ?? null);
   }
 
-  /** Opens the package under `key` for `use`, with its entries and its derived artifact's manifest entry. */
+  /**
+   * Opens the package under `key` for `use`, with its derived artifact's manifest entry and ZIP entry. Throws when the
+   * package is missing or unreadable, or lacks the file its manifest lists.
+   */
   private async withPackage<T>(key: string, use: (contents: PackageContents) => T | Promise<T>): Promise<T> {
     const zip = await openPromise(this.pathOf(key), { lazyEntries: true, autoClose: false });
     try {
@@ -96,8 +97,11 @@ export class PackageStorage {
       if (!manifestEntry) throw new Error(`Package ${key} has no manifest.json`);
       const manifest = manifestSchema.parse(JSON.parse(await text(await zip.openReadStreamPromise(manifestEntry))));
 
-      const artifact = manifest.artifacts.find((candidate) => candidate.role === "derived") ?? null;
-      return await use({ zip, entries, artifact });
+      const derived = manifest.artifacts.find((candidate) => candidate.role === "derived");
+      if (!derived) return await use({ zip, artifact: null });
+      const entry = entries.get(derived.path);
+      if (!entry) throw new Error(`Package ${key} lists ${derived.path} but doesn't hold it`);
+      return await use({ zip, artifact: { manifest: derived, entry } });
     } finally {
       // The file stays open until any stream opened from it has ended.
       zip.close();

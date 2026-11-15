@@ -674,6 +674,20 @@ describe("Jobs (e2e)", () => {
       });
     });
 
+    // The real package without the PNG its manifest lists: placing it would put an image on the map that can't load.
+    it("answers INTERNAL_ERROR for a package that lacks the file its manifest lists, or isn't one", async () => {
+      vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const missing = await fixture("smoke-slice-png-missing.dtccpkg");
+
+      const statuses: number[] = [];
+      for (const packageBytes of [randomBytes(4096), missing]) {
+        const job = await completedWith(ada, packageBytes);
+        statuses.push((await ada.get(`/api/jobs/${job.id}/artifact/metadata`)).status);
+      }
+
+      expect(statuses).toEqual([500, 500]);
+    });
+
     it("answers NOT_FOUND for a package without an extra file, or another user's job", async () => {
       const job = await completedWith(ada, withoutArtifact);
       const graces = await completedWith(grace, withPng);
