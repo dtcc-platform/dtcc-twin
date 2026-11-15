@@ -1,4 +1,4 @@
-import type { CreateJobBody, Job, JobPage } from "@repo/contracts";
+import type { CreateJobBody, Job, JobArtifact, JobPage } from "@repo/contracts";
 import { mutationOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "./client/api-client.ts";
 
@@ -8,6 +8,11 @@ const artifacts = ["job-artifacts"] as const;
 
 /** A completed job's files: its whole package, or the extra file in it. */
 export type JobFile = "package" | "artifact";
+
+/** Where a completed job's file is, for a link or for the map to load itself. */
+export function jobFileUrl(id: string, file: JobFile): string {
+  return `${api.defaults.baseURL ?? ""}/jobs/${id}/${file}`;
+}
 
 /** A job still waiting or running, whose state the backend refreshes from the engine on every read. */
 export function isActiveJob(job: Job): boolean {
@@ -41,6 +46,13 @@ export const jobQueries = {
       queryFn: async ({ signal }) => (await api.get<GeoJSON.GeoJSON>(`/jobs/${id}/artifact`, { signal })).data,
       staleTime: Infinity,
     }),
+  /** Where the map places a completed job's artifact, and its legend. */
+  artifactMetadata: (id: string) =>
+    queryOptions({
+      queryKey: [...artifacts, "metadata", id],
+      queryFn: async ({ signal }) => (await api.get<JobArtifact>(`/jobs/${id}/artifact/metadata`, { signal })).data,
+      staleTime: Infinity,
+    }),
 };
 
 export const jobMutations = {
@@ -56,7 +68,7 @@ export const jobMutations = {
         // The link carries only the cookies: asking for the job first refreshes an expired access token.
         await api.get<Job>(`/jobs/${id}`);
         const link = document.createElement("a");
-        link.href = `${api.defaults.baseURL ?? ""}/jobs/${id}/${file}`;
+        link.href = jobFileUrl(id, file);
         link.click();
       },
     }),

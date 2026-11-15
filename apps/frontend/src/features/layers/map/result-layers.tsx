@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Layer, Source } from "react-map-gl/maplibre";
-import { jobQueries } from "@/api/jobs";
+import { jobFileUrl, jobQueries } from "@/api/jobs";
 import { useLayersStore, type ResultLayer } from "../layers-store.ts";
 
 /** The results in the layers store, on the map. */
@@ -14,7 +14,32 @@ function JobResult({ layer }: { layer: ResultLayer }) {
   const job = useQuery(jobQueries.detail(layer.jobId));
   if (job.data?.state !== "completed") return null;
   if (job.data.artifactFormat === "geojson") return <GeoJsonResult layer={layer} />;
+  if (job.data.artifactFormat === "png") return <ImageResult layer={layer} />;
   return null;
+}
+
+/** The image stretched between its corners, which the artifact's metadata gives in longitude and latitude. */
+function ImageResult({ layer }: { layer: ResultLayer }) {
+  const metadata = useQuery(jobQueries.artifactMetadata(layer.jobId));
+  if (!metadata.data?.boundsWgs84) return null;
+
+  const [west, south, east, north] = metadata.data.boundsWgs84;
+  const id = `result-${layer.jobId}`;
+  return (
+    <Source
+      id={id}
+      type="image"
+      url={jobFileUrl(layer.jobId, "artifact")}
+      coordinates={[
+        [west, north],
+        [east, north],
+        [east, south],
+        [west, south],
+      ]}
+    >
+      <Layer id={`${id}-image`} type="raster" paint={{ "raster-opacity": 0.85 }} />
+    </Source>
+  );
 }
 
 /** Areas filled, lines and area outlines drawn, and points as dots, all in the layer's color. */
