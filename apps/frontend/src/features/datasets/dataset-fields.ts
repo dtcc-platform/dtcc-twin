@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { humanize } from "@/lib/humanize";
 
 type FieldBase = {
   /** The parameter's name in the job. */
@@ -175,10 +176,4 @@ function checkboxesOf(property: Property, defaultValue: unknown): Control | null
 
   const valid = Array.isArray(defaultValue) && defaultValue.every((value) => options.includes(value as string));
   return { control: "checkboxes", options, default: valid ? (defaultValue as string[]) : null };
-}
-
-/** A parameter's name as a label, for fields without a title: `wall_bc_type` reads "Wall bc type". */
-export function humanize(name: string): string {
-  const words = name.replaceAll("_", " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
 }

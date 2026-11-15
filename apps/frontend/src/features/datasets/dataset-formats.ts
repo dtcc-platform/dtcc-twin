@@ -1,7 +1,7 @@
 import type { Dataset } from "@repo/contracts";
 import { z } from "zod";
 import { mapFormats } from "@/lib/artifact-formats";
-import { humanize } from "./dataset-fields.ts";
+import { humanize } from "@/lib/humanize";
 
 /** A format the job's product offers, with why the job's parameters rule it out, or null when they don't. */
 export type FormatChoice = { format: string; unavailable: string | null };

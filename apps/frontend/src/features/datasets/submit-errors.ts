@@ -1,5 +1,6 @@
 import { ApiError } from "@/api/client/api-error";
-import { humanize, type DatasetField } from "./dataset-fields.ts";
+import { humanize } from "@/lib/humanize";
+import type { DatasetField } from "./dataset-fields.ts";
 
 /** Why submitting a Dataset's form failed: messages by field name, and messages for above the form. */
 export type SubmitErrors = { fields: Record<string, string>; form: string[] };
