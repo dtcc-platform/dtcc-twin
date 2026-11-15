@@ -11,6 +11,7 @@ const gradients: Record<string, string> = {
 /** What an image result's colors stand for, from its lowest value to its highest. */
 export function ImageLegend({ jobId }: { jobId: string }) {
   const metadata = useQuery(jobQueries.artifactMetadata(jobId));
+  if (metadata.isError) return <p className="text-xs text-destructive">{metadata.error.message}</p>;
   const legend = metadata.data?.legend;
   if (!legend) return null;
 
