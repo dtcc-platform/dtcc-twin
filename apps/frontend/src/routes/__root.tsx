@@ -4,6 +4,7 @@ import { Outlet, createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { PendingDownloadsProvider } from "@/features/jobs/pending-downloads";
 import { useApplyTheme } from "@/hooks/use-theme";
 
 type RouterContext = {
@@ -18,7 +19,9 @@ function RootLayout() {
   return (
     <>
       <TooltipProvider>
-        <Outlet />
+        <PendingDownloadsProvider>
+          <Outlet />
+        </PendingDownloadsProvider>
       </TooltipProvider>
       <Toaster />
       <ReactQueryDevtools buttonPosition="bottom-right" />

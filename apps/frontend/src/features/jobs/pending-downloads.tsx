@@ -1,12 +1,32 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
+import { authQueries } from "@/api/auth";
 import { jobMutations, jobQueries } from "@/api/jobs";
 import { pendingDownloadStep } from "./pending-download-step.ts";
-import { usePendingDownloadsStore, type PendingDownload } from "./pending-downloads-store.ts";
+import {
+  PendingDownloadsStoreContext,
+  createPendingDownloadsStore,
+  usePendingDownloadsStore,
+  type PendingDownload,
+} from "./pending-downloads-store.ts";
 
-/** Downloads each pending job's file once the job has completed. Shows nothing. */
-export function PendingDownloads() {
+/** Keeps the logged-in user's pending downloads, on every page, and downloads each when its job completes. */
+export function PendingDownloadsProvider({ children }: { children: ReactNode }) {
+  // A fresh store whenever the logged-in user changes, so no one downloads another user's jobs.
+  const userId = useQuery(authQueries.me()).data?.id ?? null;
+  const [pending, setPending] = useState(() => ({ userId, store: createPendingDownloadsStore() }));
+  if (pending.userId !== userId) setPending({ userId, store: createPendingDownloadsStore() });
+
+  return (
+    <PendingDownloadsStoreContext value={pending.store}>
+      {children}
+      <PendingDownloads />
+    </PendingDownloadsStoreContext>
+  );
+}
+
+function PendingDownloads() {
   const downloads = usePendingDownloadsStore((state) => state.downloads);
   return downloads.map((download) => <PendingJob key={download.jobId} download={download} />);
 }
