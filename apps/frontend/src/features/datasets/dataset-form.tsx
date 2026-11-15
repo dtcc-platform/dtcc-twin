@@ -76,7 +76,7 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
           toast.error("Hourly job limit reached", { description: error.message });
           return;
         }
-        const errors = submitErrors(fields, error instanceof Error ? error : new Error(String(error)));
+        const errors = submitErrors(fields, error);
         for (const [name, message] of Object.entries(errors.fields)) form.setError(name, { message });
         if (errors.form.length > 0) form.setError("root", { message: errors.form.join("\n") });
       },

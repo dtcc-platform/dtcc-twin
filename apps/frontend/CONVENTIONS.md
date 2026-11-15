@@ -12,8 +12,9 @@
 
 - Every file directly in `src/api/` is a backend module, named after it; the client they build on lives in `src/api/client/`.
 - A module file exports `<resource>Queries` and `<resource>Mutations`, such as `itemQueries` and `itemMutations` in `items.ts`: factories of `queryOptions` and `mutationOptions`, typed with contract types, passing `signal` on to axios.
-- Query keys start from the module's `all` key: `[...all, "list", query]`, `[...all, "detail", id]`. A mutation invalidates `{ queryKey: all }`.
+- Query keys start from the module's `all` key: `[...all, "list", query]`, `[...all, "detail", id]`. A mutation invalidates `{ queryKey: all }`. Data that never changes, such as a job's artifact, goes under a key of its own beside `all`, so those invalidations don't refetch it.
 - Components use the factories as they are, `useQuery(itemQueries.list(…))`, and pass per-call callbacks to `mutate`.
+- When the outcome must outlive the component, such as a form that can close before its request answers, use `mutateAsync(…).then(onSuccess, onError)` instead: `mutate`'s per-call callbacks don't run once the component has unmounted.
 
 ### Routing
 

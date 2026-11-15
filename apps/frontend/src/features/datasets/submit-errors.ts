@@ -38,9 +38,9 @@ const pydanticWording = new Map(
 const pydanticCode = /^[a-z]+(_[a-z]+)*$/;
 
 /** A failed submit's errors, on the form's fields where the server names one, and above the form otherwise. */
-export function submitErrors(fields: DatasetField[], error: Error): SubmitErrors {
+export function submitErrors(fields: DatasetField[], error: unknown): SubmitErrors {
   if (!(error instanceof ApiError) || error.body?.code !== "VALIDATION_FAILED") {
-    return { fields: {}, form: [error.message] };
+    return { fields: {}, form: [error instanceof Error ? error.message : String(error)] };
   }
 
   const shown = new Set(fields.map((field) => field.name));
