@@ -10,6 +10,8 @@ import { AreaStoreContext, createAreaStore } from "@/features/area/area-store";
 import { BoundsInspector } from "@/features/area/bounds-inspector/bounds-inspector";
 import { DatasetsPanel } from "@/features/datasets/datasets-panel";
 import { DownloadsPanel } from "@/features/jobs/downloads-panel";
+import { PendingDownloads } from "@/features/jobs/pending-downloads";
+import { PendingDownloadsStoreContext, createPendingDownloadsStore } from "@/features/jobs/pending-downloads-store";
 import { LayersStoreContext, createLayersStore } from "@/features/layers/layers-store";
 import { ResultLayers } from "@/features/layers/map/result-layers";
 import { LayersPanel } from "@/features/layers/panel/layers-panel";
@@ -23,6 +25,10 @@ import { WorkspaceStoreContext, createWorkspaceStore } from "./workspace-store";
 
 const column = "pointer-events-none flex w-88 flex-col gap-2 *:pointer-events-auto";
 
+function createPerUserStores(userId: string | null) {
+  return { userId, layers: createLayersStore(), downloads: createPendingDownloadsStore() };
+}
+
 export function Workspace() {
   const [store] = useState(createWorkspaceStore);
   const right = useStore(store, (state) => state.right);
@@ -30,10 +36,10 @@ export function Workspace() {
   const { closeRight, closeLeft } = useStore(store, (state) => state.actions);
   const [areaStore] = useState(createAreaStore);
   const { cancelDrawing } = useStore(areaStore, (state) => state.actions);
-  // A fresh store whenever the logged-in user changes, so no one sees, or polls, another user's results.
+  // Fresh stores whenever the logged-in user changes, so no one sees, polls or downloads another user's jobs.
   const userId = useQuery(authQueries.me()).data?.id ?? null;
-  const [layers, setLayers] = useState(() => ({ userId, store: createLayersStore() }));
-  if (layers.userId !== userId) setLayers({ userId, store: createLayersStore() });
+  const [perUser, setPerUser] = useState(() => createPerUserStores(userId));
+  if (perUser.userId !== userId) setPerUser(createPerUserStores(userId));
 
   // close the panels and cancel a drawing on Esc
   useEffect(() => {
@@ -54,41 +60,44 @@ export function Workspace() {
     <MapProvider>
       <WorkspaceStoreContext value={store}>
         <AreaStoreContext value={areaStore}>
-          <LayersStoreContext value={layers.store}>
-            <MapView>
-              <AreaDraw />
-              <AreaSizeLabel />
-              <ResultLayers />
-            </MapView>
-            <TopBar />
-            <div className="pointer-events-none absolute top-17 bottom-3 left-3 z-10 flex items-start gap-2">
-              <Toolbar />
-              {left && (
+          <LayersStoreContext value={perUser.layers}>
+            <PendingDownloadsStoreContext value={perUser.downloads}>
+              <MapView>
+                <AreaDraw />
+                <AreaSizeLabel />
+                <ResultLayers />
+              </MapView>
+              <TopBar />
+              <div className="pointer-events-none absolute top-17 bottom-3 left-3 z-10 flex items-start gap-2">
+                <Toolbar />
+                {left && (
+                  <div
+                    key={left}
+                    className={cn(column, "self-stretch animate-in duration-200 fade-in slide-in-from-left-2")}
+                  >
+                    {left === "layers" && <LayersPanel onClose={closeLeft} />}
+                    {left === "bounds" && <BoundsInspector onClose={closeLeft} />}
+                  </div>
+                )}
+              </div>
+              {right && (
                 <div
-                  key={left}
-                  className={cn(column, "self-stretch animate-in duration-200 fade-in slide-in-from-left-2")}
+                  key={right}
+                  className={cn(
+                    column,
+                    "absolute top-17 right-3 bottom-3 z-10 animate-in duration-200 fade-in slide-in-from-right-2",
+                  )}
                 >
-                  {left === "layers" && <LayersPanel onClose={closeLeft} />}
-                  {left === "bounds" && <BoundsInspector onClose={closeLeft} />}
+                  {right === "bookmarks" && <SavedAreasPanel onClose={closeRight} />}
+                  {right === "datasets" && <DatasetsPanel kind="datasets" onClose={closeRight} />}
+                  {right === "simulations" && <DatasetsPanel kind="simulations" onClose={closeRight} />}
+                  {right === "downloads" && <DownloadsPanel onClose={closeRight} />}
+                  {right === "upload" && <FloatingCard title="Upload" onClose={closeRight} />}
                 </div>
               )}
-            </div>
-            {right && (
-              <div
-                key={right}
-                className={cn(
-                  column,
-                  "absolute top-17 right-3 bottom-3 z-10 animate-in duration-200 fade-in slide-in-from-right-2",
-                )}
-              >
-                {right === "bookmarks" && <SavedAreasPanel onClose={closeRight} />}
-                {right === "datasets" && <DatasetsPanel kind="datasets" onClose={closeRight} />}
-                {right === "simulations" && <DatasetsPanel kind="simulations" onClose={closeRight} />}
-                {right === "downloads" && <DownloadsPanel onClose={closeRight} />}
-                {right === "upload" && <FloatingCard title="Upload" onClose={closeRight} />}
-              </div>
-            )}
-            <HintBar />
+              <HintBar />
+              <PendingDownloads />
+            </PendingDownloadsStoreContext>
           </LayersStoreContext>
         </AreaStoreContext>
       </WorkspaceStoreContext>
