@@ -3,6 +3,8 @@ import { mutationOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "./client/api-client.ts";
 
 const all = ["jobs"] as const;
+// Outside `all`: a job's artifact never changes, so submitting a job mustn't refetch each one drawn on the map.
+const artifacts = ["job-artifacts"] as const;
 
 /** A completed job's files: its whole package, or the extra file in it. */
 export type JobFile = "package" | "artifact";
@@ -25,6 +27,19 @@ export const jobQueries = {
       queryKey: [...all, "list", query],
       queryFn: async ({ signal }) => (await api.get<JobPage>("/jobs", { params: query, signal })).data,
       refetchInterval: (current) => jobPollInterval(current.state.data?.items ?? []),
+    }),
+  detail: (id: string) =>
+    queryOptions({
+      queryKey: [...all, "detail", id],
+      queryFn: async ({ signal }) => (await api.get<Job>(`/jobs/${id}`, { signal })).data,
+      refetchInterval: (current) => jobPollInterval(current.state.data ? [current.state.data] : []),
+    }),
+  /** A completed job's GeoJSON artifact. */
+  geojson: (id: string) =>
+    queryOptions({
+      queryKey: [...artifacts, "geojson", id],
+      queryFn: async ({ signal }) => (await api.get<GeoJSON.GeoJSON>(`/jobs/${id}/artifact`, { signal })).data,
+      staleTime: Infinity,
     }),
 };
 

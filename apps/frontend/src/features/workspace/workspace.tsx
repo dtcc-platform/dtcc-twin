@@ -8,6 +8,8 @@ import { AreaStoreContext, createAreaStore } from "@/features/area/area-store";
 import { BoundsInspector } from "@/features/area/bounds-inspector/bounds-inspector";
 import { DatasetsPanel } from "@/features/datasets/datasets-panel";
 import { DownloadsPanel } from "@/features/jobs/downloads-panel";
+import { LayersStoreContext, createLayersStore } from "@/features/layers/layers-store";
+import { ResultLayers } from "@/features/layers/map/result-layers";
 import { SavedAreasPanel } from "@/features/saved-areas/saved-areas-panel";
 import { HintBar } from "@/features/workspace/hint-bar/hint-bar";
 import { MapView } from "@/features/workspace/map/map-view";
@@ -25,6 +27,7 @@ export function Workspace() {
   const { closeRight, closeLeft } = useStore(store, (state) => state.actions);
   const [areaStore] = useState(createAreaStore);
   const { cancelDrawing } = useStore(areaStore, (state) => state.actions);
+  const [layersStore] = useState(createLayersStore);
 
   // close the panels and cancel a drawing on Esc
   useEffect(() => {
@@ -45,39 +48,42 @@ export function Workspace() {
     <MapProvider>
       <WorkspaceStoreContext value={store}>
         <AreaStoreContext value={areaStore}>
-          <MapView>
-            <AreaDraw />
-            <AreaSizeLabel />
-          </MapView>
-          <TopBar />
-          <div className="pointer-events-none absolute top-17 bottom-3 left-3 z-10 flex items-start gap-2">
-            <Toolbar />
-            {left && (
+          <LayersStoreContext value={layersStore}>
+            <MapView>
+              <AreaDraw />
+              <AreaSizeLabel />
+              <ResultLayers />
+            </MapView>
+            <TopBar />
+            <div className="pointer-events-none absolute top-17 bottom-3 left-3 z-10 flex items-start gap-2">
+              <Toolbar />
+              {left && (
+                <div
+                  key={left}
+                  className={cn(column, "self-stretch animate-in duration-200 fade-in slide-in-from-left-2")}
+                >
+                  {left === "layers" && <FloatingCard title="Layers" onClose={closeLeft} />}
+                  {left === "bounds" && <BoundsInspector onClose={closeLeft} />}
+                </div>
+              )}
+            </div>
+            {right && (
               <div
-                key={left}
-                className={cn(column, "self-stretch animate-in duration-200 fade-in slide-in-from-left-2")}
+                key={right}
+                className={cn(
+                  column,
+                  "absolute top-17 right-3 bottom-3 z-10 animate-in duration-200 fade-in slide-in-from-right-2",
+                )}
               >
-                {left === "layers" && <FloatingCard title="Layers" onClose={closeLeft} />}
-                {left === "bounds" && <BoundsInspector onClose={closeLeft} />}
+                {right === "bookmarks" && <SavedAreasPanel onClose={closeRight} />}
+                {right === "datasets" && <DatasetsPanel kind="datasets" onClose={closeRight} />}
+                {right === "simulations" && <DatasetsPanel kind="simulations" onClose={closeRight} />}
+                {right === "downloads" && <DownloadsPanel onClose={closeRight} />}
+                {right === "upload" && <FloatingCard title="Upload" onClose={closeRight} />}
               </div>
             )}
-          </div>
-          {right && (
-            <div
-              key={right}
-              className={cn(
-                column,
-                "absolute top-17 right-3 bottom-3 z-10 animate-in duration-200 fade-in slide-in-from-right-2",
-              )}
-            >
-              {right === "bookmarks" && <SavedAreasPanel onClose={closeRight} />}
-              {right === "datasets" && <DatasetsPanel kind="datasets" onClose={closeRight} />}
-              {right === "simulations" && <DatasetsPanel kind="simulations" onClose={closeRight} />}
-              {right === "downloads" && <DownloadsPanel onClose={closeRight} />}
-              {right === "upload" && <FloatingCard title="Upload" onClose={closeRight} />}
-            </div>
-          )}
-          <HintBar />
+            <HintBar />
+          </LayersStoreContext>
         </AreaStoreContext>
       </WorkspaceStoreContext>
     </MapProvider>
