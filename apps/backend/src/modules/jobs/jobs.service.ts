@@ -1,7 +1,7 @@
 import type { Readable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import type { CreateJobBody, Job, JobArtifact, JobPage, OffsetPaginationQuery } from "@repo/contracts";
+import type { CreateJobBody, Job, JobArtifactMetadata, JobPage, OffsetPaginationQuery } from "@repo/contracts";
 import { EngineClient, type EngineJob } from "../../infra/engine/engine.client.js";
 import { EngineUnavailableError } from "../../infra/engine/engine.errors.js";
 import { PackageStorage, type ManifestArtifact } from "../../infra/storage/package-storage.js";
@@ -76,9 +76,9 @@ export class JobsService {
   }
 
   /** Where the map places the extra file in the completed job's package, and its legend. */
-  async artifactMetadata(userId: string, id: string): Promise<JobArtifact> {
+  async artifactMetadata(userId: string, id: string): Promise<JobArtifactMetadata> {
     const job = await this.completed(userId, id);
-    const artifact = await this.storage.readArtifact(job.id);
+    const artifact = await this.storage.artifactEntry(job.id);
     if (!artifact) throw new NotFoundException(`Job ${id} has no artifact`);
     return {
       format: artifact.format,
@@ -127,7 +127,7 @@ export class JobsService {
 }
 
 // An image in its own colors, such as an aerial photo, has no colormap or value range, and so no legend.
-function legendOf(rendering: ManifestArtifact["rendering"]): JobArtifact["legend"] {
+function legendOf(rendering: ManifestArtifact["rendering"]): JobArtifactMetadata["legend"] {
   if (!rendering?.colormap || !rendering.value_range) return null;
   const { field, unit, value_range: valueRange, colormap } = rendering;
   return { field, unit, valueRange, colormap };

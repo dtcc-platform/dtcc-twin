@@ -1,7 +1,7 @@
-import type { JobArtifact } from "@repo/contracts";
+import type { JobArtifactMetadata } from "@repo/contracts";
 import { humanize } from "@/lib/humanize";
 
-type Legend = NonNullable<JobArtifact["legend"]>;
+type Legend = NonNullable<JobArtifactMetadata["legend"]>;
 
 const valueFormat = new Intl.NumberFormat("en", { maximumSignificantDigits: 3 });
 

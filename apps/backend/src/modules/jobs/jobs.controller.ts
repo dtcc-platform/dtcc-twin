@@ -2,14 +2,14 @@ import { Body, Controller, Get, HttpStatus, Logger, Param, Post, Query, Res, Str
 import {
   createJobBodySchema,
   idParamsSchema,
-  jobArtifactSchema,
+  jobArtifactMetadataSchema,
   jobPageSchema,
   jobSchema,
   offsetPaginationQuerySchema,
   type CreateJobBody,
   type IdParams,
   type Job,
-  type JobArtifact,
+  type JobArtifactMetadata,
   type JobPage,
   type OffsetPaginationQuery,
 } from "@repo/contracts";
@@ -62,11 +62,11 @@ export class JobsController {
   }
 
   @Get(":id/artifact/metadata")
-  @Serialize(jobArtifactSchema)
+  @Serialize(jobArtifactMetadataSchema)
   artifactMetadata(
     @CurrentUser() user: AuthUser,
     @Param({ schema: idParamsSchema }) { id }: IdParams,
-  ): Promise<JobArtifact> {
+  ): Promise<JobArtifactMetadata> {
     return this.jobs.artifactMetadata(user.userId, id);
   }
 

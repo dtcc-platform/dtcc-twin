@@ -1,4 +1,4 @@
-import type { CreateJobBody, Job, JobArtifact, JobPage } from "@repo/contracts";
+import type { CreateJobBody, Job, JobArtifactMetadata, JobPage } from "@repo/contracts";
 import { mutationOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "./client/api-client.ts";
 
@@ -50,7 +50,8 @@ export const jobQueries = {
   artifactMetadata: (id: string) =>
     queryOptions({
       queryKey: [...artifacts, "metadata", id],
-      queryFn: async ({ signal }) => (await api.get<JobArtifact>(`/jobs/${id}/artifact/metadata`, { signal })).data,
+      queryFn: async ({ signal }) =>
+        (await api.get<JobArtifactMetadata>(`/jobs/${id}/artifact/metadata`, { signal })).data,
       staleTime: Infinity,
     }),
 };

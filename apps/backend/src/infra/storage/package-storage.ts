@@ -11,7 +11,7 @@ import { openPromise, type Entry, type ZipFile } from "yauzl";
 import { z } from "zod";
 import type { Env } from "../../config/env.schema.js";
 
-// The part of an artifact's entry in a package's manifest.json, Core's dtcc-dataset-manifest-v3, that the backend reads.
+// The part of an artifact's entry in manifest.json (Core's dtcc-dataset-manifest-v3) that the backend reads.
 const manifestArtifactSchema = z.object({
   path: z.string(),
   role: z.string(),
@@ -78,8 +78,8 @@ export class PackageStorage {
     });
   }
 
-  /** The derived artifact's manifest entry in the package under `key`, or null when it has none. */
-  async readArtifact(key: string): Promise<ManifestArtifact | null> {
+  /** The derived artifact's manifest entry in the package under `key`, or null. Throws as `openArtifact` does. */
+  async artifactEntry(key: string): Promise<ManifestArtifact | null> {
     return this.withPackage(key, ({ artifact }) => artifact?.manifest ?? null);
   }
 
