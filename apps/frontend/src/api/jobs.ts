@@ -1,6 +1,6 @@
 import type { CreateJobBody, Job, JobArtifactMetadata, JobPage } from "@repo/contracts";
 import { mutationOptions, queryOptions } from "@tanstack/react-query";
-import { api } from "./client/api-client.ts";
+import { api, apiBaseUrl } from "./client/api-client.ts";
 
 const all = ["jobs"] as const;
 // Outside `all`: a job's artifact never changes, so submitting a job mustn't refetch each one drawn on the map.
@@ -11,7 +11,7 @@ export type JobFile = "package" | "artifact";
 
 /** Where a completed job's file is, for a link or for the map to load itself. */
 export function jobFileUrl(id: string, file: JobFile): string {
-  return `${api.defaults.baseURL ?? ""}/jobs/${id}/${file}`;
+  return `${apiBaseUrl}/jobs/${id}/${file}`;
 }
 
 /** A job still waiting or running, whose state the backend refreshes from the engine on every read. */

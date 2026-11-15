@@ -9,10 +9,12 @@ declare module "axios" {
   }
 }
 
+// The dev server proxies /api to the backend (vite.config.ts).
+export const apiBaseUrl = import.meta.env.VITE_API_URL ?? "/api";
+
 export function createApiClient(config: CreateAxiosDefaults = {}) {
   const client = axios.create({
-    // dev server proxies /api to the backend in vite config
-    baseURL: import.meta.env.VITE_API_URL ?? "/api",
+    baseURL: apiBaseUrl,
     withCredentials: true,
     // repeated keys to arrays rather than using the brackets notation
     paramsSerializer: { indexes: null },
