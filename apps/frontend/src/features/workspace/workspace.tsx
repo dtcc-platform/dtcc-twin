@@ -10,6 +10,7 @@ import { DatasetsPanel } from "@/features/datasets/datasets-panel";
 import { DownloadsPanel } from "@/features/jobs/downloads-panel";
 import { LayersStoreContext, createLayersStore } from "@/features/layers/layers-store";
 import { ResultLayers } from "@/features/layers/map/result-layers";
+import { LayersPanel } from "@/features/layers/panel/layers-panel";
 import { SavedAreasPanel } from "@/features/saved-areas/saved-areas-panel";
 import { HintBar } from "@/features/workspace/hint-bar/hint-bar";
 import { MapView } from "@/features/workspace/map/map-view";
@@ -62,7 +63,7 @@ export function Workspace() {
                   key={left}
                   className={cn(column, "self-stretch animate-in duration-200 fade-in slide-in-from-left-2")}
                 >
-                  {left === "layers" && <FloatingCard title="Layers" onClose={closeLeft} />}
+                  {left === "layers" && <LayersPanel onClose={closeLeft} />}
                   {left === "bounds" && <BoundsInspector onClose={closeLeft} />}
                 </div>
               )}
