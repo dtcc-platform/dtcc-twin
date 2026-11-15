@@ -12,6 +12,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { FieldError, FieldGroup } from "@/components/ui/field";
 import { areaBounds } from "@/features/area/area";
 import { useAreaStore } from "@/features/area/area-store";
+import { useLayersStore } from "@/features/layers/layers-store";
 import { useWorkspaceStore } from "@/features/workspace/workspace-store";
 import { drawsOnMap } from "@/lib/artifact-formats";
 import { DatasetFieldControl } from "./dataset-field-control.tsx";
@@ -42,19 +43,29 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
   const format = jobFormat(choices, chosenFormat);
 
   const create = useMutation(jobMutations.create());
-  const { setRight } = useWorkspaceStore((state) => state.actions);
+  const { setRight, setLeft } = useWorkspaceStore((state) => state.actions);
+  const { add: addLayer } = useLayersStore((state) => state.actions);
   const runnable = area !== null && me.data?.status === "active" && !create.isPending;
 
-  function submit(values: DatasetFormValues) {
+  function submit(values: DatasetFormValues, action: "add-to-area" | "download") {
     if (!area) return;
     const body: CreateJobBody = { dataset: dataset.name, parameters: jobParameters(fields, values, areaBounds(area)) };
     if (format !== null) body.artifactFormat = format;
     create.mutate(body, {
-      onSuccess: () =>
+      onSuccess: (job) => {
+        if (action === "download") {
+          toast.success("Job submitted", {
+            description: dataset.title,
+            action: { label: "View in Downloads", onClick: () => setRight("downloads") },
+          });
+          return;
+        }
+        addLayer({ jobId: job.id, title: dataset.title });
         toast.success("Job submitted", {
-          description: dataset.title,
-          action: { label: "View in Downloads", onClick: () => setRight("downloads") },
-        }),
+          description: `${dataset.title} shows on the map when it's done`,
+          action: { label: "View layers", onClick: () => setLeft("layers") },
+        });
+      },
       onError: (error) => {
         if (error instanceof ApiError && error.body?.code === "TOO_MANY_REQUESTS") {
           toast.error("Hourly job limit reached", { description: error.message });
@@ -68,7 +79,7 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
   }
 
   return (
-    <form onSubmit={(event) => void form.handleSubmit(submit)(event)} noValidate>
+    <form onSubmit={(event) => void form.handleSubmit((values) => submit(values, "add-to-area"))(event)} noValidate>
       <FieldGroup className="gap-5">
         {fields.map((field) => (
           <DatasetFieldControl key={field.name} control={form.control} field={field} />
@@ -89,12 +100,17 @@ export function DatasetForm({ dataset }: { dataset: Dataset }) {
           </Link>
         ) : (
           <>
-            {/* Both only submit the job for now. */}
             <div className="flex gap-2">
               <Button type="submit" className="flex-1" disabled={!runnable || !drawsOnMap(format)}>
                 Add to area
               </Button>
-              <Button type="submit" variant="outline" className="flex-1" disabled={!runnable}>
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                disabled={!runnable}
+                onClick={() => void form.handleSubmit((values) => submit(values, "download"))()}
+              >
                 Download
               </Button>
             </div>
