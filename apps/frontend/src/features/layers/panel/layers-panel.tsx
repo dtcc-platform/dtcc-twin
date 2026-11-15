@@ -3,6 +3,7 @@ import { XIcon } from "lucide-react";
 import { jobQueries } from "@/api/jobs";
 import { FloatingCard } from "@/components/common/floating-card";
 import { Button } from "@/components/ui/button";
+import { ImageLegend } from "./image-legend.tsx";
 import { layerStatus } from "./layer-status.ts";
 import { useLayersStore, type ResultLayer } from "../layers-store.ts";
 
@@ -37,6 +38,7 @@ function LayerItem({ layer }: { layer: ResultLayer }) {
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{layer.title}</p>
         <p className="text-xs text-muted-foreground">{job.isError ? job.error.message : layerStatus(job.data)}</p>
+        {job.data?.state === "completed" && job.data.artifactFormat === "png" && <ImageLegend jobId={layer.jobId} />}
       </div>
       <Button
         variant="ghost"
