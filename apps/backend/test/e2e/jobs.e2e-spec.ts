@@ -539,26 +539,31 @@ describe("Jobs (e2e)", () => {
     });
   });
 
+  // Real packages from DTCC Engine: a smoke slice with a PNG, and one without an extra file.
+  let withPng: Buffer;
+  let withoutArtifact: Buffer;
+
+  async function fixture(name: string): Promise<Buffer> {
+    return readFile(new URL(`../fixtures/${name}`, import.meta.url));
+  }
+
+  async function completedWith(agent: Agent, packageBytes: Buffer): Promise<Job> {
+    const job = await submit(agent);
+    engine.completeJob(lastEngineJobId(), packageBytes);
+    return read(agent, job.id);
+  }
+
   describe("GET /api/jobs/:id/artifact", () => {
-    // Real packages from DTCC Engine: a smoke slice with a PNG, and one without an extra file.
-    let withPng: Buffer;
-    let withoutArtifact: Buffer;
     // The PNG's SHA-256, from that package's manifest.
     const pngSha256 = "2f6a7fde84db9b1c2451b65bdccb57f4395a06927e8d061152e0f34bf994edd1";
 
     beforeAll(async () => {
-      withPng = await readFile(new URL("../fixtures/smoke-slice-png.dtccpkg", import.meta.url));
-      withoutArtifact = await readFile(new URL("../fixtures/smoke-slice.dtccpkg", import.meta.url));
+      withPng = await fixture("smoke-slice-png.dtccpkg");
+      withoutArtifact = await fixture("smoke-slice.dtccpkg");
     });
 
-    async function completed(agent: Agent, packageBytes: Buffer): Promise<Job> {
-      const job = await submit(agent);
-      engine.completeJob(lastEngineJobId(), packageBytes);
-      return read(agent, job.id);
-    }
-
     it("serves the extra file in a completed job's package, with its media type", async () => {
-      const job = await completed(ada, withPng);
+      const job = await completedWith(ada, withPng);
 
       const response = await ada.get(`/api/jobs/${job.id}/artifact`).buffer(true).parse(binary).expect(200);
 
@@ -570,8 +575,8 @@ describe("Jobs (e2e)", () => {
 
     // The real package with its PNG relabelled: the manifest's media type isn't trusted for formats the API doesn't know.
     it("serves an extra file of a format it doesn't know as plain bytes, named after the format", async () => {
-      const unknown = await readFile(new URL("../fixtures/smoke-slice-unknown-format.dtccpkg", import.meta.url));
-      const job = await completed(ada, unknown);
+      const unknown = await fixture("smoke-slice-unknown-format.dtccpkg");
+      const job = await completedWith(ada, unknown);
 
       const response = await ada.get(`/api/jobs/${job.id}/artifact`).buffer(true).parse(binary).expect(200);
 
@@ -580,7 +585,7 @@ describe("Jobs (e2e)", () => {
     });
 
     it("answers NOT_FOUND for a completed job whose package has no extra file", async () => {
-      const job = await completed(ada, withoutArtifact);
+      const job = await completedWith(ada, withoutArtifact);
 
       const response = await ada.get(`/api/jobs/${job.id}/artifact`).expect(404);
 
@@ -590,12 +595,12 @@ describe("Jobs (e2e)", () => {
     // Each from the real package: one isn't a ZIP, one lists a PNG it doesn't hold, one has its PNG's bytes flipped.
     it("answers INTERNAL_ERROR for a package it can't read the extra file from", async () => {
       vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
-      const missing = await readFile(new URL("../fixtures/smoke-slice-png-missing.dtccpkg", import.meta.url));
-      const corrupt = await readFile(new URL("../fixtures/smoke-slice-png-corrupt.dtccpkg", import.meta.url));
+      const missing = await fixture("smoke-slice-png-missing.dtccpkg");
+      const corrupt = await fixture("smoke-slice-png-corrupt.dtccpkg");
 
       const statuses: number[] = [];
       for (const packageBytes of [randomBytes(4096), missing, corrupt]) {
-        const job = await completed(ada, packageBytes);
+        const job = await completedWith(ada, packageBytes);
         statuses.push((await ada.get(`/api/jobs/${job.id}/artifact`)).status);
       }
 
@@ -611,7 +616,7 @@ describe("Jobs (e2e)", () => {
     });
 
     it("answers NOT_FOUND for another user's job, as for one that does not exist", async () => {
-      const graces = await completed(grace, withPng);
+      const graces = await completedWith(grace, withPng);
 
       const other = await ada.get(`/api/jobs/${graces.id}/artifact`).expect(404);
       const missing = await ada.get(`/api/jobs/${missingId}/artifact`).expect(404);
@@ -626,54 +631,72 @@ describe("Jobs (e2e)", () => {
 
       expect(errorResponseSchema.parse(response.body).error.code).toBe("VALIDATION_FAILED");
     });
+  });
 
-    describe("GET /api/jobs/:id/artifact/metadata", () => {
-      // The values in the PNG's manifest entry, as Core wrote them.
-      it("says where the map places an image, and what its colors stand for", async () => {
-        const job = await completed(ada, withPng);
+  describe("GET /api/jobs/:id/artifact/metadata", () => {
+    beforeAll(async () => {
+      withPng = await fixture("smoke-slice-png.dtccpkg");
+      withoutArtifact = await fixture("smoke-slice.dtccpkg");
+    });
 
-        const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(200);
+    // The values in the PNG's manifest entry, as Core wrote them.
+    it("says where the map places an image, and what its colors stand for", async () => {
+      const job = await completedWith(ada, withPng);
 
-        expect(response.body).toEqual({
-          format: "png",
-          boundsWgs84: [11.976970530546582, 57.70405950028257, 11.980747861783474, 57.70607764364638],
-          legend: { field: "speed", unit: "m/s", valueRange: [0, 11.21410308244582], colormap: "viridis" },
-        });
+      const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(200);
+
+      expect(response.body).toEqual({
+        format: "png",
+        boundsWgs84: [11.976970530546582, 57.70405950028257, 11.980747861783474, 57.70607764364638],
+        legend: { field: "speed", unit: "m/s", valueRange: [0, 11.21410308244582], colormap: "viridis" },
       });
+    });
 
-      it("places GeoJSON by its own coordinates, with no legend", async () => {
-        const geojson = await readFile(new URL("../fixtures/calibration-grid-geojson.dtccpkg", import.meta.url));
-        const job = await completed(ada, geojson);
+    it("places GeoJSON by its own coordinates, with no legend", async () => {
+      const geojson = await fixture("calibration-grid-geojson.dtccpkg");
+      const job = await completedWith(ada, geojson);
 
-        const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(200);
+      const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(200);
 
-        expect(response.body).toEqual({ format: "geojson", boundsWgs84: null, legend: null });
+      expect(response.body).toEqual({ format: "geojson", boundsWgs84: null, legend: null });
+    });
+
+    // Core's aerial photo fixture: a placed PNG in its own colors.
+    it("places an image in its own colors with no legend", async () => {
+      const job = await completedWith(ada, await fixture("orthophoto-raster-png.dtccpkg"));
+
+      const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(200);
+
+      expect(response.body).toEqual({
+        format: "png",
+        boundsWgs84: [11.97089521245672, 57.701361749762576, 11.970962340229367, 57.70138865115344],
+        legend: null,
       });
+    });
 
-      it("answers NOT_FOUND for a package without an extra file, or another user's job", async () => {
-        const job = await completed(ada, withoutArtifact);
-        const graces = await completed(grace, withPng);
+    it("answers NOT_FOUND for a package without an extra file, or another user's job", async () => {
+      const job = await completedWith(ada, withoutArtifact);
+      const graces = await completedWith(grace, withPng);
 
-        await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(404);
-        const response = await ada.get(`/api/jobs/${graces.id}/artifact/metadata`).expect(404);
+      await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(404);
+      const response = await ada.get(`/api/jobs/${graces.id}/artifact/metadata`).expect(404);
 
-        expect(errorResponseSchema.parse(response.body).error.code).toBe("NOT_FOUND");
-      });
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("NOT_FOUND");
+    });
 
-      it("answers CONFLICT for a job that hasn't completed", async () => {
-        const job = await submit(ada);
+    it("answers CONFLICT for a job that hasn't completed", async () => {
+      const job = await submit(ada);
 
-        const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(409);
+      const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(409);
 
-        expect(errorResponseSchema.parse(response.body).error.code).toBe("CONFLICT");
-      });
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("CONFLICT");
+    });
 
-      it("needs a logged-in user and a job id", async () => {
-        await request(app.getHttpServer()).get(`/api/jobs/${missingId}/artifact/metadata`).expect(401);
-        const response = await ada.get("/api/jobs/not-a-uuid/artifact/metadata").expect(400);
+    it("needs a logged-in user and a job id", async () => {
+      await request(app.getHttpServer()).get(`/api/jobs/${missingId}/artifact/metadata`).expect(401);
+      const response = await ada.get("/api/jobs/not-a-uuid/artifact/metadata").expect(400);
 
-        expect(errorResponseSchema.parse(response.body).error.code).toBe("VALIDATION_FAILED");
-      });
+      expect(errorResponseSchema.parse(response.body).error.code).toBe("VALIDATION_FAILED");
     });
   });
 });
