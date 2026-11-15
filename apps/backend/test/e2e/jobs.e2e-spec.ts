@@ -547,6 +547,11 @@ describe("Jobs (e2e)", () => {
     return readFile(new URL(`../fixtures/${name}`, import.meta.url));
   }
 
+  beforeAll(async () => {
+    withPng = await fixture("smoke-slice-png.dtccpkg");
+    withoutArtifact = await fixture("smoke-slice.dtccpkg");
+  });
+
   async function completedWith(agent: Agent, packageBytes: Buffer): Promise<Job> {
     const job = await submit(agent);
     engine.completeJob(lastEngineJobId(), packageBytes);
@@ -556,11 +561,6 @@ describe("Jobs (e2e)", () => {
   describe("GET /api/jobs/:id/artifact", () => {
     // The PNG's SHA-256, from that package's manifest.
     const pngSha256 = "2f6a7fde84db9b1c2451b65bdccb57f4395a06927e8d061152e0f34bf994edd1";
-
-    beforeAll(async () => {
-      withPng = await fixture("smoke-slice-png.dtccpkg");
-      withoutArtifact = await fixture("smoke-slice.dtccpkg");
-    });
 
     it("serves the extra file in a completed job's package, with its media type", async () => {
       const job = await completedWith(ada, withPng);
@@ -634,11 +634,6 @@ describe("Jobs (e2e)", () => {
   });
 
   describe("GET /api/jobs/:id/artifact/metadata", () => {
-    beforeAll(async () => {
-      withPng = await fixture("smoke-slice-png.dtccpkg");
-      withoutArtifact = await fixture("smoke-slice.dtccpkg");
-    });
-
     // The values in the PNG's manifest entry, as Core wrote them.
     it("says where the map places an image, and what its colors stand for", async () => {
       const job = await completedWith(ada, withPng);
