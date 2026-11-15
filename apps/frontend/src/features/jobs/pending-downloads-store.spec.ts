@@ -30,4 +30,15 @@ describe("createPendingDownloadsStore", () => {
 
     expect(store.getState().downloads).toEqual([{ jobId: "b", title: "Trees" }]);
   });
+
+  // Only the caller that removes the job may download it.
+  it("says whether it was still waiting for the job it stops waiting for", () => {
+    const store = createPendingDownloadsStore();
+    const { add, remove } = store.getState().actions;
+
+    add({ jobId: "a", title: "Roads" });
+
+    expect(remove("a")).toBe(true);
+    expect(remove("a")).toBe(false);
+  });
 });

@@ -34,27 +34,23 @@ function PendingDownloads() {
 function PendingJob({ download: { jobId, title } }: { download: PendingDownload }) {
   const job = useQuery(jobQueries.detail(jobId));
   const { remove } = usePendingDownloadsStore((state) => state.actions);
-  const { mutate, isIdle } = useMutation(jobMutations.download());
-  const step = pendingDownloadStep(job.data);
+  const { mutateAsync } = useMutation(jobMutations.download());
+  // A lookup that failed even after its retries leaves nothing to wait for.
+  const step = job.isError && !job.data ? "give-up" : pendingDownloadStep(job.data);
+  const failure = job.data?.error ?? (job.isError ? job.error.message : "The job didn't complete");
 
-  // An effect, since the job finishing is no user event. Waiting ends once the download has started, so it runs once.
+  // An effect, since the job finishing is no user event. Only the run that removes the job goes on to download it.
   useEffect(() => {
-    if (step === "wait" || !isIdle) return;
+    if (step === "wait" || !remove(jobId)) return;
     if (step === "give-up") {
-      toast.error(`${title} has nothing to download`, { description: "The job didn't complete" });
-      remove(jobId);
+      toast.error(`${title} has nothing to download`, { description: failure });
       return;
     }
-    mutate(
-      { id: jobId, file: step },
-      {
-        onError: (error) => toast.error(error.message),
-        onSettled: () => {
-          remove(jobId);
-        },
-      },
-    );
-  }, [step, isIdle, jobId, title, remove, mutate]);
+    // The promise, not mutate's callbacks: removing the job has unmounted this before the download settles.
+    mutateAsync({ id: jobId, file: step }).catch((error: unknown) => {
+      toast.error(`${title} didn't download`, { description: error instanceof Error ? error.message : String(error) });
+    });
+  }, [step, failure, jobId, title, remove, mutateAsync]);
 
   return null;
 }

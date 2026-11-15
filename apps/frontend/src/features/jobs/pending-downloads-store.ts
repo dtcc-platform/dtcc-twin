@@ -6,7 +6,11 @@ export type PendingDownload = { jobId: string; title: string };
 
 type PendingDownloadsState = {
   downloads: PendingDownload[];
-  actions: { add: (download: PendingDownload) => void; remove: (jobId: string) => void };
+  actions: {
+    add: (download: PendingDownload) => void;
+    /** Stops waiting for the job, and says whether it was still waiting for it. */
+    remove: (jobId: string) => boolean;
+  };
 };
 
 export type PendingDownloadsStore = ReturnType<typeof createPendingDownloadsStore>;
@@ -19,7 +23,12 @@ export function createPendingDownloadsStore() {
         if (get().downloads.some((pending) => pending.jobId === download.jobId)) return;
         set({ downloads: [...get().downloads, download] });
       },
-      remove: (jobId) => set({ downloads: get().downloads.filter((pending) => pending.jobId !== jobId) }),
+      remove: (jobId) => {
+        const downloads = get().downloads.filter((pending) => pending.jobId !== jobId);
+        if (downloads.length === get().downloads.length) return false;
+        set({ downloads });
+        return true;
+      },
     },
   }));
 }
