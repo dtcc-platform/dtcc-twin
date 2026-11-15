@@ -1,12 +1,13 @@
 import type { Job, JobState } from "@repo/contracts";
 import { useMutation } from "@tanstack/react-query";
-import { BanIcon, CircleCheckIcon, CircleXIcon, ClockIcon, DownloadIcon } from "lucide-react";
+import { BanIcon, CircleCheckIcon, CircleXIcon, ClockIcon, DownloadIcon, LayersIcon } from "lucide-react";
 import { toast } from "sonner";
 import { jobMutations, type JobFile } from "@/api/jobs";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
-import { artifactFormatLabel } from "@/lib/artifact-formats";
+import { useLayersStore } from "@/features/layers/layers-store";
+import { artifactFormatLabel, drawsOnMap } from "@/lib/artifact-formats";
 import { formatRelativeTime } from "@/lib/relative-time";
 
 const stateLabels: Record<JobState, string> = {
@@ -52,6 +53,25 @@ function DownloadButton({ jobId, file, label }: DownloadButtonProps) {
   );
 }
 
+function ShowOnMapButton({ jobId, title }: { jobId: string; title: string }) {
+  const onMap = useLayersStore((state) => state.layers.some((layer) => layer.jobId === jobId));
+  const { add } = useLayersStore((state) => state.actions);
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={onMap}
+      onClick={() => {
+        add({ jobId, title });
+      }}
+    >
+      <LayersIcon />
+      {onMap ? "On the map" : "Show on map"}
+    </Button>
+  );
+}
+
 /** One job in the Downloads panel: its state and progress, and its package and artifact once it has them. */
 export function JobItem({ job, title }: { job: Job; title: string }) {
   return (
@@ -73,6 +93,7 @@ export function JobItem({ job, title }: { job: Job; title: string }) {
           {job.artifactFormat && (
             <DownloadButton jobId={job.id} file="artifact" label={artifactFormatLabel(job.artifactFormat)} />
           )}
+          {drawsOnMap(job.artifactFormat) && <ShowOnMapButton jobId={job.id} title={title} />}
         </div>
       )}
       {job.state === "running" && (
