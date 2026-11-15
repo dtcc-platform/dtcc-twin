@@ -1,6 +1,8 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { MapProvider } from "react-map-gl/maplibre";
 import { useStore } from "zustand";
+import { authQueries } from "@/api/auth";
 import { FloatingCard } from "@/components/common/floating-card";
 import { AreaDraw } from "@/features/area/box/area-draw";
 import { AreaSizeLabel } from "@/features/area/box/area-size-label";
@@ -28,7 +30,10 @@ export function Workspace() {
   const { closeRight, closeLeft } = useStore(store, (state) => state.actions);
   const [areaStore] = useState(createAreaStore);
   const { cancelDrawing } = useStore(areaStore, (state) => state.actions);
-  const [layersStore] = useState(createLayersStore);
+  // A fresh store whenever the logged-in user changes, so no one sees, or polls, another user's results.
+  const userId = useQuery(authQueries.me()).data?.id ?? null;
+  const [layers, setLayers] = useState(() => ({ userId, store: createLayersStore() }));
+  if (layers.userId !== userId) setLayers({ userId, store: createLayersStore() });
 
   // close the panels and cancel a drawing on Esc
   useEffect(() => {
@@ -49,7 +54,7 @@ export function Workspace() {
     <MapProvider>
       <WorkspaceStoreContext value={store}>
         <AreaStoreContext value={areaStore}>
-          <LayersStoreContext value={layersStore}>
+          <LayersStoreContext value={layers.store}>
             <MapView>
               <AreaDraw />
               <AreaSizeLabel />
