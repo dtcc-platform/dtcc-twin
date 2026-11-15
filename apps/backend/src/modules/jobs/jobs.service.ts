@@ -1,10 +1,10 @@
 import type { Readable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import type { CreateJobBody, Job, JobPage, OffsetPaginationQuery } from "@repo/contracts";
+import type { CreateJobBody, Job, JobArtifact, JobPage, OffsetPaginationQuery } from "@repo/contracts";
 import { EngineClient, type EngineJob } from "../../infra/engine/engine.client.js";
 import { EngineUnavailableError } from "../../infra/engine/engine.errors.js";
-import { PackageStorage } from "../../infra/storage/package-storage.js";
+import { PackageStorage, type ManifestArtifact } from "../../infra/storage/package-storage.js";
 import { UsersService } from "../users/users.service.js";
 import { JobLimit } from "./job-limit.js";
 import { JobsRepository, type JobChanges, type StoredJob } from "./jobs.repository.js";
@@ -75,6 +75,18 @@ export class JobsService {
     return { content: artifact.content, fileName, mediaType: artifactMediaTypes.get(artifact.format) ?? octetStream };
   }
 
+  /** Where the map places the extra file in the completed job's package, and its legend. */
+  async artifactMetadata(userId: string, id: string): Promise<JobArtifact> {
+    const job = await this.completed(userId, id);
+    const artifact = await this.storage.readArtifact(job.id);
+    if (!artifact) throw new NotFoundException(`Job ${id} has no artifact`);
+    return {
+      format: artifact.format,
+      boundsWgs84: artifact.placement?.bounds_wgs84 ?? null,
+      legend: legendOf(artifact.rendering),
+    };
+  }
+
   private async completed(userId: string, id: string): Promise<Job> {
     const job = await this.get(userId, id);
     if (job.state !== "completed") throw new ConflictException(`Job ${id} has not completed`);
@@ -112,6 +124,13 @@ export class JobsService {
     const completed = await this.repository.complete(job.userId, job.id);
     return completed ?? job;
   }
+}
+
+// An image in its own colors, such as an aerial photo, has no colormap or value range, and so no legend.
+function legendOf(rendering: ManifestArtifact["rendering"]): JobArtifact["legend"] {
+  if (!rendering?.colormap || !rendering.value_range) return null;
+  const { field, unit, value_range: valueRange, colormap } = rendering;
+  return { field, unit, valueRange, colormap };
 }
 
 function changesFrom(engineJob: EngineJob | null): JobChanges {

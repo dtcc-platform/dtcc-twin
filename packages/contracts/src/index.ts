@@ -63,12 +63,14 @@ export {
 } from "./items/items.js";
 export {
   createJobBodySchema,
+  jobArtifactSchema,
   jobPageSchema,
   jobProgressSchema,
   jobSchema,
   jobStateSchema,
   type CreateJobBody,
   type Job,
+  type JobArtifact,
   type JobPage,
   type JobProgress,
   type JobState,

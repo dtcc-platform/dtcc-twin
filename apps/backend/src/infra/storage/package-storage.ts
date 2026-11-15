@@ -7,17 +7,34 @@ import { text } from "node:stream/consumers";
 import { pipeline } from "node:stream/promises";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { openPromise, type Entry } from "yauzl";
+import { openPromise, type Entry, type ZipFile } from "yauzl";
 import { z } from "zod";
 import type { Env } from "../../config/env.schema.js";
 
-// The part of a package's manifest.json, Core's dtcc-dataset-manifest-v3, that the backend reads.
-const manifestSchema = z.object({
-  artifacts: z.array(z.object({ path: z.string(), role: z.string(), format: z.string().regex(/^[a-z0-9]+$/) })),
+// The part of an artifact's entry in a package's manifest.json, Core's dtcc-dataset-manifest-v3, that the backend reads.
+const manifestArtifactSchema = z.object({
+  path: z.string(),
+  role: z.string(),
+  format: z.string().regex(/^[a-z0-9]+$/),
+  placement: z.object({ bounds_wgs84: z.tuple([z.number(), z.number(), z.number(), z.number()]) }).nullish(),
+  rendering: z
+    .object({
+      field: z.string().nullable(),
+      unit: z.string().nullable(),
+      value_range: z.tuple([z.number(), z.number()]).nullable(),
+      colormap: z.string().nullable(),
+    })
+    .nullish(),
 });
+const manifestSchema = z.object({ artifacts: z.array(manifestArtifactSchema) });
+
+/** The extra file's entry in a package's manifest, as Core wrote it. */
+export type ManifestArtifact = z.infer<typeof manifestArtifactSchema>;
 
 /** The extra file Core added to a package: its format, such as `geojson`, and its content. */
 export type PackageArtifact = { format: string; content: Readable };
+
+type PackageContents = { zip: ZipFile; entries: Map<string, Entry>; artifact: ManifestArtifact | null };
 
 /** Stores DTCC Engine packages under PACKAGE_STORAGE_DIR, one file per key. will be replaced with object storage in the future */
 @Injectable()
@@ -55,6 +72,21 @@ export class PackageStorage {
 
   /** The derived artifact of the package under `key`, or null when it has none. Throws when there is no package. */
   async openArtifact(key: string): Promise<PackageArtifact | null> {
+    return this.withPackage(key, async ({ zip, entries, artifact }) => {
+      if (!artifact) return null;
+      const entry = entries.get(artifact.path);
+      if (!entry) throw new Error(`Package ${key} lists ${artifact.path} but doesn't hold it`);
+      return { format: artifact.format, content: await zip.openReadStreamPromise(entry) };
+    });
+  }
+
+  /** The derived artifact's manifest entry in the package under `key`, or null when it has none. */
+  async readArtifact(key: string): Promise<ManifestArtifact | null> {
+    return this.withPackage(key, ({ artifact }) => artifact);
+  }
+
+  /** Opens the package under `key` for `use`, with its entries and its derived artifact's manifest entry. */
+  private async withPackage<T>(key: string, use: (contents: PackageContents) => T | Promise<T>): Promise<T> {
     const zip = await openPromise(this.pathOf(key), { lazyEntries: true, autoClose: false });
     try {
       const entries = new Map<string, Entry>();
@@ -64,13 +96,10 @@ export class PackageStorage {
       if (!manifestEntry) throw new Error(`Package ${key} has no manifest.json`);
       const manifest = manifestSchema.parse(JSON.parse(await text(await zip.openReadStreamPromise(manifestEntry))));
 
-      const artifact = manifest.artifacts.find((candidate) => candidate.role === "derived");
-      if (!artifact) return null;
-      const entry = entries.get(artifact.path);
-      if (!entry) throw new Error(`Package ${key} lists ${artifact.path} but doesn't hold it`);
-      return { format: artifact.format, content: await zip.openReadStreamPromise(entry) };
+      const artifact = manifest.artifacts.find((candidate) => candidate.role === "derived") ?? null;
+      return await use({ zip, entries, artifact });
     } finally {
-      // The file stays open until the artifact's stream has ended.
+      // The file stays open until any stream opened from it has ended.
       zip.close();
     }
   }

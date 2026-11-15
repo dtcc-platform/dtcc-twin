@@ -626,5 +626,54 @@ describe("Jobs (e2e)", () => {
 
       expect(errorResponseSchema.parse(response.body).error.code).toBe("VALIDATION_FAILED");
     });
+
+    describe("GET /api/jobs/:id/artifact/metadata", () => {
+      // The values in the PNG's manifest entry, as Core wrote them.
+      it("says where the map places an image, and what its colors stand for", async () => {
+        const job = await completed(ada, withPng);
+
+        const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(200);
+
+        expect(response.body).toEqual({
+          format: "png",
+          boundsWgs84: [11.976970530546582, 57.70405950028257, 11.980747861783474, 57.70607764364638],
+          legend: { field: "speed", unit: "m/s", valueRange: [0, 11.21410308244582], colormap: "viridis" },
+        });
+      });
+
+      it("places GeoJSON by its own coordinates, with no legend", async () => {
+        const geojson = await readFile(new URL("../fixtures/calibration-grid-geojson.dtccpkg", import.meta.url));
+        const job = await completed(ada, geojson);
+
+        const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(200);
+
+        expect(response.body).toEqual({ format: "geojson", boundsWgs84: null, legend: null });
+      });
+
+      it("answers NOT_FOUND for a package without an extra file, or another user's job", async () => {
+        const job = await completed(ada, withoutArtifact);
+        const graces = await completed(grace, withPng);
+
+        await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(404);
+        const response = await ada.get(`/api/jobs/${graces.id}/artifact/metadata`).expect(404);
+
+        expect(errorResponseSchema.parse(response.body).error.code).toBe("NOT_FOUND");
+      });
+
+      it("answers CONFLICT for a job that hasn't completed", async () => {
+        const job = await submit(ada);
+
+        const response = await ada.get(`/api/jobs/${job.id}/artifact/metadata`).expect(409);
+
+        expect(errorResponseSchema.parse(response.body).error.code).toBe("CONFLICT");
+      });
+
+      it("needs a logged-in user and a job id", async () => {
+        await request(app.getHttpServer()).get(`/api/jobs/${missingId}/artifact/metadata`).expect(401);
+        const response = await ada.get("/api/jobs/not-a-uuid/artifact/metadata").expect(400);
+
+        expect(errorResponseSchema.parse(response.body).error.code).toBe("VALIDATION_FAILED");
+      });
+    });
   });
 });

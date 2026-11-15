@@ -2,12 +2,14 @@ import { Body, Controller, Get, HttpStatus, Logger, Param, Post, Query, Res, Str
 import {
   createJobBodySchema,
   idParamsSchema,
+  jobArtifactSchema,
   jobPageSchema,
   jobSchema,
   offsetPaginationQuerySchema,
   type CreateJobBody,
   type IdParams,
   type Job,
+  type JobArtifact,
   type JobPage,
   type OffsetPaginationQuery,
 } from "@repo/contracts";
@@ -57,6 +59,15 @@ export class JobsController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
     return this.send(await this.jobs.artifact(user.userId, id), response);
+  }
+
+  @Get(":id/artifact/metadata")
+  @Serialize(jobArtifactSchema)
+  artifactMetadata(
+    @CurrentUser() user: AuthUser,
+    @Param({ schema: idParamsSchema }) { id }: IdParams,
+  ): Promise<JobArtifact> {
+    return this.jobs.artifactMetadata(user.userId, id);
   }
 
   @Post()
