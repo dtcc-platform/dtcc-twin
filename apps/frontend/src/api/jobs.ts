@@ -66,10 +66,13 @@ export const jobMutations = {
   download: () =>
     mutationOptions({
       mutationFn: async ({ id, file }: { id: string; file: JobFile }) => {
-        // The link carries only the cookies: asking for the job first refreshes an expired access token.
-        await api.get<Job>(`/jobs/${id}`);
+        // The link carries only the cookies: asking first renews an expired login, and turns an artifact the package
+        // lacks into an error here instead of an error page in place of the app.
+        await api.get(file === "artifact" ? `/jobs/${id}/artifact/metadata` : `/jobs/${id}`);
         const link = document.createElement("a");
         link.href = jobFileUrl(id, file);
+        // Keeps the app in place even if the file fails after all; browsers honor it on the page's own origin.
+        link.download = "";
         link.click();
       },
     }),
