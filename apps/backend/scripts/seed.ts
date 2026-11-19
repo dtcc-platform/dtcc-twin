@@ -3,11 +3,11 @@ import { createInterface } from "node:readline/promises";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { envSchema } from "../src/config/env.schema.js";
+import { envFieldsSchema } from "../src/config/env.schema.js";
 import { seedData } from "./seed-data.js";
 
 // An empty database is seeded at once; otherwise it asks before wiping, and any answer but yes exits 1.
-const env = envSchema.pick({ NODE_ENV: true, DATABASE_URL: true }).parse(process.env);
+const env = envFieldsSchema.pick({ NODE_ENV: true, DATABASE_URL: true }).parse(process.env);
 if (env.NODE_ENV === "production") {
   console.error("Refusing to seed: NODE_ENV is production.");
   process.exit(1);

@@ -16,6 +16,7 @@
 - Routes about the caller use `me` or no id at all (`PATCH /users/me`, `/settings`) and take the user from `@CurrentUser()`, never from the URL. Declare static segments such as `me` before `:id`.
 - A route lives in the module that owns the last noun in its path: `/admin/users/:id/status` in `accounts`, `/auth/sessions` in `auth`.
 - A module's routes for the caller and its admin routes on other users' data are separate controllers in `<name>.controller.ts`: `<Name>Controller`, and `<Name>AdminController` on `admin/<resource>`. A module gets an admin controller only when admins need routes of their own.
+- A handler that answers with server-sent events declares `@StreamResponse(eventSchema)` and validates each event with it before writing.
 
 ### Data
 
@@ -39,6 +40,12 @@
 ### Tests
 
 - Each route covers its success path, validation failure, access (401/403) and not found where it applies.
+
+### Background work
+
+- A watcher runs one service method through `every()` in `src/common/background/`, which never overlaps runs and logs a failed run.
+- Its interval comes from configuration; 0 turns it off. Start in `onApplicationBootstrap` and stop in `onModuleDestroy`.
+- What it works through lives in the database. E2E tests turn the watcher off and call the service method directly.
 
 ## Recipes
 

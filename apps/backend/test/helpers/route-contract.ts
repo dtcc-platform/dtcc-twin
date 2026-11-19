@@ -10,6 +10,8 @@ import { MetadataScanner } from "@nestjs/core";
 import { FILE_RESPONSE_KEY } from "../../src/common/decorators/file-response.decorator.js";
 import { SERIALIZE_OPTIONS_KEY } from "../../src/common/decorators/serialize.decorator.js";
 
+import { STREAM_RESPONSE_KEY } from "../../src/common/decorators/stream-response.decorator.js";
+
 const validatedParams: Partial<Record<number, string>> = {
   [RouteParamtypes.BODY]: "@Body",
   [RouteParamtypes.QUERY]: "@Query",
@@ -36,7 +38,7 @@ export function findContractViolations(controllers: Type[]): string[] {
       const file = Reflect.hasMetadata(FILE_RESPONSE_KEY, handler);
       const serializer = Reflect.getMetadata(SERIALIZE_OPTIONS_KEY, handler) as
         StandardSchemaSerializerContextOptions | undefined;
-      if (!noBody && !file && !serializer?.schema) {
+      if (!noBody && !file && !Reflect.hasMetadata(STREAM_RESPONSE_KEY, handler) && !serializer?.schema) {
         violations.push(`${route} declares no response schema (@Serialize)`);
       }
 

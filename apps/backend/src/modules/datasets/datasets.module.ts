@@ -6,6 +6,7 @@ import { DatasetsService } from "./datasets.service.js";
 @Module({
   imports: [EngineModule],
   controllers: [DatasetsController],
+  exports: [DatasetsService],
   providers: [DatasetsService],
 })
 export class DatasetsModule {}

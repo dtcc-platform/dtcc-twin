@@ -50,3 +50,9 @@ From the repo root:
 | `pnpm --filter frontend preview`    | Serve the build locally               |
 
 In development, two buttons in the bottom corners open the query cache (right) and the router (left) inspectors; production builds leave them out.
+
+## Area chat
+
+Open **Agent** in the map toolbar to create or reopen a chat. Questions use the currently drawn area; opening an earlier chat restores its last area and fits the map to it. Replies stream into the panel. While a job is pending, the chat polls every three seconds and shows its result automatically. Completed packages use the same job display and download action as Downloads.
+
+The composer warns above the default 5 km² area limit (`defaultAgentMaxAreaKm2` in the contracts, which the backend also uses as its default). The backend enforces its configured limit and active-account requirement. Chat lists, transcripts and job states live in TanStack Query; only the in-flight stream and form drafts are component state.
